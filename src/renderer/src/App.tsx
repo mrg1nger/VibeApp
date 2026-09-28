@@ -73,6 +73,7 @@ function App() {
             setActiveProject(project)
             setScreen('chat')
           }}
+          onError={(message) => pushToast(message, 'error')}
         />
       )}
       {screen === 'projects' && !claudeReady && !claudeChecking && (

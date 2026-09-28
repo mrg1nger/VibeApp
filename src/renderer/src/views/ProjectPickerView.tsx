@@ -3,9 +3,10 @@ import type { ProjectRecord } from '@shared/types'
 
 interface ProjectPickerViewProps {
   onOpen: (project: ProjectRecord) => void
+  onError: (message: string) => void
 }
 
-function ProjectPickerView({ onOpen }: ProjectPickerViewProps) {
+function ProjectPickerView({ onOpen, onError }: ProjectPickerViewProps) {
   const [recent, setRecent] = useState<ProjectRecord[]>([])
   const [busy, setBusy] = useState(false)
 
@@ -18,20 +19,24 @@ function ProjectPickerView({ onOpen }: ProjectPickerViewProps) {
     try {
       const project = await window.vibe.project.pickExisting()
       if (project) onOpen(project)
+    } catch (err) {
+      onError(`Couldn't open that folder: ${(err as Error).message}`)
     } finally {
       setBusy(false)
     }
-  }, [onOpen])
+  }, [onOpen, onError])
 
   const handleCreateNew = useCallback(async () => {
     setBusy(true)
     try {
       const project = await window.vibe.project.pickNewFolder()
       if (project) onOpen(project)
+    } catch (err) {
+      onError(`Couldn't create that project: ${(err as Error).message}`)
     } finally {
       setBusy(false)
     }
-  }, [onOpen])
+  }, [onOpen, onError])
 
   return (
     <div className="project-picker">

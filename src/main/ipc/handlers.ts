@@ -8,9 +8,11 @@ import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/
 import {
   startInstallSession,
   startNodeInstallSession,
+  startGitInstallSession,
   getInstallSession,
   disposeInstallSession
 } from '../pty/installSession'
+import type { PtySession } from '../pty/ptySession'
 import {
   listProjects,
   recordProjectOpened,
@@ -63,29 +65,25 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     disposeLoginSession(sessionId)
   })
 
+  function wireInstallSession(session: PtySession): string {
+    session.on('data', (data: string) => {
+      getSender()?.send('vibe:install:data', session.id, data)
+    })
+    session.on('exit', (exitCode: number) => {
+      getSender()?.send('vibe:install:exit', session.id, exitCode)
+    })
+    return session.id
+  }
+
   ipcMain.handle('vibe:auth:checkNode', () => isCliOnPath('node'))
+  ipcMain.handle('vibe:auth:checkGit', () => isCliOnPath('git'))
 
-  ipcMain.handle('vibe:auth:installNode', () => {
-    const session = startNodeInstallSession()
-    session.on('data', (data: string) => {
-      getSender()?.send('vibe:install:data', session.id, data)
-    })
-    session.on('exit', (exitCode: number) => {
-      getSender()?.send('vibe:install:exit', session.id, exitCode)
-    })
-    return session.id
-  })
+  ipcMain.handle('vibe:auth:installNode', () => wireInstallSession(startNodeInstallSession()))
+  ipcMain.handle('vibe:auth:installGit', () => wireInstallSession(startGitInstallSession()))
 
-  ipcMain.handle('vibe:auth:install', (_event, cli: CliName) => {
-    const session = startInstallSession(cli)
-    session.on('data', (data: string) => {
-      getSender()?.send('vibe:install:data', session.id, data)
-    })
-    session.on('exit', (exitCode: number) => {
-      getSender()?.send('vibe:install:exit', session.id, exitCode)
-    })
-    return session.id
-  })
+  ipcMain.handle('vibe:auth:install', (_event, cli: CliName) =>
+    wireInstallSession(startInstallSession(cli))
+  )
 
   ipcMain.on('vibe:install:write', (_event, sessionId: string, data: string) => {
     getInstallSession(sessionId)?.write(data)

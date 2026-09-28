@@ -2,6 +2,7 @@ import { existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { simpleGit } from 'simple-git'
 import type { CheckpointRecord } from '@shared/types'
+import { isCliOnPath } from '../cli/execCli'
 
 const DEFAULT_GITIGNORE = `node_modules
 dist
@@ -15,6 +16,15 @@ build
 export async function ensureRepo(projectPath: string): Promise<void> {
   const gitDir = join(projectPath, '.git')
   if (existsSync(gitDir)) return
+
+  // simple-git's own error when the git binary is missing isn't consistently
+  // clear (varies by platform/version), so check explicitly first rather
+  // than surfacing whatever it happens to throw.
+  if (!(await isCliOnPath('git'))) {
+    throw new Error(
+      'git is not installed (or not on PATH). Install it from git-scm.com, then try again.'
+    )
+  }
 
   const git = simpleGit(projectPath)
   await git.init()

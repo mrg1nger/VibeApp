@@ -7,12 +7,20 @@ const installCommand: Record<CliName, { file: string; args: string[] }> = {
   codex: { file: 'npm', args: ['install', '-g', '@openai/codex'] }
 }
 
-const nodeInstallCommand = {
-  file: 'winget',
-  args: ['install', '--id', 'OpenJS.NodeJS.LTS', '--source', 'winget', '--accept-package-agreements', '--accept-source-agreements']
-}
+const WINGET_ARGS = ['--source', 'winget', '--accept-package-agreements', '--accept-source-agreements']
 
 const sessions = new Map<string, PtySession>()
+
+function startWingetInstall(packageId: string): PtySession {
+  const id = randomUUID()
+  const session = new PtySession(id, {
+    file: 'winget',
+    args: ['install', '--id', packageId, ...WINGET_ARGS]
+  })
+  sessions.set(id, session)
+  session.once('exit', () => sessions.delete(id))
+  return session
+}
 
 export function startInstallSession(cli: CliName): PtySession {
   const id = randomUUID()
@@ -24,11 +32,11 @@ export function startInstallSession(cli: CliName): PtySession {
 }
 
 export function startNodeInstallSession(): PtySession {
-  const id = randomUUID()
-  const session = new PtySession(id, nodeInstallCommand)
-  sessions.set(id, session)
-  session.once('exit', () => sessions.delete(id))
-  return session
+  return startWingetInstall('OpenJS.NodeJS.LTS')
+}
+
+export function startGitInstallSession(): PtySession {
+  return startWingetInstall('Git.Git')
 }
 
 export function getInstallSession(id: string): PtySession | undefined {

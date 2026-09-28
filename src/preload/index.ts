@@ -19,6 +19,8 @@ const vibeApi = {
     login: (cli: CliName): Promise<string> => ipcRenderer.invoke('vibe:auth:login', cli),
     checkNode: (): Promise<boolean> => ipcRenderer.invoke('vibe:auth:checkNode'),
     installNode: (): Promise<string> => ipcRenderer.invoke('vibe:auth:installNode'),
+    checkGit: (): Promise<boolean> => ipcRenderer.invoke('vibe:auth:checkGit'),
+    installGit: (): Promise<string> => ipcRenderer.invoke('vibe:auth:installGit'),
     install: (cli: CliName): Promise<string> => ipcRenderer.invoke('vibe:auth:install', cli)
   },
 
