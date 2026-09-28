@@ -13,6 +13,26 @@ build
 *.log
 `
 
+/**
+ * Ensures `git commit` won't fail for lack of a configured identity. Checks
+ * unscoped first (so an existing global/system identity, the common case on
+ * a real dev machine, is left alone) and only writes a repo-local override
+ * when nothing resolves at all -- confirmed experimentally that
+ * getConfig(key, 'local') alone reports null on a fresh repo even when a
+ * global identity exists and a commit would succeed fine, so checking with
+ * a scope would falsely think an override is needed.
+ */
+async function ensureGitIdentity(git: ReturnType<typeof simpleGit>): Promise<void> {
+  const name = await git.getConfig('user.name')
+  const email = await git.getConfig('user.email')
+  if (!name.value) {
+    await git.addConfig('user.name', 'VibeApp User', false, 'local')
+  }
+  if (!email.value) {
+    await git.addConfig('user.email', 'vibeapp@local', false, 'local')
+  }
+}
+
 export async function ensureRepo(projectPath: string): Promise<void> {
   const gitDir = join(projectPath, '.git')
   if (existsSync(gitDir)) return
@@ -28,6 +48,7 @@ export async function ensureRepo(projectPath: string): Promise<void> {
 
   const git = simpleGit(projectPath)
   await git.init()
+  await ensureGitIdentity(git)
 
   const gitignorePath = join(projectPath, '.gitignore')
   if (!existsSync(gitignorePath)) {
@@ -66,6 +87,7 @@ export async function suggestCheckpointMessage(projectPath: string): Promise<str
 
 export async function checkpoint(projectPath: string, message: string): Promise<CheckpointRecord> {
   const git = simpleGit(projectPath)
+  await ensureGitIdentity(git)
   await git.add('-A')
   const commitResult = await git.commit(message)
   const log = await git.log({ maxCount: 1 })
