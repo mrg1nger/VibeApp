@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
+import { createCodexDelegationServer } from '../delegation/codexTool'
 
 /** A pushable async queue feeding query()'s streaming-input mode. */
 class MessageQueue implements AsyncIterable<SDKUserMessage> {
@@ -54,11 +55,18 @@ export class ClaudeSession extends EventEmitter {
 
   constructor(projectPath: string) {
     super()
+
+    const codexServer = createCodexDelegationServer(projectPath, (note) => {
+      const event: VibeEvent = { type: 'delegation_progress', toolUseId: '', note }
+      this.emit('event', event)
+    })
+
     this.queryHandle = query({
       prompt: this.queue,
       options: {
         cwd: projectPath,
         permissionMode: 'acceptEdits',
+        mcpServers: { vibe_tools: codexServer },
         canUseTool: async (toolName, input) => {
           if (isLikelyDestructive(toolName, input)) {
             const approved = await this.requestConfirmation(toolName, input)

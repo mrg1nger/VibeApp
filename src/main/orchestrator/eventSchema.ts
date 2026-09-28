@@ -25,6 +25,8 @@ function friendlyToolLabel(name: string, input: unknown): string {
     case 'Glob':
     case 'Grep':
       return `Searched files`
+    case 'mcp__vibe_tools__run_codex_subtask':
+      return `Delegated to Codex: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
     default:
       return name
   }

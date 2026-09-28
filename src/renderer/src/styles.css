@@ -172,6 +172,12 @@ body {
   color: #e3a7a7;
 }
 
+.tool-card-delegation {
+  background: #22314d;
+  color: #a7c3e3;
+  border-left: 3px solid #3b5bdb;
+}
+
 .tool-status {
   color: #6b7280;
 }

@@ -9,8 +9,18 @@ interface ChatViewProps {
 type ChatItem =
   | { kind: 'user_text'; text: string }
   | { kind: 'assistant_text'; text: string }
-  | { kind: 'tool'; toolUseId: string; label: string; status: 'running' | 'ok' | 'error'; summary?: string }
+  | {
+      kind: 'tool'
+      toolUseId: string
+      label: string
+      status: 'running' | 'ok' | 'error'
+      summary?: string
+      isDelegation: boolean
+      progressNote?: string
+    }
   | { kind: 'error'; message: string }
+
+const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 
 function ChatView({ project, onBack }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
@@ -27,7 +37,13 @@ function ChatView({ project, onBack }: ChatViewProps) {
         case 'tool_call':
           return [
             ...prev,
-            { kind: 'tool', toolUseId: event.toolUseId, label: event.friendlyLabel, status: 'running' }
+            {
+              kind: 'tool',
+              toolUseId: event.toolUseId,
+              label: event.friendlyLabel,
+              status: 'running',
+              isDelegation: event.name === DELEGATION_TOOL_NAME
+            }
           ]
         case 'tool_result':
           return prev.map((item) =>
@@ -35,6 +51,20 @@ function ChatView({ project, onBack }: ChatViewProps) {
               ? { ...item, status: event.ok ? 'ok' : 'error', summary: event.summary }
               : item
           )
+        case 'delegation_progress': {
+          // Progress events aren't correlated to a toolUseId, so attach to
+          // the most recent still-running delegation card.
+          const lastRunningIndex = [...prev]
+            .map((item, idx) => ({ item, idx }))
+            .reverse()
+            .find(({ item }) => item.kind === 'tool' && item.isDelegation && item.status === 'running')?.idx
+          if (lastRunningIndex === undefined) return prev
+          return prev.map((item, idx) =>
+            idx === lastRunningIndex && item.kind === 'tool'
+              ? { ...item, progressNote: event.note }
+              : item
+          )
+        }
         case 'error':
           return [...prev, { kind: 'error', message: event.message }]
         case 'turn_complete':
@@ -94,9 +124,13 @@ function ChatView({ project, onBack }: ChatViewProps) {
             {item.kind === 'user_text' && <p>{item.text}</p>}
             {item.kind === 'assistant_text' && <p>{item.text}</p>}
             {item.kind === 'tool' && (
-              <div className={`tool-card tool-card-${item.status}`}>
+              <div
+                className={`tool-card tool-card-${item.status} ${item.isDelegation ? 'tool-card-delegation' : ''}`}
+              >
                 <span>{item.label}</span>
-                {item.status === 'running' && <span className="tool-status">working…</span>}
+                {item.status === 'running' && (
+                  <span className="tool-status">{item.progressNote ?? 'working…'}</span>
+                )}
                 {item.status === 'error' && <span className="tool-status">failed</span>}
               </div>
             )}
