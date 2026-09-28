@@ -3,12 +3,21 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
+interface PtyApi {
+  onData: (cb: (sessionId: string, data: string) => void) => () => void
+  onExit: (cb: (sessionId: string, exitCode: number) => void) => () => void
+  write: (sessionId: string, data: string) => void
+  resize: (sessionId: string, cols: number, rows: number) => void
+  dispose: (sessionId: string) => void
+}
+
 interface LoginTerminalProps {
   sessionId: string
   onExit: (exitCode: number) => void
+  api?: PtyApi
 }
 
-function LoginTerminal({ sessionId, onExit }: LoginTerminalProps) {
+function LoginTerminal({ sessionId, onExit, api = window.vibe.login }: LoginTerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -27,22 +36,22 @@ function LoginTerminal({ sessionId, onExit }: LoginTerminalProps) {
 
     const resizeObserver = new ResizeObserver(() => {
       fitAddon.fit()
-      window.vibe.login.resize(sessionId, term.cols, term.rows)
+      api.resize(sessionId, term.cols, term.rows)
     })
     resizeObserver.observe(container)
 
     const inputDisposable = term.onData((data) => {
-      window.vibe.login.write(sessionId, data)
+      api.write(sessionId, data)
     })
 
-    const unsubData = window.vibe.login.onData((id, data) => {
+    const unsubData = api.onData((id, data) => {
       if (id === sessionId) term.write(data)
     })
-    const unsubExit = window.vibe.login.onExit((id, exitCode) => {
+    const unsubExit = api.onExit((id, exitCode) => {
       if (id === sessionId) onExit(exitCode)
     })
 
-    window.vibe.login.resize(sessionId, term.cols, term.rows)
+    api.resize(sessionId, term.cols, term.rows)
 
     return () => {
       resizeObserver.disconnect()
@@ -50,7 +59,7 @@ function LoginTerminal({ sessionId, onExit }: LoginTerminalProps) {
       unsubData()
       unsubExit()
       term.dispose()
-      window.vibe.login.dispose(sessionId)
+      api.dispose(sessionId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])

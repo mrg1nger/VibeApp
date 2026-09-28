@@ -3,7 +3,14 @@ import { mkdirSync } from 'fs'
 import type { CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
+import { isCliOnPath } from '../cli/execCli'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
+import {
+  startInstallSession,
+  startNodeInstallSession,
+  getInstallSession,
+  disposeInstallSession
+} from '../pty/installSession'
 import {
   listProjects,
   recordProjectOpened,
@@ -54,6 +61,42 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   ipcMain.on('vibe:login:dispose', (_event, sessionId: string) => {
     disposeLoginSession(sessionId)
+  })
+
+  ipcMain.handle('vibe:auth:checkNode', () => isCliOnPath('node'))
+
+  ipcMain.handle('vibe:auth:installNode', () => {
+    const session = startNodeInstallSession()
+    session.on('data', (data: string) => {
+      getSender()?.send('vibe:install:data', session.id, data)
+    })
+    session.on('exit', (exitCode: number) => {
+      getSender()?.send('vibe:install:exit', session.id, exitCode)
+    })
+    return session.id
+  })
+
+  ipcMain.handle('vibe:auth:install', (_event, cli: CliName) => {
+    const session = startInstallSession(cli)
+    session.on('data', (data: string) => {
+      getSender()?.send('vibe:install:data', session.id, data)
+    })
+    session.on('exit', (exitCode: number) => {
+      getSender()?.send('vibe:install:exit', session.id, exitCode)
+    })
+    return session.id
+  })
+
+  ipcMain.on('vibe:install:write', (_event, sessionId: string, data: string) => {
+    getInstallSession(sessionId)?.write(data)
+  })
+
+  ipcMain.on('vibe:install:resize', (_event, sessionId: string, cols: number, rows: number) => {
+    getInstallSession(sessionId)?.resize(cols, rows)
+  })
+
+  ipcMain.on('vibe:install:dispose', (_event, sessionId: string) => {
+    disposeInstallSession(sessionId)
   })
 
   ipcMain.handle('vibe:project:list', () => listProjects())

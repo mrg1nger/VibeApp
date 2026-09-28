@@ -16,7 +16,10 @@ const vibeApi = {
 
   auth: {
     check: (cli: CliName): Promise<CliStatus> => ipcRenderer.invoke('vibe:auth:check', cli),
-    login: (cli: CliName): Promise<string> => ipcRenderer.invoke('vibe:auth:login', cli)
+    login: (cli: CliName): Promise<string> => ipcRenderer.invoke('vibe:auth:login', cli),
+    checkNode: (): Promise<boolean> => ipcRenderer.invoke('vibe:auth:checkNode'),
+    installNode: (): Promise<string> => ipcRenderer.invoke('vibe:auth:installNode'),
+    install: (cli: CliName): Promise<string> => ipcRenderer.invoke('vibe:auth:install', cli)
   },
 
   login: {
@@ -40,6 +43,29 @@ const vibeApi = {
     resize: (sessionId: string, cols: number, rows: number): void =>
       ipcRenderer.send('vibe:login:resize', sessionId, cols, rows),
     dispose: (sessionId: string): void => ipcRenderer.send('vibe:login:dispose', sessionId)
+  },
+
+  install: {
+    onData: (cb: (sessionId: string, data: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, sessionId: string, data: string): void =>
+        cb(sessionId, data)
+      ipcRenderer.on('vibe:install:data', listener)
+      return () => ipcRenderer.removeListener('vibe:install:data', listener)
+    },
+    onExit: (cb: (sessionId: string, exitCode: number) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        sessionId: string,
+        exitCode: number
+      ): void => cb(sessionId, exitCode)
+      ipcRenderer.on('vibe:install:exit', listener)
+      return () => ipcRenderer.removeListener('vibe:install:exit', listener)
+    },
+    write: (sessionId: string, data: string): void =>
+      ipcRenderer.send('vibe:install:write', sessionId, data),
+    resize: (sessionId: string, cols: number, rows: number): void =>
+      ipcRenderer.send('vibe:install:resize', sessionId, cols, rows),
+    dispose: (sessionId: string): void => ipcRenderer.send('vibe:install:dispose', sessionId)
   },
 
   project: {

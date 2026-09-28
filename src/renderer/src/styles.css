@@ -324,6 +324,14 @@ body {
   cursor: pointer;
 }
 
+.install-hint {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  color: #e3a97b;
+  background: #2a2418;
+}
+
 .login-terminal {
   height: 320px;
   padding: 0.5rem;
