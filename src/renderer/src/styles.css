@@ -12,3 +12,91 @@ body {
 .app {
   padding: 2rem;
 }
+
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 480px;
+}
+
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: #1a1d24;
+  border-radius: 8px;
+}
+
+.account-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+.status-pill {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: #333844;
+}
+
+.status-pill.status-logged_in {
+  background: #1f4d2e;
+  color: #7be3a0;
+}
+
+.status-pill.status-logged_out {
+  background: #4d2f1f;
+  color: #e3a97b;
+}
+
+.status-pill.status-not_installed {
+  background: #4d1f1f;
+  color: #e37b7b;
+}
+
+.account-row button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  background: #3b5bdb;
+  color: white;
+  cursor: pointer;
+}
+
+.account-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.login-panel {
+  margin-top: 1.5rem;
+  border: 1px solid #2a2e38;
+  border-radius: 8px;
+  overflow: hidden;
+  max-width: 720px;
+}
+
+.login-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: #1a1d24;
+}
+
+.login-panel-header button {
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
+  border: none;
+  background: #333844;
+  color: #e8e8ec;
+  cursor: pointer;
+}
+
+.login-terminal {
+  height: 320px;
+  padding: 0.5rem;
+  background: #0d0f14;
+}

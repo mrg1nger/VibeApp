@@ -1,6 +1,9 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { registerIpcHandlers } from './ipc/handlers'
+
+let currentWindow: BrowserWindow | undefined
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -16,8 +19,14 @@ function createWindow(): void {
     }
   })
 
+  currentWindow = mainWindow
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.on('closed', () => {
+    if (currentWindow === mainWindow) currentWindow = undefined
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -39,7 +48,7 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  ipcMain.handle('vibe:ping', () => 'pong')
+  registerIpcHandlers(() => currentWindow?.webContents)
 
   createWindow()
 
