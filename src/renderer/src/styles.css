@@ -157,6 +157,12 @@ body {
   color: #e37b7b;
 }
 
+.chat-notice {
+  color: #9aa0ab;
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
 .tool-card {
   display: inline-flex;
   gap: 0.5rem;
@@ -637,4 +643,118 @@ body {
 .go-nutz-modal-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.memory-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-width: 720px;
+}
+
+.memory-scope-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.memory-scope-tabs button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  background: #1a1d24;
+  color: #9aa0ab;
+  cursor: pointer;
+}
+
+.memory-scope-tabs button.active {
+  background: #3b5bdb;
+  color: white;
+}
+
+.memory-hint {
+  color: #9aa0ab;
+}
+
+.memory-add-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.memory-add-row input {
+  flex: 1;
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid #2a2e38;
+  background: #1a1d24;
+  color: #e8e8ec;
+}
+
+.memory-add-row button {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: none;
+  background: #3b5bdb;
+  color: white;
+  cursor: pointer;
+}
+
+.memory-add-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.memory-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+
+.memory-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: #1a1d24;
+}
+
+.memory-text {
+  flex: 1;
+}
+
+.memory-edit-input {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid #2a2e38;
+  background: #0d0f14;
+  color: #e8e8ec;
+}
+
+.memory-meta {
+  font-size: 0.75rem;
+  color: #9aa0ab;
+  flex-shrink: 0;
+}
+
+.memory-row-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.memory-row-actions button {
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: none;
+  background: #333844;
+  color: #e8e8ec;
+  cursor: pointer;
+  font-size: 0.8rem;
 }

@@ -10,6 +10,12 @@ export interface CodexExecArgs {
   timeoutMs?: number
   /** Go Nutz mode: no sandbox, no approval prompts. EXTREMELY DANGEROUS -- see codex exec --help. */
   unsandboxed?: boolean
+  /** Paths to the shared memory MCP server's storage files and script, if memory access should be wired in. */
+  memory?: {
+    scriptPath: string
+    projectMemoryPath: string
+    globalMemoryPath: string
+  }
 }
 
 export interface CodexExecResult {
@@ -38,19 +44,48 @@ export async function runCodexExec(
   const tempDir = mkdtempSync(join(tmpdir(), 'vibeapp-codex-'))
   const outputPath = join(tempDir, `${randomUUID()}.txt`)
 
+  // --sandbox and --approve-for-me are mutually exclusive CLI flags
+  // (confirmed: codex exec rejects the combination outright). MCP tool
+  // calls require approval even under workspace-write, so when memory
+  // access is wired in we need --approve-for-me instead of an explicit
+  // --sandbox -- confirmed experimentally that --approve-for-me alone
+  // still enforces an equivalent workspace-only write boundary (a write
+  // outside the project folder was denied), regardless of this machine's
+  // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
   const cliArgs = [
     'exec',
     args.prompt,
     '--json',
     ...(args.unsandboxed
       ? ['--dangerously-bypass-approvals-and-sandbox']
-      : ['--sandbox', 'workspace-write']),
+      : args.memory
+        ? []
+        : ['--sandbox', 'workspace-write']),
     '--skip-git-repo-check',
     '-o',
     outputPath
   ]
   if (args.cwd) {
     cliArgs.push('-C', args.cwd)
+  }
+  if (args.memory && !args.unsandboxed) {
+    cliArgs.push('--approve-for-me')
+  }
+  if (args.memory) {
+    // TOML parsing of -c overrides needs forward slashes even on Windows --
+    // a backslash-escaped Windows path in the value breaks the parser
+    // (confirmed experimentally).
+    const toForwardSlash = (p: string): string => p.replace(/\\/g, '/')
+    cliArgs.push(
+      '-c',
+      `mcp_servers.vibe_memory.command="${toForwardSlash(process.execPath)}"`,
+      '-c',
+      `mcp_servers.vibe_memory.args=["${toForwardSlash(args.memory.scriptPath)}","${toForwardSlash(
+        args.memory.projectMemoryPath
+      )}","${toForwardSlash(args.memory.globalMemoryPath)}","codex"]`,
+      '-c',
+      'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}'
+    )
   }
 
   // Windows: `codex` resolves to an npm .cmd shim, which spawn() cannot

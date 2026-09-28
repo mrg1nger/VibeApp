@@ -1,13 +1,14 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import * as z from 'zod/v4'
-import { runCodexExec } from '../cli/codexExec'
+import { runCodexExec, type CodexExecArgs } from '../cli/codexExec'
 
 export type DelegationProgressListener = (note: string) => void
 
 export function createCodexDelegationServer(
   projectPath: string,
   onProgress: DelegationProgressListener,
-  isGoNutzMode: () => boolean
+  isGoNutzMode: () => boolean,
+  memory?: NonNullable<CodexExecArgs['memory']>
 ): ReturnType<typeof createSdkMcpServer> {
   return createSdkMcpServer({
     name: 'vibe_tools',
@@ -30,7 +31,8 @@ export function createCodexDelegationServer(
                 prompt: args.prompt,
                 cwd: projectPath,
                 timeoutMs: args.timeoutMs ?? 300_000,
-                unsandboxed: isGoNutzMode()
+                unsandboxed: isGoNutzMode(),
+                memory
               },
               onProgress
             )

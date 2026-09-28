@@ -45,3 +45,12 @@ export interface TranscriptEntry {
   text?: string
   event?: VibeEvent
 }
+
+export interface MemoryFact {
+  id: string
+  text: string
+  createdAt: string
+  source: 'claude' | 'codex' | 'user'
+}
+
+export type MemoryScope = 'project' | 'global'

@@ -4,6 +4,8 @@ import type {
   CliName,
   CliStatus,
   ConfirmationRequest,
+  MemoryFact,
+  MemoryScope,
   ProjectRecord,
   TranscriptEntry,
   VibeEvent
@@ -93,6 +95,17 @@ const vibeApi = {
       ipcRenderer.invoke('vibe:git:history', projectPath),
     restore: (projectPath: string, commitHash: string): Promise<string> =>
       ipcRenderer.invoke('vibe:git:restore', projectPath, commitHash)
+  },
+
+  memory: {
+    list: (projectId: string, scope: MemoryScope): Promise<MemoryFact[]> =>
+      ipcRenderer.invoke('vibe:memory:list', projectId, scope),
+    add: (projectId: string, scope: MemoryScope, text: string): Promise<MemoryFact> =>
+      ipcRenderer.invoke('vibe:memory:add', projectId, scope, text),
+    update: (projectId: string, scope: MemoryScope, id: string, text: string): Promise<boolean> =>
+      ipcRenderer.invoke('vibe:memory:update', projectId, scope, id, text),
+    delete: (projectId: string, scope: MemoryScope, id: string): Promise<boolean> =>
+      ipcRenderer.invoke('vibe:memory:delete', projectId, scope, id)
   }
 }
 

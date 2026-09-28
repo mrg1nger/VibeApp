@@ -23,6 +23,7 @@ type ChatItem =
       progressNote?: string
     }
   | { kind: 'error'; message: string }
+  | { kind: 'notice'; text: string }
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 
@@ -95,6 +96,11 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
           case 'error':
             if (!isReplay) onError(event.message)
             return [...prev, { kind: 'error', message: event.message }]
+          case 'task_progress':
+            if (event.note === 'mcp_config_reloaded') {
+              return [...prev, { kind: 'notice', text: 'Reloaded MCP tools from .mcp.json' }]
+            }
+            return prev
           case 'turn_complete':
             if (!isReplay) {
               setBusy(false)
@@ -219,6 +225,7 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
               </div>
             )}
             {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
+            {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
           </div>
         ))}
         {busy && <div className="chat-item chat-item-thinking">Claude is working…</div>}

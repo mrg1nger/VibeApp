@@ -4,10 +4,11 @@ import AccountsView from './views/AccountsView'
 import ProjectPickerView from './views/ProjectPickerView'
 import ChatView from './views/ChatView'
 import HistoryView from './views/HistoryView'
+import MemoryView from './views/MemoryView'
 import ToastHost from './components/ToastHost'
 import { useToasts } from './lib/useToasts'
 
-type Screen = 'accounts' | 'projects' | 'chat' | 'history'
+type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory'
 
 const STATUS_POLL_INTERVAL_MS = 15_000
 
@@ -58,6 +59,9 @@ function App() {
           >
             Projects
           </button>
+          <button className={screen === 'memory' ? 'active' : ''} onClick={() => setScreen('memory')}>
+            Memory
+          </button>
         </div>
       </div>
 
@@ -94,6 +98,7 @@ function App() {
       {screen === 'history' && activeProject && (
         <HistoryView project={activeProject} onBack={() => setScreen('chat')} />
       )}
+      {screen === 'memory' && <MemoryView project={activeProject} />}
 
       <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>

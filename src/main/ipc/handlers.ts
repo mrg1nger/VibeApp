@@ -1,6 +1,6 @@
 import { ipcMain, dialog, type WebContents } from 'electron'
 import { mkdirSync } from 'fs'
-import type { CliName, ConfirmationRequest } from '@shared/types'
+import type { CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
@@ -21,6 +21,8 @@ import {
   restoreCheckpoint
 } from '../git/repo'
 import { getOrCreateSession, getSession, disposeSession } from '../orchestrator/session'
+import { addFact, listFacts, deleteFact, updateFact } from '../memory/storage'
+import { projectMemoryPath, globalMemoryPath } from '../memory/paths'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
   ipcMain.handle('vibe:ping', () => 'pong')
@@ -123,6 +125,32 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   ipcMain.handle('vibe:git:restore', (_event, projectPath: string, commitHash: string) =>
     restoreCheckpoint(projectPath, commitHash)
+  )
+
+  function pathForScope(scope: MemoryScope, projectId: string): string {
+    return scope === 'global' ? globalMemoryPath() : projectMemoryPath(projectId)
+  }
+
+  ipcMain.handle('vibe:memory:list', (_event, projectId: string, scope: MemoryScope) =>
+    listFacts(pathForScope(scope, projectId))
+  )
+
+  ipcMain.handle(
+    'vibe:memory:add',
+    (_event, projectId: string, scope: MemoryScope, text: string) =>
+      addFact(pathForScope(scope, projectId), text, 'user')
+  )
+
+  ipcMain.handle(
+    'vibe:memory:update',
+    (_event, projectId: string, scope: MemoryScope, id: string, text: string) =>
+      updateFact(pathForScope(scope, projectId), id, text)
+  )
+
+  ipcMain.handle(
+    'vibe:memory:delete',
+    (_event, projectId: string, scope: MemoryScope, id: string) =>
+      deleteFact(pathForScope(scope, projectId), id)
   )
 }
 
