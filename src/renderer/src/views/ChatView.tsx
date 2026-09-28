@@ -6,6 +6,7 @@ interface ChatViewProps {
   project: ProjectRecord
   onBack: () => void
   onOpenHistory: () => void
+  onError: (message: string) => void
 }
 
 type ChatItem =
@@ -24,7 +25,7 @@ type ChatItem =
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 
-function ChatView({ project, onBack, onOpenHistory }: ChatViewProps) {
+function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -40,53 +41,77 @@ function ChatView({ project, onBack, onOpenHistory }: ChatViewProps) {
     refreshHasChanges()
   }, [refreshHasChanges])
 
-  const applyEvent = useCallback((event: VibeEvent) => {
-    setItems((prev) => {
-      switch (event.type) {
-        case 'assistant_text':
-          return [...prev, { kind: 'assistant_text', text: event.text }]
-        case 'tool_call':
-          return [
-            ...prev,
-            {
-              kind: 'tool',
-              toolUseId: event.toolUseId,
-              label: event.friendlyLabel,
-              status: 'running',
-              isDelegation: event.name === DELEGATION_TOOL_NAME
+  const applyEvent = useCallback(
+    (event: VibeEvent, isReplay = false) => {
+      setItems((prev) => {
+        switch (event.type) {
+          case 'assistant_text':
+            return [...prev, { kind: 'assistant_text', text: event.text }]
+          case 'tool_call':
+            return [
+              ...prev,
+              {
+                kind: 'tool',
+                toolUseId: event.toolUseId,
+                label: event.friendlyLabel,
+                status: 'running',
+                isDelegation: event.name === DELEGATION_TOOL_NAME
+              }
+            ]
+          case 'tool_result':
+            return prev.map((item) =>
+              item.kind === 'tool' && item.toolUseId === event.toolUseId
+                ? { ...item, status: event.ok ? 'ok' : 'error', summary: event.summary }
+                : item
+            )
+          case 'delegation_progress': {
+            // Progress events aren't correlated to a toolUseId, so attach to
+            // the most recent still-running delegation card.
+            const lastRunningIndex = [...prev]
+              .map((item, idx) => ({ item, idx }))
+              .reverse()
+              .find(({ item }) => item.kind === 'tool' && item.isDelegation && item.status === 'running')?.idx
+            if (lastRunningIndex === undefined) return prev
+            return prev.map((item, idx) =>
+              idx === lastRunningIndex && item.kind === 'tool'
+                ? { ...item, progressNote: event.note }
+                : item
+            )
+          }
+          case 'error':
+            if (!isReplay) onError(event.message)
+            return [...prev, { kind: 'error', message: event.message }]
+          case 'turn_complete':
+            if (!isReplay) {
+              setBusy(false)
+              refreshHasChanges()
             }
-          ]
-        case 'tool_result':
-          return prev.map((item) =>
-            item.kind === 'tool' && item.toolUseId === event.toolUseId
-              ? { ...item, status: event.ok ? 'ok' : 'error', summary: event.summary }
-              : item
-          )
-        case 'delegation_progress': {
-          // Progress events aren't correlated to a toolUseId, so attach to
-          // the most recent still-running delegation card.
-          const lastRunningIndex = [...prev]
-            .map((item, idx) => ({ item, idx }))
-            .reverse()
-            .find(({ item }) => item.kind === 'tool' && item.isDelegation && item.status === 'running')?.idx
-          if (lastRunningIndex === undefined) return prev
-          return prev.map((item, idx) =>
-            idx === lastRunningIndex && item.kind === 'tool'
-              ? { ...item, progressNote: event.note }
-              : item
-          )
+            return prev
+          default:
+            return prev
         }
-        case 'error':
-          return [...prev, { kind: 'error', message: event.message }]
-        case 'turn_complete':
-          setBusy(false)
-          refreshHasChanges()
-          return prev
-        default:
-          return prev
+      })
+    },
+    [refreshHasChanges, onError]
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    window.vibe.chat.loadTranscript(project.id).then((entries) => {
+      if (cancelled) return
+      for (const entry of entries) {
+        if (entry.direction === 'user' && entry.text) {
+          setItems((prev) => [...prev, { kind: 'user_text', text: entry.text as string }])
+        } else if (entry.direction === 'event' && entry.event) {
+          applyEvent(entry.event, true)
+        }
       }
     })
-  }, [refreshHasChanges])
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id])
 
   useEffect(() => {
     const unsubEvent = window.vibe.chat.onEvent((projectId, event) => {
@@ -111,8 +136,13 @@ function ChatView({ project, onBack, onOpenHistory }: ChatViewProps) {
     setItems((prev) => [...prev, { kind: 'user_text', text }])
     setInput('')
     setBusy(true)
-    await window.vibe.chat.send(project.id, project.path, text)
-  }, [input, busy, project])
+    try {
+      await window.vibe.chat.send(project.id, project.path, text)
+    } catch (err) {
+      setBusy(false)
+      onError(`Failed to send message: ${(err as Error).message}`)
+    }
+  }, [input, busy, project, onError])
 
   const handleConfirmation = useCallback(
     (approved: boolean) => {

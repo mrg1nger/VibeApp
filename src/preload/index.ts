@@ -5,6 +5,7 @@ import type {
   CliStatus,
   ConfirmationRequest,
   ProjectRecord,
+  TranscriptEntry,
   VibeEvent
 } from '@shared/types'
 
@@ -72,7 +73,9 @@ const vibeApi = {
     },
     respondToConfirmation: (projectId: string, confirmationId: string, approved: boolean): void =>
       ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
-    dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId)
+    dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),
+    loadTranscript: (projectId: string): Promise<TranscriptEntry[]> =>
+      ipcRenderer.invoke('vibe:chat:loadTranscript', projectId)
   },
 
   git: {

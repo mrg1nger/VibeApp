@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { CliName, CliStatus } from '@shared/types'
 import LoginTerminal from '../components/LoginTerminal'
 
@@ -14,22 +14,13 @@ const STATUS_LABELS: Record<CliStatus['status'], string> = {
   not_installed: 'Not installed'
 }
 
-function AccountsView() {
-  const [statuses, setStatuses] = useState<Record<CliName, CliStatus>>({
-    claude: { cli: 'claude', status: 'checking' },
-    codex: { cli: 'codex', status: 'checking' }
-  })
+interface AccountsViewProps {
+  statuses: Record<CliName, CliStatus>
+  onRefresh: (cli: CliName) => void
+}
+
+function AccountsView({ statuses, onRefresh }: AccountsViewProps) {
   const [activeLogin, setActiveLogin] = useState<{ cli: CliName; sessionId: string } | null>(null)
-
-  const refresh = useCallback(async (cli: CliName) => {
-    const status = await window.vibe.auth.check(cli)
-    setStatuses((prev) => ({ ...prev, [cli]: status }))
-  }, [])
-
-  useEffect(() => {
-    refresh('claude')
-    refresh('codex')
-  }, [refresh])
 
   const handleLogin = useCallback(async (cli: CliName) => {
     const sessionId = await window.vibe.auth.login(cli)
@@ -39,9 +30,9 @@ function AccountsView() {
   const handleLoginExit = useCallback(
     (cli: CliName) => {
       setActiveLogin(null)
-      refresh(cli)
+      onRefresh(cli)
     },
-    [refresh]
+    [onRefresh]
   )
 
   return (

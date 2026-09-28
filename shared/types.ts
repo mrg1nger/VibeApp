@@ -30,10 +30,17 @@ export interface ProjectRecord {
   path: string
   name: string
   lastOpened: string
+  sdkSessionId?: string
 }
 
 export interface CheckpointRecord {
   hash: string
   message: string
   date: string
+}
+
+export interface TranscriptEntry {
+  direction: 'user' | 'event'
+  text?: string
+  event?: VibeEvent
 }

@@ -4,7 +4,8 @@ import type { CliName, ConfirmationRequest } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
-import { listProjects, recordProjectOpened } from '../projects/store'
+import { listProjects, recordProjectOpened, setSdkSessionId, getProject } from '../projects/store'
+import { appendUserMessage, appendEvent, loadTranscript } from '../projects/transcript'
 import {
   ensureRepo,
   hasUncommittedChanges,
@@ -66,10 +67,14 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   ipcMain.handle('vibe:chat:send', (_event, projectId: string, projectPath: string, text: string) => {
-    const session = getOrCreateSession(projectId, projectPath)
+    const resumeSessionId = getProject(projectId)?.sdkSessionId
+    const session = getOrCreateSession(projectId, projectPath, resumeSessionId)
     wireSessionEvents(session, projectId, getSender)
+    appendUserMessage(projectId, text)
     session.send(text)
   })
+
+  ipcMain.handle('vibe:chat:loadTranscript', (_event, projectId: string) => loadTranscript(projectId))
 
   ipcMain.on(
     'vibe:chat:confirmationResponse',
@@ -112,9 +117,13 @@ function wireSessionEvents(
   wiredSessions.add(session)
 
   session.on('event', (event) => {
+    appendEvent(projectId, event)
     getSender()?.send('vibe:chat:event', projectId, event)
   })
   session.on('confirmation_request', (request: ConfirmationRequest) => {
     getSender()?.send('vibe:chat:confirmationRequest', projectId, request)
+  })
+  session.on('session_id', (sdkSessionId: string) => {
+    setSdkSessionId(projectId, sdkSessionId)
   })
 }

@@ -52,8 +52,9 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
 export class ClaudeSession extends EventEmitter {
   private queue = new MessageQueue()
   private queryHandle: ReturnType<typeof query>
+  private capturedSessionId: string | undefined
 
-  constructor(projectPath: string) {
+  constructor(projectPath: string, resumeSessionId?: string) {
     super()
 
     const codexServer = createCodexDelegationServer(projectPath, (note) => {
@@ -66,6 +67,7 @@ export class ClaudeSession extends EventEmitter {
       options: {
         cwd: projectPath,
         permissionMode: 'acceptEdits',
+        resume: resumeSessionId,
         mcpServers: { vibe_tools: codexServer },
         canUseTool: async (toolName, input) => {
           if (isLikelyDestructive(toolName, input)) {
@@ -85,6 +87,10 @@ export class ClaudeSession extends EventEmitter {
   private async consume(): Promise<void> {
     try {
       for await (const message of this.queryHandle) {
+        if ('session_id' in message && message.session_id && message.session_id !== this.capturedSessionId) {
+          this.capturedSessionId = message.session_id
+          this.emit('session_id', message.session_id)
+        }
         for (const event of mapSdkMessage(message)) {
           this.emit('event', event)
         }
@@ -142,10 +148,14 @@ function isLikelyDestructive(toolName: string, input: unknown): boolean {
 
 const sessions = new Map<string, ClaudeSession>()
 
-export function getOrCreateSession(projectId: string, projectPath: string): ClaudeSession {
+export function getOrCreateSession(
+  projectId: string,
+  projectPath: string,
+  resumeSessionId?: string
+): ClaudeSession {
   const existing = sessions.get(projectId)
   if (existing) return existing
-  const session = new ClaudeSession(projectPath)
+  const session = new ClaudeSession(projectPath, resumeSessionId)
   sessions.set(projectId, session)
   return session
 }

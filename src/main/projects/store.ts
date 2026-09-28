@@ -45,3 +45,15 @@ export function recordProjectOpened(path: string): ProjectRecord {
   writeStore(data)
   return record
 }
+
+export function setSdkSessionId(projectId: string, sdkSessionId: string): void {
+  const data = readStore()
+  const project = data.projects.find((p) => p.id === projectId)
+  if (!project) return
+  project.sdkSessionId = sdkSessionId
+  writeStore(data)
+}
+
+export function getProject(projectId: string): ProjectRecord | undefined {
+  return readStore().projects.find((p) => p.id === projectId)
+}
