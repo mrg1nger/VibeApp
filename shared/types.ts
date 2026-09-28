@@ -18,3 +18,16 @@ export type VibeEvent =
   | { type: 'task_progress'; note: string }
   | { type: 'turn_complete' }
   | { type: 'error'; message: string }
+
+export interface ConfirmationRequest {
+  id: string
+  toolName: string
+  input: unknown
+}
+
+export interface ProjectRecord {
+  id: string
+  path: string
+  name: string
+  lastOpened: string
+}

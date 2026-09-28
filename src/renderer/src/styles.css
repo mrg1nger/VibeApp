@@ -11,6 +11,223 @@ body {
 
 .app {
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  margin-bottom: 1rem;
+  flex-shrink: 0;
+}
+
+.app-nav h1 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.app-nav-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.app-nav-tabs button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #9aa0ab;
+  cursor: pointer;
+}
+
+.app-nav-tabs button.active {
+  background: #1a1d24;
+  color: #e8e8ec;
+}
+
+.project-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.project-actions button {
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  background: #3b5bdb;
+  color: white;
+  cursor: pointer;
+}
+
+.recent-projects ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 560px;
+}
+
+.project-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  border: none;
+  background: #1a1d24;
+  color: #e8e8ec;
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-name {
+  font-weight: 600;
+}
+
+.project-path {
+  font-size: 0.8rem;
+  color: #9aa0ab;
+}
+
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-shrink: 0;
+}
+
+.chat-header button {
+  background: transparent;
+  border: none;
+  color: #9aa0ab;
+  cursor: pointer;
+}
+
+.chat-project-name {
+  font-weight: 600;
+}
+
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding-right: 0.5rem;
+}
+
+.chat-item-user_text p {
+  align-self: flex-end;
+  background: #3b5bdb;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+  max-width: 70%;
+  margin: 0 0 0 auto;
+}
+
+.chat-item-assistant_text p {
+  background: #1a1d24;
+  padding: 0.5rem 0.8rem;
+  border-radius: 10px;
+  max-width: 70%;
+  margin: 0;
+}
+
+.chat-item-thinking {
+  color: #9aa0ab;
+  font-style: italic;
+}
+
+.chat-error {
+  color: #e37b7b;
+}
+
+.tool-card {
+  display: inline-flex;
+  gap: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  background: #1a1d24;
+  font-size: 0.85rem;
+  color: #b8bdc7;
+}
+
+.tool-card-error {
+  background: #4d1f1f;
+  color: #e3a7a7;
+}
+
+.tool-status {
+  color: #6b7280;
+}
+
+.confirmation-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+  border-radius: 8px;
+  background: #4d3f1f;
+  flex-shrink: 0;
+}
+
+.confirmation-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.confirmation-actions button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  flex-shrink: 0;
+}
+
+.chat-input-row input {
+  flex: 1;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #2a2e38;
+  background: #1a1d24;
+  color: #e8e8ec;
+}
+
+.chat-input-row button {
+  padding: 0.6rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  background: #3b5bdb;
+  color: white;
+  cursor: pointer;
+}
+
+.chat-input-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .accounts-list {
