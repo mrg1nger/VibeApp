@@ -1,0 +1,14 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  background: #111318;
+  color: #e8e8ec;
+}
+
+.app {
+  padding: 2rem;
+}

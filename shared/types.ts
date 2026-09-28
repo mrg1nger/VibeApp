@@ -1,0 +1,20 @@
+export type CliName = 'claude' | 'codex'
+
+export type AuthStatus = 'checking' | 'logged_in' | 'logged_out' | 'not_installed'
+
+export interface CliStatus {
+  cli: CliName
+  status: AuthStatus
+  detail?: string
+}
+
+export type VibeEvent =
+  | { type: 'assistant_text'; text: string; partial: boolean }
+  | { type: 'tool_call'; toolUseId: string; name: string; input: unknown; friendlyLabel: string }
+  | { type: 'tool_result'; toolUseId: string; ok: boolean; summary: string; raw: unknown }
+  | { type: 'delegation_started'; toolUseId: string; subtaskPrompt: string }
+  | { type: 'delegation_progress'; toolUseId: string; note: string }
+  | { type: 'delegation_result'; toolUseId: string; ok: boolean; summary: string }
+  | { type: 'task_progress'; note: string }
+  | { type: 'turn_complete' }
+  | { type: 'error'; message: string }
