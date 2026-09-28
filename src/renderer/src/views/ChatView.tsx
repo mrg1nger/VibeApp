@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConfirmationRequest, ProjectRecord, VibeEvent } from '@shared/types'
 import CheckpointButton from '../components/CheckpointButton'
+import GoNutzToggle from '../components/GoNutzToggle'
 
 interface ChatViewProps {
   project: ProjectRecord
@@ -31,7 +32,20 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
   const [busy, setBusy] = useState(false)
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
   const [hasChanges, setHasChanges] = useState(false)
+  const [goNutz, setGoNutz] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    window.vibe.chat.isGoNutzMode(project.id).then(setGoNutz)
+  }, [project.id])
+
+  const handleGoNutzChange = useCallback(
+    async (enabled: boolean) => {
+      await window.vibe.chat.setGoNutzMode(project.id, enabled)
+      setGoNutz(enabled)
+    },
+    [project.id]
+  )
 
   const refreshHasChanges = useCallback(() => {
     window.vibe.git.hasChanges(project.path).then(setHasChanges)
@@ -178,8 +192,15 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
             onCheckpoint={handleCheckpoint}
             suggestMessage={suggestMessage}
           />
+          <GoNutzToggle enabled={goNutz} onChange={handleGoNutzChange} />
         </div>
       </div>
+
+      {goNutz && (
+        <div className="go-nutz-banner">
+          🔥 Go Nutz mode is ON for this project — no confirmation prompts, no sandbox.
+        </div>
+      )}
 
       <div className="chat-log" ref={scrollRef}>
         {items.map((item, i) => (

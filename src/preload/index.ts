@@ -75,7 +75,11 @@ const vibeApi = {
       ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),
     loadTranscript: (projectId: string): Promise<TranscriptEntry[]> =>
-      ipcRenderer.invoke('vibe:chat:loadTranscript', projectId)
+      ipcRenderer.invoke('vibe:chat:loadTranscript', projectId),
+    setGoNutzMode: (projectId: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke('vibe:chat:setGoNutzMode', projectId, enabled),
+    isGoNutzMode: (projectId: string): Promise<boolean> =>
+      ipcRenderer.invoke('vibe:chat:isGoNutzMode', projectId)
   },
 
   git: {

@@ -543,3 +543,98 @@ body {
 .toast-info {
   border-left: 3px solid #3b5bdb;
 }
+
+.go-nutz-control {
+  position: relative;
+}
+
+.go-nutz-button {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #4d1f1f;
+  background: #1a1d24;
+  color: #e37b7b;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.go-nutz-button.go-nutz-active {
+  background: #4d1f1f;
+  color: #ffb4b4;
+  border-color: #e37b7b;
+}
+
+.go-nutz-banner {
+  background: #4d1f1f;
+  color: #ffb4b4;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.go-nutz-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+}
+
+.go-nutz-modal {
+  background: #1a1d24;
+  border: 1px solid #4d1f1f;
+  border-radius: 10px;
+  padding: 1.5rem;
+  width: 460px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.go-nutz-modal h3 {
+  margin: 0;
+  color: #ffb4b4;
+}
+
+.go-nutz-modal p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #d7d9de;
+}
+
+.go-nutz-modal code {
+  background: #0d0f14;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.go-nutz-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.go-nutz-modal-actions button {
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: #333844;
+  color: #e8e8ec;
+}
+
+.go-nutz-modal-actions button.go-nutz-confirm {
+  background: #e37b7b;
+  color: #1a1d24;
+  font-weight: 600;
+}
+
+.go-nutz-modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

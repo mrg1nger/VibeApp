@@ -1,5 +1,10 @@
 import { EventEmitter } from 'events'
-import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import {
+  query,
+  type SDKUserMessage,
+  type HookCallback,
+  type PreToolUseHookInput
+} from '@anthropic-ai/claude-agent-sdk'
 import type { VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
@@ -53,35 +58,74 @@ export class ClaudeSession extends EventEmitter {
   private queue = new MessageQueue()
   private queryHandle: ReturnType<typeof query>
   private capturedSessionId: string | undefined
+  private goNutz: boolean
 
-  constructor(projectPath: string, resumeSessionId?: string) {
+  constructor(projectPath: string, resumeSessionId?: string, initialGoNutz = false) {
     super()
+    this.goNutz = initialGoNutz
 
-    const codexServer = createCodexDelegationServer(projectPath, (note) => {
-      const event: VibeEvent = { type: 'delegation_progress', toolUseId: '', note }
-      this.emit('event', event)
-    })
+    const codexServer = createCodexDelegationServer(
+      projectPath,
+      (note) => {
+        const event: VibeEvent = { type: 'delegation_progress', toolUseId: '', note }
+        this.emit('event', event)
+      },
+      () => this.goNutz
+    )
+
+    // canUseTool is NOT called for a Bash command that stays inside the
+    // session's allowed directories -- it only fires when Claude Code's own
+    // path-boundary check flags a command as reaching outside them. A
+    // destructive-command gate needs PreToolUse instead, which fires for
+    // every tool use regardless of path. Confirmed experimentally: unlike
+    // canUseTool, a PreToolUse hook is NOT skipped by permissionMode:
+    // 'bypassPermissions', so the hook itself has to check goNutz and no-op
+    // when Go Nutz mode is on.
+    const destructiveCommandGate: HookCallback = async (input) => {
+      if (input.hook_event_name !== 'PreToolUse') return { continue: true }
+      const toolInput = input as PreToolUseHookInput
+      if (this.goNutz || !isLikelyDestructive(toolInput.tool_name, toolInput.tool_input)) {
+        return { continue: true }
+      }
+      const approved = await this.requestConfirmation(toolInput.tool_name, toolInput.tool_input)
+      if (approved) return { continue: true }
+      return {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 'User declined this action'
+        }
+      }
+    }
 
     this.queryHandle = query({
       prompt: this.queue,
       options: {
         cwd: projectPath,
-        permissionMode: 'acceptEdits',
+        permissionMode: initialGoNutz ? 'bypassPermissions' : 'acceptEdits',
+        // Always set so setPermissionMode('bypassPermissions') can be used
+        // later to enter Go Nutz mode without recreating the session -- this
+        // flag only takes effect once that mode is actually switched to.
+        allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
         mcpServers: { vibe_tools: codexServer },
-        canUseTool: async (toolName, input) => {
-          if (isLikelyDestructive(toolName, input)) {
-            const approved = await this.requestConfirmation(toolName, input)
-            return approved
-              ? { behavior: 'allow' as const }
-              : { behavior: 'deny' as const, message: 'User declined this action' }
-          }
-          return { behavior: 'allow' as const }
+        hooks: {
+          PreToolUse: [{ hooks: [destructiveCommandGate] }]
         }
       }
     })
 
     this.consume()
+  }
+
+  isGoNutzMode(): boolean {
+    return this.goNutz
+  }
+
+  async setGoNutzMode(enabled: boolean): Promise<void> {
+    this.goNutz = enabled
+    await this.queryHandle.setPermissionMode(enabled ? 'bypassPermissions' : 'acceptEdits')
   }
 
   private async consume(): Promise<void> {
@@ -151,11 +195,12 @@ const sessions = new Map<string, ClaudeSession>()
 export function getOrCreateSession(
   projectId: string,
   projectPath: string,
-  resumeSessionId?: string
+  resumeSessionId?: string,
+  initialGoNutz = false
 ): ClaudeSession {
   const existing = sessions.get(projectId)
   if (existing) return existing
-  const session = new ClaudeSession(projectPath, resumeSessionId)
+  const session = new ClaudeSession(projectPath, resumeSessionId, initialGoNutz)
   sessions.set(projectId, session)
   return session
 }

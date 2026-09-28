@@ -8,6 +8,8 @@ export interface CodexExecArgs {
   prompt: string
   cwd?: string
   timeoutMs?: number
+  /** Go Nutz mode: no sandbox, no approval prompts. EXTREMELY DANGEROUS -- see codex exec --help. */
+  unsandboxed?: boolean
 }
 
 export interface CodexExecResult {
@@ -40,8 +42,9 @@ export async function runCodexExec(
     'exec',
     args.prompt,
     '--json',
-    '--sandbox',
-    'workspace-write',
+    ...(args.unsandboxed
+      ? ['--dangerously-bypass-approvals-and-sandbox']
+      : ['--sandbox', 'workspace-write']),
     '--skip-git-repo-check',
     '-o',
     outputPath

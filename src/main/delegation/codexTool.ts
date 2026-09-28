@@ -6,7 +6,8 @@ export type DelegationProgressListener = (note: string) => void
 
 export function createCodexDelegationServer(
   projectPath: string,
-  onProgress: DelegationProgressListener
+  onProgress: DelegationProgressListener,
+  isGoNutzMode: () => boolean
 ): ReturnType<typeof createSdkMcpServer> {
   return createSdkMcpServer({
     name: 'vibe_tools',
@@ -25,7 +26,12 @@ export function createCodexDelegationServer(
         async (args) => {
           try {
             const result = await runCodexExec(
-              { prompt: args.prompt, cwd: projectPath, timeoutMs: args.timeoutMs ?? 300_000 },
+              {
+                prompt: args.prompt,
+                cwd: projectPath,
+                timeoutMs: args.timeoutMs ?? 300_000,
+                unsandboxed: isGoNutzMode()
+              },
               onProgress
             )
             return {

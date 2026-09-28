@@ -31,6 +31,7 @@ export interface ProjectRecord {
   name: string
   lastOpened: string
   sdkSessionId?: string
+  goNutzMode?: boolean
 }
 
 export interface CheckpointRecord {

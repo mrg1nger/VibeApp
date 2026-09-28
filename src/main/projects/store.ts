@@ -57,3 +57,11 @@ export function setSdkSessionId(projectId: string, sdkSessionId: string): void {
 export function getProject(projectId: string): ProjectRecord | undefined {
   return readStore().projects.find((p) => p.id === projectId)
 }
+
+export function setGoNutzMode(projectId: string, enabled: boolean): void {
+  const data = readStore()
+  const project = data.projects.find((p) => p.id === projectId)
+  if (!project) return
+  project.goNutzMode = enabled
+  writeStore(data)
+}
