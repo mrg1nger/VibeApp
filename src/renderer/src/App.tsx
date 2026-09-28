@@ -3,8 +3,9 @@ import type { ProjectRecord } from '@shared/types'
 import AccountsView from './views/AccountsView'
 import ProjectPickerView from './views/ProjectPickerView'
 import ChatView from './views/ChatView'
+import HistoryView from './views/HistoryView'
 
-type Screen = 'accounts' | 'projects' | 'chat'
+type Screen = 'accounts' | 'projects' | 'chat' | 'history'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('accounts')
@@ -22,7 +23,7 @@ function App() {
             Accounts
           </button>
           <button
-            className={screen === 'projects' || screen === 'chat' ? 'active' : ''}
+            className={screen === 'projects' || screen === 'chat' || screen === 'history' ? 'active' : ''}
             onClick={() => setScreen('projects')}
           >
             Projects
@@ -40,7 +41,14 @@ function App() {
         />
       )}
       {screen === 'chat' && activeProject && (
-        <ChatView project={activeProject} onBack={() => setScreen('projects')} />
+        <ChatView
+          project={activeProject}
+          onBack={() => setScreen('projects')}
+          onOpenHistory={() => setScreen('history')}
+        />
+      )}
+      {screen === 'history' && activeProject && (
+        <HistoryView project={activeProject} onBack={() => setScreen('chat')} />
       )}
     </div>
   )

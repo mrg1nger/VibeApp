@@ -31,3 +31,9 @@ export interface ProjectRecord {
   name: string
   lastOpened: string
 }
+
+export interface CheckpointRecord {
+  hash: string
+  message: string
+  date: string
+}

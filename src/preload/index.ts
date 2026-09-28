@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CliName, CliStatus, ConfirmationRequest, ProjectRecord, VibeEvent } from '@shared/types'
+import type {
+  CheckpointRecord,
+  CliName,
+  CliStatus,
+  ConfirmationRequest,
+  ProjectRecord,
+  VibeEvent
+} from '@shared/types'
 
 const vibeApi = {
   ping: (): Promise<string> => ipcRenderer.invoke('vibe:ping'),
@@ -66,6 +73,19 @@ const vibeApi = {
     respondToConfirmation: (projectId: string, confirmationId: string, approved: boolean): void =>
       ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId)
+  },
+
+  git: {
+    hasChanges: (projectPath: string): Promise<boolean> =>
+      ipcRenderer.invoke('vibe:git:hasChanges', projectPath),
+    suggestMessage: (projectPath: string): Promise<string> =>
+      ipcRenderer.invoke('vibe:git:suggestMessage', projectPath),
+    checkpoint: (projectPath: string, message: string): Promise<CheckpointRecord> =>
+      ipcRenderer.invoke('vibe:git:checkpoint', projectPath, message),
+    history: (projectPath: string): Promise<CheckpointRecord[]> =>
+      ipcRenderer.invoke('vibe:git:history', projectPath),
+    restore: (projectPath: string, commitHash: string): Promise<string> =>
+      ipcRenderer.invoke('vibe:git:restore', projectPath, commitHash)
   }
 }
 

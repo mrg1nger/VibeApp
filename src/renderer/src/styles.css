@@ -323,3 +323,148 @@ body {
   padding: 0.5rem;
   background: #0d0f14;
 }
+
+.chat-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.chat-header-actions button {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  border: none;
+  background: #1a1d24;
+  color: #e8e8ec;
+  cursor: pointer;
+}
+
+.checkpoint-control {
+  position: relative;
+}
+
+.checkpoint-badge {
+  background: #3b5bdb !important;
+  color: white;
+}
+
+.checkpoint-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.checkpoint-modal {
+  background: #1a1d24;
+  border-radius: 10px;
+  padding: 1.25rem;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.checkpoint-modal h3 {
+  margin: 0;
+}
+
+.checkpoint-modal input {
+  padding: 0.5rem 0.7rem;
+  border-radius: 6px;
+  border: 1px solid #2a2e38;
+  background: #111318;
+  color: #e8e8ec;
+}
+
+.checkpoint-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.checkpoint-modal-actions button {
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: #333844;
+  color: #e8e8ec;
+}
+
+.checkpoint-modal-actions button:last-child {
+  background: #3b5bdb;
+  color: white;
+}
+
+.checkpoint-modal-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.history-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.restore-banner {
+  background: #1f4d2e;
+  color: #a7e3bd;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.checkpoint-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+}
+
+.checkpoint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  background: #1a1d24;
+}
+
+.checkpoint-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.checkpoint-message {
+  font-weight: 600;
+}
+
+.checkpoint-meta {
+  font-size: 0.8rem;
+  color: #9aa0ab;
+}
+
+.checkpoint-row button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  border: none;
+  background: #333844;
+  color: #e8e8ec;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.checkpoint-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ConfirmationRequest, ProjectRecord, VibeEvent } from '@shared/types'
+import CheckpointButton from '../components/CheckpointButton'
 
 interface ChatViewProps {
   project: ProjectRecord
   onBack: () => void
+  onOpenHistory: () => void
 }
 
 type ChatItem =
@@ -22,12 +24,21 @@ type ChatItem =
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 
-function ChatView({ project, onBack }: ChatViewProps) {
+function ChatView({ project, onBack, onOpenHistory }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
+  const [hasChanges, setHasChanges] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const refreshHasChanges = useCallback(() => {
+    window.vibe.git.hasChanges(project.path).then(setHasChanges)
+  }, [project.path])
+
+  useEffect(() => {
+    refreshHasChanges()
+  }, [refreshHasChanges])
 
   const applyEvent = useCallback((event: VibeEvent) => {
     setItems((prev) => {
@@ -69,12 +80,13 @@ function ChatView({ project, onBack }: ChatViewProps) {
           return [...prev, { kind: 'error', message: event.message }]
         case 'turn_complete':
           setBusy(false)
+          refreshHasChanges()
           return prev
         default:
           return prev
       }
     })
-  }, [])
+  }, [refreshHasChanges])
 
   useEffect(() => {
     const unsubEvent = window.vibe.chat.onEvent((projectId, event) => {
@@ -111,11 +123,32 @@ function ChatView({ project, onBack }: ChatViewProps) {
     [confirmation, project.id]
   )
 
+  const handleCheckpoint = useCallback(
+    async (message: string) => {
+      await window.vibe.git.checkpoint(project.path, message)
+      refreshHasChanges()
+    },
+    [project.path, refreshHasChanges]
+  )
+
+  const suggestMessage = useCallback(
+    () => window.vibe.git.suggestMessage(project.path),
+    [project.path]
+  )
+
   return (
     <div className="chat-view">
       <div className="chat-header">
         <button onClick={onBack}>&larr; Projects</button>
         <span className="chat-project-name">{project.name}</span>
+        <div className="chat-header-actions">
+          <button onClick={onOpenHistory}>History</button>
+          <CheckpointButton
+            hasChanges={hasChanges}
+            onCheckpoint={handleCheckpoint}
+            suggestMessage={suggestMessage}
+          />
+        </div>
       </div>
 
       <div className="chat-log" ref={scrollRef}>

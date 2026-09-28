@@ -5,7 +5,14 @@ import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
 import { listProjects, recordProjectOpened } from '../projects/store'
-import { ensureRepo } from '../git/repo'
+import {
+  ensureRepo,
+  hasUncommittedChanges,
+  suggestCheckpointMessage,
+  checkpoint,
+  history,
+  restoreCheckpoint
+} from '../git/repo'
 import { getOrCreateSession, getSession, disposeSession } from '../orchestrator/session'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
@@ -74,6 +81,24 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.on('vibe:chat:dispose', (_event, projectId: string) => {
     disposeSession(projectId)
   })
+
+  ipcMain.handle('vibe:git:hasChanges', (_event, projectPath: string) =>
+    hasUncommittedChanges(projectPath)
+  )
+
+  ipcMain.handle('vibe:git:suggestMessage', (_event, projectPath: string) =>
+    suggestCheckpointMessage(projectPath)
+  )
+
+  ipcMain.handle('vibe:git:checkpoint', (_event, projectPath: string, message: string) =>
+    checkpoint(projectPath, message)
+  )
+
+  ipcMain.handle('vibe:git:history', (_event, projectPath: string) => history(projectPath))
+
+  ipcMain.handle('vibe:git:restore', (_event, projectPath: string, commitHash: string) =>
+    restoreCheckpoint(projectPath, commitHash)
+  )
 }
 
 const wiredSessions = new WeakSet<object>()
