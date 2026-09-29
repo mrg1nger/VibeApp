@@ -21,6 +21,7 @@ function friendlyToolLabel(name: string, input: unknown): string {
     case 'Edit':
       return `Edited ${(input as { file_path?: string })?.file_path ?? 'a file'}`
     case 'Bash':
+    case 'PowerShell':
       return `Ran: ${(input as { command?: string })?.command ?? 'a command'}`
     case 'Glob':
     case 'Grep':

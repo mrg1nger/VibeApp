@@ -103,6 +103,8 @@ const vibeApi = {
     },
     respondToConfirmation: (projectId: string, confirmationId: string, approved: boolean): void =>
       ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
+    pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
+      ipcRenderer.invoke('vibe:chat:pendingConfirmations', projectId),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),
     loadTranscript: (projectId: string): Promise<TranscriptEntry[]> =>
       ipcRenderer.invoke('vibe:chat:loadTranscript', projectId),

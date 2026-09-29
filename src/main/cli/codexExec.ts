@@ -1,8 +1,63 @@
-import { spawn } from 'child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { execFile, spawn, type ChildProcess } from 'child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
+import { promisify } from 'util'
+
+const execFileAsync = promisify(execFile)
+
+const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. Call recall first to see what's known about this project. Before finishing, use remember to save anything worth keeping across sessions (architecture choices, how to run/build/test, gotchas), one standalone sentence per fact. Don't save secrets or temporary task state.`
+
+interface CodexLaunch {
+  file: string
+  prefixArgs: string[]
+  env?: NodeJS.ProcessEnv
+}
+
+/**
+ * Finds a way to start Codex without going through cmd.exe. On Windows an npm
+ * install is a codex.cmd shim, and spawning that means cmd.exe parses the
+ * whole command line: quotes and & in arguments can split it into extra
+ * commands, and it caps the line at ~8K characters. The shim just runs
+ * bin/codex.js with Node, and this app's own binary is a Node runtime
+ * (ELECTRON_RUN_AS_NODE), so run codex.js directly.
+ */
+async function resolveCodexLaunch(): Promise<CodexLaunch> {
+  if (process.platform !== 'win32') return { file: 'codex', prefixArgs: [] }
+  try {
+    const { stdout } = await execFileAsync('where', ['codex'], { timeout: 5_000 })
+    const matches = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    const exe = matches.find((m) => m.toLowerCase().endsWith('.exe'))
+    if (exe) return { file: exe, prefixArgs: [] }
+    const shim = matches.find((m) => m.toLowerCase().endsWith('.cmd'))
+    if (shim) {
+      const codexJs = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+      if (existsSync(codexJs)) {
+        return {
+          file: process.execPath,
+          prefixArgs: [codexJs],
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+        }
+      }
+    }
+  } catch {
+    // fall through to the cmd.exe route
+  }
+  // Last resort. The prompt goes over stdin, so only app-controlled paths
+  // pass through cmd.exe here.
+  return { file: 'cmd.exe', prefixArgs: ['/d', '/s', '/c', 'codex'] }
+}
+
+function killTree(child: ChildProcess): void {
+  if (process.platform === 'win32' && child.pid) {
+    // child.kill() only ends the direct child; Codex's own subprocesses
+    // (and codex.exe under the node launcher) would keep running.
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+  } else {
+    child.kill()
+  }
+}
 
 export interface CodexExecArgs {
   prompt: string
@@ -52,9 +107,11 @@ export async function runCodexExec(
   // still enforces an equivalent workspace-only write boundary (a write
   // outside the project folder was denied), regardless of this machine's
   // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
+  const prompt = args.memory ? `${CODEX_MEMORY_INSTRUCTIONS}\n\n${args.prompt}` : args.prompt
+
   const cliArgs = [
     'exec',
-    args.prompt,
+    '-', // read the prompt from stdin; see resolveCodexLaunch
     '--json',
     ...(args.unsandboxed
       ? ['--dangerously-bypass-approvals-and-sandbox']
@@ -88,22 +145,21 @@ export async function runCodexExec(
     )
   }
 
-  // Windows: `codex` resolves to an npm .cmd shim, which spawn() cannot
-  // launch directly (CreateProcess skips PATHEXT resolution) -- route
-  // through cmd.exe /c the same way ptySession.ts and execCli.ts do.
-  const [file, finalArgs] =
-    process.platform === 'win32' ? ['cmd.exe', ['/d', '/s', '/c', 'codex', ...cliArgs]] : ['codex', cliArgs]
+  const launch = await resolveCodexLaunch()
 
   const events: CodexJsonEvent[] = []
 
   const exitCode = await new Promise<number>((resolve, reject) => {
-    const child = spawn(file, finalArgs, { windowsHide: true })
+    const child = spawn(launch.file, [...launch.prefixArgs, ...cliArgs], {
+      windowsHide: true,
+      env: launch.env
+    })
     let stdoutBuffer = ''
     let stderrOutput = ''
 
     const timeout = args.timeoutMs
       ? setTimeout(() => {
-          child.kill()
+          killTree(child)
           reject(new Error(`Codex subtask timed out after ${args.timeoutMs}ms`))
         }, args.timeoutMs)
       : undefined
@@ -143,9 +199,7 @@ export async function runCodexExec(
       resolve(code)
     })
 
-    // Codex reads from stdin if no prompt arg is given; since we always pass
-    // one as an argument, close stdin immediately so it never waits on it.
-    child.stdin.end()
+    child.stdin.end(prompt)
   })
 
   let finalMessage = ''

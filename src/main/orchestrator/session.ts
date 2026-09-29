@@ -1,13 +1,14 @@
 import { EventEmitter } from 'events'
 import { watch, type FSWatcher } from 'fs'
 import { dirname, join } from 'path'
+import { randomUUID } from 'crypto'
 import {
   query,
   type SDKUserMessage,
   type HookCallback,
   type PreToolUseHookInput
 } from '@anthropic-ai/claude-agent-sdk'
-import type { VibeEvent } from '@shared/types'
+import type { ConfirmationRequest, VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
 import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../memory/paths'
@@ -29,10 +30,17 @@ function resolveClaudeExecutable(): string | undefined {
   }
 }
 
+const MEMORY_INSTRUCTIONS = `# Project memory (required)
+This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
+1. Before starting work on any user request, call mcp__vibe_memory__recall once.
+2. Before your final reply for a request, call mcp__vibe_memory__remember for each new durable fact you learned or decided: the project's purpose, tech stack and structure, how to run/build/test it, key decisions, the user's stated preferences, and non-obvious gotchas. Skip facts already in memory.
+3. One standalone sentence per fact. Never save secrets, credentials, or temporary task state.
+4. Set global: true only for the user's preferences that apply to all their projects.`
+
 /** A pushable async queue feeding query()'s streaming-input mode. */
 class MessageQueue implements AsyncIterable<SDKUserMessage> {
   private pending: SDKUserMessage[] = []
-  private waiters: Array<(msg: SDKUserMessage) => void> = []
+  private waiter: ((msg: SDKUserMessage | null) => void) | undefined
   private closed = false
 
   push(text: string): void {
@@ -41,7 +49,8 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
       message: { role: 'user', content: text },
       parent_tool_use_id: null
     }
-    const waiter = this.waiters.shift()
+    const waiter = this.waiter
+    this.waiter = undefined
     if (waiter) {
       waiter(message)
     } else {
@@ -51,6 +60,9 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
 
   close(): void {
     this.closed = true
+    const waiter = this.waiter
+    this.waiter = undefined
+    waiter?.(null)
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
@@ -60,14 +72,7 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
         continue
       }
       const message = await new Promise<SDKUserMessage | null>((resolve) => {
-        this.waiters.push(resolve as (msg: SDKUserMessage) => void)
-        // Allow close() to unblock a waiting iterator.
-        const checkClosed = setInterval(() => {
-          if (this.closed) {
-            clearInterval(checkClosed)
-            resolve(null)
-          }
-        }, 100)
+        this.waiter = resolve
       })
       if (message) yield message
     }
@@ -80,6 +85,9 @@ export class ClaudeSession extends EventEmitter {
   private capturedSessionId: string | undefined
   private goNutz: boolean
   private disposed = false
+  private dead = false
+  private turnsInFlight = 0
+  private reloadPending = false
   private mcpWatcher: FSWatcher | undefined
   private reloadTimer: NodeJS.Timeout | undefined
 
@@ -124,7 +132,10 @@ export class ClaudeSession extends EventEmitter {
       args: [memoryPaths.scriptPath, memoryPaths.projectMemoryPath, memoryPaths.globalMemoryPath, 'claude'],
       // Merged over the inherited environment by the CLI; passing all of
       // process.env here would serialize it onto the command line.
-      env: { ELECTRON_RUN_AS_NODE: '1' }
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      // MCP tools are otherwise deferred behind tool search, and Claude
+      // skipped the memory instructions when it had to go looking first.
+      alwaysLoad: true
     }
 
     // canUseTool is NOT called for a Bash command that stays inside the
@@ -158,7 +169,11 @@ export class ClaudeSession extends EventEmitter {
       if (this.goNutz || !isLikelyDestructive(toolInput.tool_name, toolInput.tool_input)) {
         return { continue: true }
       }
-      const approved = await this.requestConfirmation(toolInput.tool_name, toolInput.tool_input)
+      const approved = await this.requestConfirmation(
+        toolInput.tool_name,
+        toolInput.tool_input,
+        `Claude wants to run a potentially destructive command via ${toolInput.tool_name}.`
+      )
       if (approved) return { continue: true }
       return {
         continue: true,
@@ -182,7 +197,26 @@ export class ClaudeSession extends EventEmitter {
         // flag only takes effect once that mode is actually switched to.
         allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: MEMORY_INSTRUCTIONS },
         mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
+        // Only called when Claude Code itself wants to ask (sensitive files
+        // like .mcp.json, paths outside the project). With no handler those
+        // requests were silently denied.
+        canUseTool: async (toolName, input, options) => {
+          const filePath = (input as { file_path?: string }).file_path ?? ''
+          if (/(^|[\\/])\.mcp\.json$/.test(filePath)) {
+            // Lets Claude install MCP servers; watchMcpConfig reloads them.
+            return { behavior: 'allow', updatedInput: input }
+          }
+          const approved = await this.requestConfirmation(
+            toolName,
+            input,
+            options.title ?? `Claude wants to use ${toolName}.`
+          )
+          return approved
+            ? { behavior: 'allow', updatedInput: input }
+            : { behavior: 'deny', message: 'The user declined this action.' }
+        },
         hooks: {
           PreToolUse: [{ hooks: [destructiveCommandGate] }]
         }
@@ -216,7 +250,7 @@ export class ClaudeSession extends EventEmitter {
         if (filename !== '.mcp.json') return
         // Debounce: editors/writers often emit multiple change events per save.
         if (this.reloadTimer) clearTimeout(this.reloadTimer)
-        this.reloadTimer = setTimeout(() => this.reload(), 500)
+        this.reloadTimer = setTimeout(() => this.requestReload(), 500)
       })
     } catch {
       // The project directory itself doesn't exist (shouldn't normally
@@ -226,13 +260,33 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  // Claude usually edits .mcp.json in the middle of a turn. Reloading then
+  // would abandon that turn (its result is ignored once superseded) and leave
+  // the UI waiting forever, so wait until no turn is running.
+  private requestReload(): void {
+    if (this.turnsInFlight > 0) {
+      this.reloadPending = true
+      return
+    }
+    this.reload()
+  }
+
   private reload(): void {
-    if (this.disposed) return
+    if (this.disposed || this.dead) return
+    this.reloadPending = false
     const oldQueue = this.queue
     this.queue = this.startQuery(this.capturedSessionId, this.goNutz)
     oldQueue.close()
     const event: VibeEvent = { type: 'task_progress', note: 'mcp_config_reloaded' }
     this.emit('event', event)
+  }
+
+  isDead(): boolean {
+    return this.dead
+  }
+
+  getCapturedSessionId(): string | undefined {
+    return this.capturedSessionId
   }
 
   isGoNutzMode(): boolean {
@@ -246,6 +300,7 @@ export class ClaudeSession extends EventEmitter {
 
   private async consume(): Promise<void> {
     const queryHandle = this.queryHandle
+    let failure: string | undefined
     try {
       for await (const message of queryHandle) {
         if (queryHandle !== this.queryHandle) return // superseded by a reload
@@ -253,36 +308,60 @@ export class ClaudeSession extends EventEmitter {
           this.capturedSessionId = message.session_id
           this.emit('session_id', message.session_id)
         }
+        if (message.type === 'result') {
+          this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+        }
         for (const event of mapSdkMessage(message)) {
           this.emit('event', event)
         }
+        if (message.type === 'result' && this.reloadPending && this.turnsInFlight === 0) {
+          this.reload()
+        }
       }
     } catch (err) {
-      if (queryHandle !== this.queryHandle) return // superseded by a reload
-      const event: VibeEvent = { type: 'error', message: (err as Error).message }
-      this.emit('event', event)
+      failure = (err as Error).message
+    }
+    if (queryHandle !== this.queryHandle || this.disposed) return
+    // The Claude process is gone (crash, launch failure, auth error). Mark
+    // the session dead so the next message starts a fresh one, and end the
+    // current turn so the UI doesn't wait forever.
+    this.dead = true
+    this.queue.close()
+    if (this.turnsInFlight > 0 || failure) {
+      this.turnsInFlight = 0
+      if (failure) this.emit('event', { type: 'error', message: failure } satisfies VibeEvent)
+      this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
     }
   }
 
-  private confirmationWaiters = new Map<string, (approved: boolean) => void>()
+  private confirmationWaiters = new Map<
+    string,
+    { resolve: (approved: boolean) => void; request: ConfirmationRequest }
+  >()
 
-  private requestConfirmation(toolName: string, input: unknown): Promise<boolean> {
+  private requestConfirmation(toolName: string, input: unknown, reason: string): Promise<boolean> {
     return new Promise((resolve) => {
-      const id = `${toolName}-${Date.now()}`
-      this.confirmationWaiters.set(id, resolve)
-      this.emit('confirmation_request', { id, toolName, input })
+      const request: ConfirmationRequest = { id: randomUUID(), toolName, input, reason }
+      this.confirmationWaiters.set(request.id, { resolve, request })
+      this.emit('confirmation_request', request)
     })
   }
 
+  /** Confirmations still waiting on the user, so a remounted chat can show them again. */
+  pendingConfirmations(): ConfirmationRequest[] {
+    return [...this.confirmationWaiters.values()].map((w) => w.request)
+  }
+
   resolveConfirmation(id: string, approved: boolean): void {
-    const resolver = this.confirmationWaiters.get(id)
-    if (resolver) {
-      resolver(approved)
+    const waiter = this.confirmationWaiters.get(id)
+    if (waiter) {
+      waiter.resolve(approved)
       this.confirmationWaiters.delete(id)
     }
   }
 
   send(text: string): void {
+    this.turnsInFlight++
     this.queue.push(text)
   }
 
@@ -294,22 +373,29 @@ export class ClaudeSession extends EventEmitter {
     this.disposed = true
     if (this.reloadTimer) clearTimeout(this.reloadTimer)
     this.mcpWatcher?.close()
+    for (const { resolve } of this.confirmationWaiters.values()) resolve(false)
+    this.confirmationWaiters.clear()
     this.queue.close()
   }
 }
 
-const DESTRUCTIVE_BASH_PATTERNS = [
-  /\brm\s+-rf\b/i,
-  /\bgit\s+push\s+.*--force/i,
+const DESTRUCTIVE_PATTERNS = [
+  /\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r/i,
+  /\bgit\s+push\s+.*(--force|-f\b)/i,
   /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-[a-z]*f/i,
   /\bdrop\s+(table|database)\b/i,
-  /\bformat\b.*[a-z]:/i
+  /\bformat(-volume)?\b.*[a-z]:/i,
+  // PowerShell / cmd equivalents -- Claude uses a PowerShell tool on Windows.
+  /\b(remove-item|rm|ri|del|erase|rd|rmdir)\b.*(-recurse|\/s\b)/i
 ]
 
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
+
 function isLikelyDestructive(toolName: string, input: unknown): boolean {
-  if (toolName !== 'Bash') return false
+  if (!SHELL_TOOLS.has(toolName)) return false
   const command = (input as { command?: string })?.command ?? ''
-  return DESTRUCTIVE_BASH_PATTERNS.some((pattern) => pattern.test(command))
+  return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command))
 }
 
 const sessions = new Map<string, ClaudeSession>()
@@ -321,7 +407,12 @@ export function getOrCreateSession(
   initialGoNutz = false
 ): ClaudeSession {
   const existing = sessions.get(projectId)
-  if (existing) return existing
+  if (existing && !existing.isDead()) return existing
+  if (existing) {
+    resumeSessionId = existing.getCapturedSessionId() ?? resumeSessionId
+    initialGoNutz = existing.isGoNutzMode()
+    existing.dispose()
+  }
   const session = new ClaudeSession(projectId, projectPath, resumeSessionId, initialGoNutz)
   sessions.set(projectId, session)
   return session

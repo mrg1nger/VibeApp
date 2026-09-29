@@ -3,7 +3,7 @@ import { mkdirSync } from 'fs'
 import type { CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
-import { isCliOnPath } from '../cli/execCli'
+import { isCliOnPath, refreshPathFromRegistry } from '../cli/execCli'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
 import {
   startInstallSession,
@@ -69,7 +69,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     session.on('data', (data: string) => {
       getSender()?.send('vibe:install:data', session.id, data)
     })
-    session.on('exit', (exitCode: number) => {
+    session.on('exit', async (exitCode: number) => {
+      await refreshPathFromRegistry()
       getSender()?.send('vibe:install:exit', session.id, exitCode)
     })
     return session.id
@@ -144,6 +145,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     (_event, projectId: string, confirmationId: string, approved: boolean) => {
       getSession(projectId)?.resolveConfirmation(confirmationId, approved)
     }
+  )
+
+  ipcMain.handle('vibe:chat:pendingConfirmations', (_event, projectId: string) =>
+    getSession(projectId)?.pendingConfirmations() ?? []
   )
 
   ipcMain.on('vibe:chat:dispose', (_event, projectId: string) => {

@@ -20,6 +20,7 @@ function App() {
     codex: { cli: 'codex', status: 'checking' }
   })
   const { toasts, pushToast, dismissToast } = useToasts()
+  const showError = useCallback((message: string) => pushToast(message, 'error'), [pushToast])
 
   const refreshStatus = useCallback((cli: CliName) => {
     window.vibe.auth.check(cli).then((status) => {
@@ -73,7 +74,7 @@ function App() {
             setActiveProject(project)
             setScreen('chat')
           }}
-          onError={(message) => pushToast(message, 'error')}
+          onError={showError}
         />
       )}
       {screen === 'projects' && !claudeReady && !claudeChecking && (
@@ -93,11 +94,15 @@ function App() {
           project={activeProject}
           onBack={() => setScreen('projects')}
           onOpenHistory={() => setScreen('history')}
-          onError={(message) => pushToast(message, 'error')}
+          onError={showError}
         />
       )}
       {screen === 'history' && activeProject && (
-        <HistoryView project={activeProject} onBack={() => setScreen('chat')} />
+        <HistoryView
+          project={activeProject}
+          onBack={() => setScreen('chat')}
+          onError={showError}
+        />
       )}
       {screen === 'memory' && <MemoryView project={activeProject} />}
 

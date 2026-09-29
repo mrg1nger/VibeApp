@@ -31,7 +31,10 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
-  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null)
+  // A queue: two destructive commands can be pending at once, and each one
+  // leaves Claude waiting until it's answered.
+  const [confirmations, setConfirmations] = useState<ConfirmationRequest[]>([])
+  const confirmation = confirmations[0] ?? null
   const [hasChanges, setHasChanges] = useState(false)
   const [goNutz, setGoNutz] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -137,8 +140,12 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
     const unsubEvent = window.vibe.chat.onEvent((projectId, event) => {
       if (projectId === project.id) applyEvent(event)
     })
+    const addConfirmations = (requests: ConfirmationRequest[]): void =>
+      setConfirmations((prev) => [...prev, ...requests.filter((r) => !prev.some((p) => p.id === r.id))])
+    // Pick up any that arrived while this chat wasn't open.
+    window.vibe.chat.pendingConfirmations(project.id).then(addConfirmations)
     const unsubConfirm = window.vibe.chat.onConfirmationRequest((projectId, request) => {
-      if (projectId === project.id) setConfirmation(request)
+      if (projectId === project.id) addConfirmations([request])
     })
     return () => {
       unsubEvent()
@@ -168,7 +175,7 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
     (approved: boolean) => {
       if (!confirmation) return
       window.vibe.chat.respondToConfirmation(project.id, confirmation.id, approved)
-      setConfirmation(null)
+      setConfirmations((prev) => prev.filter((c) => c.id !== confirmation.id))
     },
     [confirmation, project.id]
   )
@@ -233,10 +240,7 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
 
       {confirmation && (
         <div className="confirmation-banner">
-          <span>
-            Claude wants to run a potentially destructive command via {confirmation.toolName}.
-            Allow it?
-          </span>
+          <span>{confirmation.reason} Allow it?</span>
           <div className="confirmation-actions">
             <button onClick={() => handleConfirmation(true)}>Allow</button>
             <button onClick={() => handleConfirmation(false)}>Deny</button>

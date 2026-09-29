@@ -4,9 +4,10 @@ import type { CheckpointRecord, ProjectRecord } from '@shared/types'
 interface HistoryViewProps {
   project: ProjectRecord
   onBack: () => void
+  onError: (message: string) => void
 }
 
-function HistoryView({ project, onBack }: HistoryViewProps) {
+function HistoryView({ project, onBack, onError }: HistoryViewProps) {
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [restoring, setRestoring] = useState<string | null>(null)
@@ -16,10 +17,12 @@ function HistoryView({ project, onBack }: HistoryViewProps) {
     setLoading(true)
     try {
       setCheckpoints(await window.vibe.git.history(project.path))
+    } catch (err) {
+      onError(`Couldn't load history: ${(err as Error).message}`)
     } finally {
       setLoading(false)
     }
-  }, [project.path])
+  }, [project.path, onError])
 
   useEffect(() => {
     load()
@@ -31,11 +34,13 @@ function HistoryView({ project, onBack }: HistoryViewProps) {
       try {
         const branchName = await window.vibe.git.restore(project.path, hash)
         setRestoredBranch(branchName)
+      } catch (err) {
+        onError(`Couldn't restore that checkpoint: ${(err as Error).message}`)
       } finally {
         setRestoring(null)
       }
     },
-    [project.path]
+    [project.path, onError]
   )
 
   return (

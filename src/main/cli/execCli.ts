@@ -1,4 +1,5 @@
 import { execFile } from 'child_process'
+import { join } from 'path'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
@@ -44,6 +45,43 @@ export async function isCliOnPath(command: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Installers (winget Node/Git, npm -g) update PATH in the registry, but a
+ * running process keeps the PATH it started with, so newly installed tools
+ * look missing until the app restarts. Re-read the machine and user PATH and
+ * merge them into this process's environment (children inherit it).
+ */
+export async function refreshPathFromRegistry(): Promise<void> {
+  if (process.platform !== 'win32') return
+  try {
+    // Absolute path: this is repairing PATH, so it can't rely on PATH.
+    const powershell = join(
+      process.env.SystemRoot ?? 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
+    )
+    const { stdout } = await execFileAsync(
+      powershell,
+      [
+        '-NoProfile',
+        '-Command',
+        "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"
+      ],
+      { timeout: 10_000, windowsHide: true }
+    )
+    const current = (process.env.PATH ?? '').split(';')
+    const merged = [...current]
+    for (const entry of stdout.trim().split(';')) {
+      if (entry && !merged.some((e) => e.toLowerCase() === entry.toLowerCase())) merged.push(entry)
+    }
+    process.env.PATH = merged.filter(Boolean).join(';')
+  } catch {
+    // Keep the existing PATH; a restart still picks up the change.
   }
 }
 

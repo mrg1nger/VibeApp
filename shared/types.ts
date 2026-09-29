@@ -23,6 +23,8 @@ export interface ConfirmationRequest {
   id: string
   toolName: string
   input: unknown
+  /** Human-readable description of what's being asked, e.g. "Claude wants to edit ~/x.txt". */
+  reason: string
 }
 
 export interface ProjectRecord {
