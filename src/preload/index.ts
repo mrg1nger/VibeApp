@@ -214,6 +214,7 @@ const vibeApi = {
     ): Promise<string> => ipcRenderer.invoke('vibe:publish:github', projectId, projectPath, options),
     ghInstall: (): Promise<string> => ipcRenderer.invoke('vibe:publish:ghInstall'),
     ghLogin: (): Promise<string> => ipcRenderer.invoke('vibe:publish:ghLogin'),
+    vercelLogin: (): Promise<string> => ipcRenderer.invoke('vibe:publish:vercelLogin'),
     vercel: (projectId: string, projectPath: string, includeSecrets: boolean): Promise<string> =>
       ipcRenderer.invoke('vibe:publish:vercel', projectId, projectPath, includeSecrets),
     vercelResult: (sessionId: string): Promise<string | null> =>

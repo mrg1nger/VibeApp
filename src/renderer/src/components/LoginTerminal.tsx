@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 
 interface PtyApi {
@@ -31,6 +32,8 @@ function LoginTerminal({ sessionId, onExit, api = window.vibe.login }: LoginTerm
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
+    // Sign-in flows print links; window.open hands them to the real browser.
+    term.loadAddon(new WebLinksAddon((_event, uri) => window.open(uri)))
     term.open(container)
     fitAddon.fit()
 

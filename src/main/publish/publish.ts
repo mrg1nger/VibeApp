@@ -40,13 +40,26 @@ async function ghLoggedIn(): Promise<boolean> {
   }
 }
 
+async function vercelLoggedIn(): Promise<boolean> {
+  try {
+    const npx = await resolveNpx()
+    await execFileAsync(npx.file, [...npx.prefixArgs, '--yes', 'vercel@latest', 'whoami'], {
+      windowsHide: true,
+      timeout: 90_000
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function publishStatus(projectId: string, projectPath: string): Promise<PublishStatus> {
-  const ghInstalled = await isCliOnPath('gh')
-  const [ghAuthed, githubUrl, leaks, nodeInstalled] = await Promise.all([
+  const [ghInstalled, nodeInstalled] = await Promise.all([isCliOnPath('gh'), isCliOnPath('node')])
+  const [ghAuthed, vercelAuthed, githubUrl, leaks] = await Promise.all([
     ghInstalled ? ghLoggedIn() : Promise.resolve(false),
+    nodeInstalled ? vercelLoggedIn() : Promise.resolve(false),
     githubRemote(projectPath),
-    scanProject(projectPath, secretValues(projectId)),
-    isCliOnPath('node')
+    scanProject(projectPath, secretValues(projectId))
   ])
   let secretNames: string[] = []
   try {
@@ -57,6 +70,7 @@ export async function publishStatus(projectId: string, projectPath: string): Pro
   return {
     ghInstalled,
     ghLoggedIn: ghAuthed,
+    vercelLoggedIn: vercelAuthed,
     githubUrl,
     deployUrl: getProject(projectId)?.deployUrl ?? null,
     secretNames,
@@ -169,7 +183,21 @@ async function resolveNpx(): Promise<{ file: string; prefixArgs: string[] }> {
   throw new Error("Couldn't find npx next to Node.js. Try reinstalling Node from the Accounts tab.")
 }
 
-/** The terminal command that deploys the project to Vercel (signing in first if needed). */
+/**
+ * Vercel sign-in. It has to be its own step: with --yes, `vercel deploy`
+ * won't start a login and just fails with "No existing credentials found".
+ */
+export async function vercelLoginSessionOptions(): Promise<PtySessionOptions> {
+  const npx = await resolveNpx()
+  return { file: npx.file, args: [...npx.prefixArgs, '--yes', 'vercel@latest', 'login'], direct: true }
+}
+
+/** Vercel's device sign-in page, as printed by `vercel login`. */
+export function parseVercelLoginUrl(output: string): string | null {
+  return /https:\/\/vercel\.com\/oauth\/device\?user_code=[A-Z0-9-]+/.exec(output)?.[0] ?? null
+}
+
+/** The terminal command that deploys the project to Vercel (already signed in). */
 export async function vercelDeploySessionOptions(
   projectId: string,
   projectPath: string,

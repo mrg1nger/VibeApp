@@ -64,6 +64,8 @@ import {
   publishToGitHub,
   ghLoginSessionOptions,
   vercelDeploySessionOptions,
+  vercelLoginSessionOptions,
+  parseVercelLoginUrl,
   parseVercelUrl
 } from '../publish/publish'
 
@@ -331,6 +333,24 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   )
   ipcMain.handle('vibe:publish:ghInstall', () => wireInstallSession(startGhInstallSession()))
   ipcMain.handle('vibe:publish:ghLogin', () => wireInstallSession(startTerminalSession(ghLoginSessionOptions())))
+
+  ipcMain.handle('vibe:publish:vercelLogin', async () => {
+    const session = startTerminalSession(await vercelLoginSessionOptions())
+    // Open the sign-in page for the user instead of making them copy the
+    // link out of the terminal.
+    let output = ''
+    let opened = false
+    session.on('data', (data: string) => {
+      if (opened) return
+      output += data
+      const url = parseVercelLoginUrl(output)
+      if (url) {
+        opened = true
+        shell.openExternal(url)
+      }
+    })
+    return wireInstallSession(session)
+  })
 
   const deployResults = new Map<string, string | null>()
   ipcMain.handle(

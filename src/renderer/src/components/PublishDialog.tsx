@@ -11,7 +11,7 @@ interface PublishDialogProps {
   onFixLeaks: (message: string) => void
 }
 
-type Terminal = { sessionId: string; purpose: 'gh-install' | 'gh-login' | 'vercel' }
+type Terminal = { sessionId: string; purpose: 'gh-install' | 'gh-login' | 'vercel-login' | 'vercel' }
 
 function repoNameFor(project: ProjectRecord): string {
   return project.name.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'my-app'
@@ -50,9 +50,22 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
     [onError]
   )
 
-  const handleTerminalExit = useCallback(async () => {
+  const deploy = useCallback(
+    () => startTerminal('vercel', () => window.vibe.publish.vercel(project.id, project.path, includeSecrets)),
+    [startTerminal, project.id, project.path, includeSecrets]
+  )
+
+  const handleTerminalExit = useCallback(async (exitCode: number) => {
     const finished = terminal
     if (!finished) return
+    if (finished.purpose === 'vercel-login') {
+      if (exitCode === 0) {
+        deploy() // signed in: carry straight on with the deploy
+      } else {
+        setDeployFailed(true)
+      }
+      return
+    }
     if (finished.purpose === 'vercel') {
       const url = await window.vibe.publish.vercelResult(finished.sessionId)
       if (url) {
@@ -65,7 +78,7 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
       setTerminal(null)
     }
     refresh()
-  }, [terminal, refresh])
+  }, [terminal, refresh, deploy])
 
   const handleGitHub = useCallback(async () => {
     setPushing(true)
@@ -112,16 +125,22 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
       {terminal && (
         <div className="publish-terminal">
           <p className="modal-muted">
-            {terminal.purpose === 'vercel'
-              ? 'Deploying… The first time, Vercel asks you to sign in: open the link below in your browser (it’s free).'
-              : terminal.purpose === 'gh-login'
+            {terminal.purpose === 'vercel-login'
+              ? 'Signing in to Vercel (free): your browser should open to the sign-in page. Approve it there and publishing continues by itself. If the browser didn’t open, use the link below.'
+              : terminal.purpose === 'vercel'
+                ? 'Publishing your app…'
+                : terminal.purpose === 'gh-login'
                 ? 'Signing in to GitHub: press Enter to open your browser, then enter the code shown.'
                 : 'Installing the GitHub app…'}
           </p>
           <LoginTerminal sessionId={terminal.sessionId} onExit={handleTerminalExit} api={window.vibe.install} />
           {deployFailed && (
             <div className="publish-actions">
-              <span className="modal-muted">The deploy didn’t finish. The output above says why.</span>
+              <span className="modal-muted">
+                {terminal.purpose === 'vercel-login'
+                  ? 'Sign-in didn’t finish. You can close this and try again.'
+                  : 'The deploy didn’t finish. The output above says why.'}
+              </span>
               <button onClick={() => setTerminal(null)}>Close</button>
             </div>
           )}
@@ -162,11 +181,9 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
               <button
                 className="publish-primary"
                 disabled={blocked}
-                onClick={() =>
-                  startTerminal('vercel', () => window.vibe.publish.vercel(project.id, project.path, includeSecrets))
-                }
+                onClick={() => (status.vercelLoggedIn ? deploy() : startTerminal('vercel-login', window.vibe.publish.vercelLogin))}
               >
-                {vercelUrl ? 'Publish update' : 'Publish'}
+                {!status.vercelLoggedIn ? 'Sign in to Vercel & publish' : vercelUrl ? 'Publish update' : 'Publish'}
               </button>
             )}
           </section>

@@ -111,6 +111,7 @@ export interface ProjectRecord {
 export interface PublishStatus {
   ghInstalled: boolean
   ghLoggedIn: boolean
+  vercelLoggedIn: boolean
   /** The GitHub repo this project pushes to, if any. */
   githubUrl: string | null
   deployUrl: string | null
