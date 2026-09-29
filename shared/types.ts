@@ -39,6 +39,33 @@ export type VibeEvent =
   | { type: 'error'; message: string }
   /** Smart model switching picked a model for this message. */
   | { type: 'route'; label: string; reason: string }
+  /** Codex started reviewing the changes Claude just made. */
+  | { type: 'review_started' }
+  | { type: 'review_result'; ok: boolean; summary: string; findings: ReviewFinding[]; fixing: boolean }
+  /** A secret key was written into a project file. */
+  | { type: 'secret_leak'; leaks: SecretLeak[] }
+
+export interface SecretSummary {
+  name: string
+  /** Masked, e.g. "••••a1b2". */
+  preview: string
+}
+
+/** A secret found somewhere it would leak (project files that git or a deploy would pick up). */
+export interface SecretLeak {
+  file: string
+  line: number
+  /** The stored secret's name, or the kind of key recognized. */
+  what: string
+}
+
+export interface ReviewFinding {
+  severity: 'high' | 'medium' | 'low'
+  file: string
+  line: number | null
+  title: string
+  detail: string
+}
 
 /** An element the user pointed at in the live preview. */
 export interface PickedElement {
@@ -77,6 +104,20 @@ export interface ProjectRecord {
   lastOpened: string
   sdkSessionId?: string
   goNutzMode?: boolean
+  /** Where the app was last published on Vercel. */
+  deployUrl?: string
+}
+
+export interface PublishStatus {
+  ghInstalled: boolean
+  ghLoggedIn: boolean
+  /** The GitHub repo this project pushes to, if any. */
+  githubUrl: string | null
+  deployUrl: string | null
+  secretNames: string[]
+  /** Secrets sitting in files that would be uploaded; publishing is blocked until they're gone. */
+  leaks: SecretLeak[]
+  nodeInstalled: boolean
 }
 
 export interface CheckpointRecord {
@@ -153,6 +194,8 @@ export interface AppSettings {
   themeId: string
   /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
   smartRouting: boolean
+  /** Have Codex review Claude's code changes after each request. */
+  codexReview: boolean
 }
 
 export interface ModelOption {

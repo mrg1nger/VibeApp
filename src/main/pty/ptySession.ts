@@ -8,6 +8,12 @@ export interface PtySessionOptions {
   cols?: number
   rows?: number
   env?: NodeJS.ProcessEnv
+  /**
+   * Start `file` itself (a real .exe) instead of going through cmd.exe, so
+   * arguments reach it exactly as given. Needed when an argument carries
+   * user data such as a secret value, which cmd.exe would parse.
+   */
+  direct?: boolean
 }
 
 export class PtySession extends EventEmitter {
@@ -24,7 +30,7 @@ export class PtySession extends EventEmitter {
     // even though it resolves fine in a real terminal. Routing through
     // cmd.exe /c gives the same PATHEXT/shim resolution a real terminal has.
     const [file, args] =
-      process.platform === 'win32'
+      process.platform === 'win32' && !options.direct
         ? ['cmd.exe', ['/c', options.file, ...options.args]]
         : [options.file, options.args]
 

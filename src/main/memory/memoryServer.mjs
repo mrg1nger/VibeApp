@@ -4,14 +4,13 @@
 // (via `-c mcp_servers...` + --approve-for-me) can call the same tools
 // against the same storage, verified against the real codex CLI.
 //
-// Plain JS, no build step -- this runs as `node memoryServer.mjs`, outside
-// electron-vite's bundling, so it can't import the TS storage module used
-// by the Electron main process. Kept intentionally small and duplicated.
+// Bundled on its own by esbuild (see electron.vite.config.ts), so it shares
+// the locked storage module with the main process: several of these
+// servers, plus the Memory screen, can write the same file at once.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { addFact, listFacts } from './storage'
 
 const projectMemoryPath = process.argv[2]
 const globalMemoryPath = process.argv[3]
@@ -24,21 +23,6 @@ if (!projectMemoryPath || !globalMemoryPath) {
 
 function pathForScope(scope) {
   return scope === 'global' ? globalMemoryPath : projectMemoryPath
-}
-
-function readMemoryFile(path) {
-  if (!existsSync(path)) return { facts: [] }
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8'))
-  } catch {
-    return { facts: [] }
-  }
-}
-
-function writeMemoryFile(path, data) {
-  const dir = dirname(path)
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  writeFileSync(path, JSON.stringify(data, null, 2), 'utf-8')
 }
 
 const server = new McpServer({ name: 'vibeapp-memory', version: '1.0.0' })
@@ -59,16 +43,7 @@ server.registerTool(
     }
   },
   async ({ fact, global }) => {
-    const path = pathForScope(global ? 'global' : 'project')
-    const data = readMemoryFile(path)
-    const entry = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: fact,
-      createdAt: new Date().toISOString(),
-      source: agentSource
-    }
-    data.facts.push(entry)
-    writeMemoryFile(path, data)
+    addFact(pathForScope(global ? 'global' : 'project'), fact, agentSource)
     return {
       content: [
         { type: 'text', text: `Remembered (${global ? 'global' : 'this project'}): ${fact}` }
@@ -89,13 +64,13 @@ server.registerTool(
     const effectiveScope = scope ?? 'both'
     const parts = []
     if (effectiveScope === 'project' || effectiveScope === 'both') {
-      const facts = readMemoryFile(projectMemoryPath).facts
+      const facts = listFacts(projectMemoryPath)
       if (facts.length) {
         parts.push('Project facts:\n' + facts.map((f) => `- ${f.text}`).join('\n'))
       }
     }
     if (effectiveScope === 'global' || effectiveScope === 'both') {
-      const facts = readMemoryFile(globalMemoryPath).facts
+      const facts = listFacts(globalMemoryPath)
       if (facts.length) {
         parts.push('Global facts:\n' + facts.map((f) => `- ${f.text}`).join('\n'))
       }

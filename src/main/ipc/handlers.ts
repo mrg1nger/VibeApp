@@ -18,6 +18,8 @@ import {
   startInstallSession,
   startNodeInstallSession,
   startGitInstallSession,
+  startGhInstallSession,
+  startTerminalSession,
   getInstallSession,
   disposeInstallSession
 } from '../pty/installSession'
@@ -27,7 +29,8 @@ import {
   recordProjectOpened,
   setSdkSessionId,
   getProject,
-  setGoNutzMode
+  setGoNutzMode,
+  setDeployUrl
 } from '../projects/store'
 import { appendUserMessage, appendEvent, loadTranscript } from '../projects/transcript'
 import {
@@ -54,6 +57,15 @@ import { getUsage } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
+import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
+import { listSecrets, setSecret, deleteSecret } from '../secrets/vault'
+import {
+  publishStatus,
+  publishToGitHub,
+  ghLoginSessionOptions,
+  vercelDeploySessionOptions,
+  parseVercelUrl
+} from '../publish/publish'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
   ipcMain.handle('vibe:ping', () => 'pong')
@@ -166,6 +178,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         console.warn('Model switch failed:', (err as Error).message)
       }
 
+      // Quick edits skip the Codex review: it would take longer than the edit.
+      beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.model === 'haiku' })
       appendUserMessage(projectId, text, { snapshot, attachment: picked ? describePicked(picked) : undefined })
       if (route.label) {
         session.emit('event', { type: 'route', label: route.label, reason: route.reason ?? '' } satisfies VibeEvent)
@@ -179,6 +193,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.handle('vibe:chat:undo', (_event, projectPath: string, snapshot: string) =>
     restoreSnapshot(projectPath, snapshot)
   )
+
+  ipcMain.on('vibe:chat:skipReview', (_event, projectId: string) => skipReview(projectId))
 
   ipcMain.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
     setGoNutzMode(projectId, enabled)
@@ -285,6 +301,59 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     (_event, projectId: string): PreviewState => findPreview(projectId)?.getState() ?? { status: 'idle' }
   )
   ipcMain.handle('vibe:preview:log', (_event, projectId: string) => findPreview(projectId)?.getLog() ?? '')
+
+  // Changing secrets restarts whatever uses them: Claude's session (after
+  // its current turn) and a running preview.
+  function secretsChanged(projectId: string): void {
+    getSession(projectId)?.refreshSecrets()
+    const preview = findPreview(projectId)
+    const status = preview?.getState().status
+    if (status === 'running' || status === 'starting') preview!.start().catch(() => undefined)
+  }
+  ipcMain.handle('vibe:secrets:list', (_event, projectId: string) => listSecrets(projectId))
+  ipcMain.handle('vibe:secrets:set', (_event, projectId: string, name: string, value: string) => {
+    const saved = setSecret(projectId, name, value)
+    secretsChanged(projectId)
+    return saved
+  })
+  ipcMain.handle('vibe:secrets:delete', (_event, projectId: string, name: string) => {
+    deleteSecret(projectId, name)
+    secretsChanged(projectId)
+  })
+
+  ipcMain.handle('vibe:publish:status', (_event, projectId: string, projectPath: string) =>
+    publishStatus(projectId, projectPath)
+  )
+  ipcMain.handle(
+    'vibe:publish:github',
+    (_event, projectId: string, projectPath: string, options: { name: string; visibility: 'private' | 'public' }) =>
+      publishToGitHub(projectId, projectPath, options)
+  )
+  ipcMain.handle('vibe:publish:ghInstall', () => wireInstallSession(startGhInstallSession()))
+  ipcMain.handle('vibe:publish:ghLogin', () => wireInstallSession(startTerminalSession(ghLoginSessionOptions())))
+
+  const deployResults = new Map<string, string | null>()
+  ipcMain.handle(
+    'vibe:publish:vercel',
+    async (_event, projectId: string, projectPath: string, includeSecrets: boolean) => {
+      const session = startTerminalSession(await vercelDeploySessionOptions(projectId, projectPath, includeSecrets))
+      let output = ''
+      session.on('data', (data: string) => {
+        output = (output + data).slice(-200_000)
+      })
+      session.once('exit', (exitCode: number) => {
+        const url = exitCode === 0 ? parseVercelUrl(output) : null
+        if (url) setDeployUrl(projectId, url)
+        deployResults.set(session.id, url)
+      })
+      return wireInstallSession(session)
+    }
+  )
+  ipcMain.handle('vibe:publish:vercelResult', (_event, sessionId: string) => {
+    const url = deployResults.get(sessionId) ?? null
+    deployResults.delete(sessionId)
+    return url
+  })
 }
 
 function describePicked(picked: PickedElement): string {
@@ -312,9 +381,11 @@ function wireSessionEvents(
   if (wiredSessions.has(session)) return
   wiredSessions.add(session)
 
-  session.on('event', (event) => {
-    appendEvent(projectId, event)
-    getSender()?.send('vibe:chat:event', projectId, event)
+  session.on('event', (event: VibeEvent) => {
+    handleSessionEvent(projectId, session, event, (forwarded) => {
+      appendEvent(projectId, forwarded)
+      getSender()?.send('vibe:chat:event', projectId, forwarded)
+    })
   })
   session.on('confirmation_request', (request: ConfirmationRequest) => {
     getSender()?.send('vibe:chat:confirmationRequest', projectId, request)

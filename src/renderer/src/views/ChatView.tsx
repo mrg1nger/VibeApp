@@ -4,11 +4,17 @@ import type {
   PickedElement,
   PreviewProblem,
   ProjectRecord,
+  ReviewFinding,
+  SecretLeak,
   VibeEvent
 } from '@shared/types'
 import CheckpointButton from '../components/CheckpointButton'
 import GoNutzToggle from '../components/GoNutzToggle'
 import PreviewPane from '../components/PreviewPane'
+import SecretsDialog from '../components/SecretsDialog'
+import PublishDialog from '../components/PublishDialog'
+import Modal from '../components/Modal'
+import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 
 interface ChatViewProps {
   project: ProjectRecord
@@ -34,6 +40,13 @@ type ChatItem =
   | { kind: 'notice'; text: string }
   | { kind: 'route'; label: string; reason: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
+  | {
+      kind: 'review'
+      status: 'running' | 'done' | 'error'
+      summary?: string
+      findings?: ReviewFinding[]
+      fixing?: boolean
+    }
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
@@ -68,6 +81,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [problem, setProblem] = useState<PreviewProblem | null>(null)
   const [problemExpanded, setProblemExpanded] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const [dialog, setDialog] = useState<'secrets' | 'publish' | null>(null)
+  const [leaks, setLeaks] = useState<SecretLeak[] | null>(null)
+  // A message that looked like it contained an API key, waiting on the user.
+  const [pendingSecret, setPendingSecret] = useState<{
+    text: string
+    element?: PickedElement
+    found: (DetectedSecret & { saveAs: string })[]
+  } | null>(null)
   const busyRef = useRef(false)
   busyRef.current = busy
   const dismissedProblems = useRef(new Set<string>())
@@ -152,6 +173,24 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             return prev
           case 'route':
             return [...prev, { kind: 'route', label: event.label, reason: event.reason }]
+          case 'secret_leak':
+            if (!isReplay) setLeaks(event.leaks)
+            return prev
+          case 'review_started':
+            return [...prev, { kind: 'review', status: 'running' }]
+          case 'review_result': {
+            const result: ChatItem = {
+              kind: 'review',
+              status: event.ok ? 'done' : 'error',
+              summary: event.summary,
+              findings: event.findings,
+              fixing: event.fixing
+            }
+            const runningIndex = prev.findLastIndex((item) => item.kind === 'review' && item.status === 'running')
+            return runningIndex === -1
+              ? [...prev, result]
+              : prev.map((item, i) => (i === runningIndex ? result : item))
+          }
           case 'turn_complete':
             if (!isReplay) {
               setBusy(false)
@@ -184,6 +223,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           applyEvent(entry.event, true)
         }
       }
+      // A review with no result was cut off (the app closed mid-review).
+      setItems((prev) =>
+        prev.map((item) =>
+          item.kind === 'review' && item.status === 'running'
+            ? { kind: 'review', status: 'error', summary: 'Codex review was interrupted.' }
+            : item
+        )
+      )
     })
     return () => {
       cancelled = true
@@ -245,8 +292,40 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
     setInput('')
     const element = picked ?? undefined
     setPicked(null)
+    // Keys pasted into the chat would be sent to the AI and saved in the
+    // transcript; offer to keep them in Secrets instead.
+    const found = detectSecrets(text)
+    if (found.length) {
+      setPendingSecret({ text, element, found: found.map((f) => ({ ...f, saveAs: f.name })) })
+      return
+    }
     sendMessage(text, element)
   }, [input, busy, picked, sendMessage])
+
+  const handleSaveDetectedSecrets = useCallback(async () => {
+    if (!pendingSecret) return
+    let text = pendingSecret.text
+    try {
+      for (const secret of pendingSecret.found) {
+        const saved = await window.vibe.secrets.set(project.id, secret.saveAs, secret.value)
+        text = text.split(secret.value).join(`[${saved.name}, saved in VibeApp Secrets]`)
+      }
+    } catch (err) {
+      onError((err as Error).message)
+      return
+    }
+    setPendingSecret(null)
+    sendMessage(text, pendingSecret.element)
+  }, [pendingSecret, project.id, sendMessage, onError])
+
+  const handleFixLeaks = useCallback(
+    (message: string) => {
+      setDialog(null)
+      setLeaks(null)
+      sendMessage(message)
+    },
+    [sendMessage]
+  )
 
   const handleRestore = useCallback(
     async (snapshot: string, kind: 'undo' | 'redo', fromText?: string) => {
@@ -336,6 +415,12 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           <button className={showPreview ? 'active' : ''} onClick={togglePreview}>
             Preview
           </button>
+          <button onClick={() => setDialog('secrets')} title="API keys and passwords for this project">
+            🔑 Secrets
+          </button>
+          <button onClick={() => setDialog('publish')} disabled={busy}>
+            Publish
+          </button>
           <button onClick={onOpenHistory}>History</button>
           <CheckpointButton
             hasChanges={hasChanges}
@@ -392,6 +477,50 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     ⚡ {item.label} · {item.reason}
                   </span>
                 )}
+                {item.kind === 'review' && (
+                  <div className={`review-card review-card-${item.status}`}>
+                    {item.status === 'running' && (
+                      <div className="review-card-header">
+                        <span>🔍 Codex is double-checking Claude’s changes…</span>
+                        <button className="chat-inline-action" onClick={() => window.vibe.chat.skipReview(project.id)}>
+                          Skip review
+                        </button>
+                      </div>
+                    )}
+                    {item.status === 'error' && <span className="review-muted">{item.summary}</span>}
+                    {item.status === 'done' && (
+                      <>
+                        <div className="review-card-header">
+                          <span>
+                            {item.findings?.length
+                              ? `🔍 Codex found ${item.findings.length} issue${item.findings.length === 1 ? '' : 's'}${item.fixing ? ' — Claude is fixing them' : ''}`
+                              : '✅ Codex double-checked the changes'}
+                          </span>
+                        </div>
+                        {item.summary && <p className="review-summary">{item.summary}</p>}
+                        {!!item.findings?.length && (
+                          <details>
+                            <summary>Details</summary>
+                            <ul className="review-findings">
+                              {item.findings.map((f, j) => (
+                                <li key={j}>
+                                  <span className={`review-severity review-severity-${f.severity}`}>{f.severity}</span>
+                                  <strong>{f.title}</strong>
+                                  <span className="review-muted">
+                                    {' '}
+                                    {f.file}
+                                    {f.line ? `:${f.line}` : ''}
+                                  </span>
+                                  <div className="review-muted">{f.detail}</div>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 {item.kind === 'restore' && (
                   <p className="chat-notice">
                     {item.text}
@@ -410,6 +539,30 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             ))}
             {busy && <div className="chat-item chat-item-thinking">{thinkingLabel}</div>}
           </div>
+
+          {leaks && !busy && (
+            <div className="problem-banner">
+              <div className="problem-banner-header">
+                <span>🔑 A secret key was written into your project files.</span>
+                <div className="confirmation-actions">
+                  <button
+                    onClick={() =>
+                      handleFixLeaks(
+                        `A secret key ended up in project files:\n${leaks
+                          .slice(0, 20)
+                          .map((l) => `- ${l.file}:${l.line} (${l.what})`)
+                          .join('\n')}\nMove it out: read it from an environment variable instead and delete the value from the file. If it isn't in VibeApp's Secrets panel yet, tell me the name to add.`
+                      )
+                    }
+                  >
+                    Fix it
+                  </button>
+                  <button onClick={() => setLeaks(null)}>Dismiss</button>
+                </div>
+              </div>
+              <pre>{leaks.slice(0, 5).map((l) => `${l.file}:${l.line} (${l.what})`).join('\n')}</pre>
+            </div>
+          )}
 
           {problem && !busy && (
             <div className="problem-banner">
@@ -478,6 +631,61 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           />
         )}
       </div>
+
+      {dialog === 'secrets' && (
+        <SecretsDialog projectId={project.id} onClose={() => setDialog(null)} onError={onError} />
+      )}
+      {dialog === 'publish' && (
+        <PublishDialog project={project} onClose={() => setDialog(null)} onError={onError} onFixLeaks={handleFixLeaks} />
+      )}
+      {pendingSecret && (
+        <Modal
+          title="That looks like a secret key"
+          onClose={() => {
+            // Cancelled: put the message back so nothing is lost.
+            setInput(pendingSecret.text)
+            if (pendingSecret.element) setPicked(pendingSecret.element)
+            setPendingSecret(null)
+          }}
+        >
+          <p className="modal-text">
+            Anything sent in the chat goes to the AI and is saved in this project’s chat history. Save{' '}
+            {pendingSecret.found.length === 1 ? 'it' : 'them'} in Secrets instead? Your app will still get{' '}
+            {pendingSecret.found.length === 1 ? 'it' : 'them'} as {pendingSecret.found.length === 1 ? 'an environment variable' : 'environment variables'}.
+          </p>
+          {pendingSecret.found.map((secret, i) => (
+            <label key={secret.value} className="secret-detected">
+              <span>
+                {secret.label} <span className="modal-muted">…{secret.value.slice(-4)}</span>
+              </span>
+              <input
+                value={secret.saveAs}
+                spellCheck={false}
+                onChange={(e) => {
+                  const saveAs = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_')
+                  setPendingSecret((prev) =>
+                    prev ? { ...prev, found: prev.found.map((f, j) => (j === i ? { ...f, saveAs } : f)) } : prev
+                  )
+                }}
+              />
+            </label>
+          ))}
+          <div className="modal-actions">
+            <button
+              onClick={() => {
+                const { text, element } = pendingSecret
+                setPendingSecret(null)
+                sendMessage(text, element)
+              }}
+            >
+              Send it anyway
+            </button>
+            <button className="modal-primary" onClick={handleSaveDetectedSecrets}>
+              Save as secret &amp; send without it
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

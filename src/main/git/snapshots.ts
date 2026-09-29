@@ -63,6 +63,23 @@ export async function takeSnapshot(projectPath: string, label: string): Promise<
   }
 }
 
+// Generated files that bloat a diff without saying anything about the change.
+const NOISY_FILES = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lockb', '*.min.js', '*.map']
+
+/** The code change between two snapshots, as a unified diff (lockfiles left out). */
+export async function diffSnapshots(projectPath: string, from: string, to: string): Promise<string> {
+  return git(projectPath, [
+    'diff',
+    '--no-color',
+    '--unified=3',
+    from,
+    to,
+    '--',
+    '.',
+    ...NOISY_FILES.flatMap((f) => [`:(exclude)${f}`, `:(exclude)**/${f}`])
+  ])
+}
+
 export interface RestoreResult {
   /** Snapshot of the files just before restoring, so the restore can be undone too. */
   redoSnapshot: string

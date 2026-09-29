@@ -120,6 +120,22 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
             </small>
           </span>
         </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.codexReview}
+            onChange={(e) => onSettingsChange({ codexReview: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Codex double-checks Claude
+            <small>
+              After Claude changes code, Codex reviews it for bugs and security problems, and Claude fixes
+              anything real before it's done. Adds about a minute to bigger requests; quick edits skip it, and
+              so does a nearly used-up Codex plan.
+            </small>
+          </span>
+        </label>
       </section>
 
       <section className="settings-section">

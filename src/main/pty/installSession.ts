@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { CliName } from '@shared/types'
-import { PtySession } from './ptySession'
+import { PtySession, type PtySessionOptions } from './ptySession'
 
 const installCommand: Record<CliName, { file: string; args: string[] }> = {
   claude: { file: 'npm', args: ['install', '-g', '@anthropic-ai/claude-code'] },
@@ -37,6 +37,19 @@ export function startNodeInstallSession(): PtySession {
 
 export function startGitInstallSession(): PtySession {
   return startWingetInstall('Git.Git')
+}
+
+export function startGhInstallSession(): PtySession {
+  return startWingetInstall('GitHub.cli')
+}
+
+/** Any other terminal task shown in the app (GitHub sign-in, Vercel deploys). */
+export function startTerminalSession(options: PtySessionOptions): PtySession {
+  const id = randomUUID()
+  const session = new PtySession(id, options)
+  sessions.set(id, session)
+  session.once('exit', () => sessions.delete(id))
+  return session
 }
 
 export function getInstallSession(id: string): PtySession | undefined {

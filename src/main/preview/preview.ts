@@ -6,6 +6,7 @@ import { createServer as createNetServer } from 'net'
 import { extname, join, normalize, resolve, sep } from 'path'
 import type { PreviewProblem, PreviewState } from '@shared/types'
 import { isCliOnPath } from '../cli/execCli'
+import { secretEnv } from '../secrets/vault'
 
 const LOG_LIMIT = 300
 const URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])(?::\d+)?[^\s'"]*/i
@@ -156,7 +157,10 @@ export class PreviewRunner extends EventEmitter {
   private probeTimer: NodeJS.Timeout | undefined
   private generation = 0
 
-  constructor(private readonly projectPath: string) {
+  constructor(
+    private readonly projectId: string,
+    private readonly projectPath: string
+  ) {
     super()
   }
 
@@ -245,7 +249,14 @@ export class PreviewRunner extends EventEmitter {
       windowsHide: true,
       // PORT is honored by most Node servers that don't print their URL;
       // BROWSER=none stops dev servers from opening a browser tab.
-      env: { ...process.env, PORT: String(port), BROWSER: 'none', FORCE_COLOR: '0', NO_COLOR: '1' }
+      env: {
+        ...process.env,
+        ...secretEnv(this.projectId),
+        PORT: String(port),
+        BROWSER: 'none',
+        FORCE_COLOR: '0',
+        NO_COLOR: '1'
+      }
     })
     this.child = child
     child.stdout?.on('data', (chunk: Buffer) => this.appendLog(chunk.toString('utf-8')))
@@ -303,7 +314,7 @@ export const previewEvents = new EventEmitter()
 export function getPreview(projectId: string, projectPath: string): PreviewRunner {
   let runner = runners.get(projectId)
   if (!runner) {
-    runner = new PreviewRunner(projectPath)
+    runner = new PreviewRunner(projectId, projectPath)
     runner.on('state', (state: PreviewState) => previewEvents.emit('state', projectId, state))
     runner.on('problem', (problem: PreviewProblem) => previewEvents.emit('problem', projectId, problem))
     runners.set(projectId, runner)

@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
@@ -67,6 +67,14 @@ export interface CodexExecArgs {
   unsandboxed?: boolean
   /** Codex model override; omitted means Codex's own configured default. */
   model?: string
+  /** Look but don't touch: read-only sandbox (overrides the other sandbox options). */
+  readOnly?: boolean
+  /** Don't keep a Codex session file for this run. */
+  ephemeral?: boolean
+  /** JSON Schema the final message must follow (it's then a JSON string). */
+  outputSchema?: object
+  /** Aborting kills the Codex process and rejects. */
+  signal?: AbortSignal
   /** Paths to the shared memory MCP server's storage files and script, if memory access should be wired in. */
   memory?: {
     scriptPath: string
@@ -115,11 +123,13 @@ export async function runCodexExec(
     'exec',
     '-', // read the prompt from stdin; see resolveCodexLaunch
     '--json',
-    ...(args.unsandboxed
-      ? ['--dangerously-bypass-approvals-and-sandbox']
-      : args.memory
-        ? []
-        : ['--sandbox', 'workspace-write']),
+    ...(args.readOnly
+      ? ['--sandbox', 'read-only']
+      : args.unsandboxed
+        ? ['--dangerously-bypass-approvals-and-sandbox']
+        : args.memory
+          ? []
+          : ['--sandbox', 'workspace-write']),
     '--skip-git-repo-check',
     '-o',
     outputPath
@@ -130,10 +140,18 @@ export async function runCodexExec(
   if (args.model) {
     cliArgs.push('-m', args.model)
   }
-  if (args.memory && !args.unsandboxed) {
+  if (args.ephemeral) {
+    cliArgs.push('--ephemeral')
+  }
+  if (args.outputSchema) {
+    const schemaPath = join(tempDir, 'schema.json')
+    writeFileSync(schemaPath, JSON.stringify(args.outputSchema), 'utf-8')
+    cliArgs.push('--output-schema', schemaPath)
+  }
+  if (args.memory && !args.unsandboxed && !args.readOnly) {
     cliArgs.push('--approve-for-me')
   }
-  if (args.memory) {
+  if (args.memory && !args.readOnly) {
     // TOML parsing of -c overrides needs forward slashes even on Windows --
     // a backslash-escaped Windows path in the value breaks the parser
     // (confirmed experimentally).
@@ -168,6 +186,15 @@ export async function runCodexExec(
           reject(new Error(`Codex subtask timed out after ${args.timeoutMs}ms`))
         }, args.timeoutMs)
       : undefined
+
+    const onAbort = (): void => {
+      if (timeout) clearTimeout(timeout)
+      killTree(child)
+      reject(new Error('Codex run was cancelled'))
+    }
+    if (args.signal?.aborted) onAbort()
+    args.signal?.addEventListener('abort', onAbort, { once: true })
+    child.on('exit', () => args.signal?.removeEventListener('abort', onAbort))
 
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString('utf-8')

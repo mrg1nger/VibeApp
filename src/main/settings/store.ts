@@ -7,7 +7,8 @@ const DEFAULTS: AppSettings = {
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',
-  smartRouting: true
+  smartRouting: true,
+  codexReview: true
 }
 
 function settingsPath(): string {

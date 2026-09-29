@@ -13,6 +13,7 @@ import { createCodexDelegationServer } from '../delegation/codexTool'
 import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../memory/paths'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
+import { agentSecretEnv, listSecrets } from '../secrets/vault'
 
 const APP_INSTRUCTIONS = `# Project memory (required)
 This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
@@ -24,6 +25,26 @@ This app gives you a persistent memory, shared with Codex, via the mcp__vibe_mem
 # Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
 Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview). Use them as context; they're not something the user typed.`
+
+function secretsInstructions(projectId: string): string {
+  let names: string[] = []
+  try {
+    names = listSecrets(projectId).map((s) => s.name)
+  } catch {
+    // Vault unreadable; Claude just won't be told about any secrets.
+  }
+  return `
+
+# Secrets
+The user keeps API keys and other secrets in VibeApp's Secrets panel (the 🔑 button in the chat header), not in project files. ${
+    names.length
+      ? `This project has: ${names.join(', ')}. VibeApp sets them as environment variables when it runs the app preview and when you run commands (except ANTHROPIC_*/CLAUDE_* ones, which only the app gets).`
+      : 'This project has none yet.'
+  }
+- Read secrets from the environment (process.env.NAME in Node; in Vite client code the name needs a VITE_ prefix and is read with import.meta.env.VITE_NAME). Never hard-code a secret value in a file, and never print, echo, or log one.
+- Don't create .env files with real values. If the app needs a new secret, tell the user its name and ask them to add it in the Secrets panel; don't ask them to paste it into the chat.
+- Anything in client-side (browser) code is visible to everyone who uses the app, so keys that must stay private belong in server-side code.`
+}
 
 /** A pushable async queue feeding query()'s streaming-input mode. */
 class MessageQueue implements AsyncIterable<SDKUserMessage> {
@@ -76,6 +97,8 @@ export class ClaudeSession extends EventEmitter {
   private dead = false
   private turnsInFlight = 0
   private reloadPending = false
+  /** Whether the pending reload is for .mcp.json (shown in the chat) rather than secrets. */
+  private reloadAnnounce = false
   private mcpWatcher: FSWatcher | undefined
   private reloadTimer: NodeJS.Timeout | undefined
   private activeModel: string | null = null
@@ -182,13 +205,19 @@ export class ClaudeSession extends EventEmitter {
         cwd: this.projectPath,
         pathToClaudeCodeExecutable: resolveClaudeExecutable(),
         model: this.activeModel ?? undefined,
+        // Replaces the inherited environment, so start from process.env.
+        env: { ...process.env, ...agentSecretEnv(this.projectId) },
         permissionMode: goNutz ? 'bypassPermissions' : 'acceptEdits',
         // Always set so setPermissionMode('bypassPermissions') can be used
         // later to enter Go Nutz mode without recreating the session -- this
         // flag only takes effect once that mode is actually switched to.
         allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: APP_INSTRUCTIONS },
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: APP_INSTRUCTIONS + secretsInstructions(this.projectId)
+        },
         mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
         // Only called when Claude Code itself wants to ask (sensitive files
         // like .mcp.json, paths outside the project). With no handler those
@@ -254,7 +283,8 @@ export class ClaudeSession extends EventEmitter {
   // Claude usually edits .mcp.json in the middle of a turn. Reloading then
   // would abandon that turn (its result is ignored once superseded) and leave
   // the UI waiting forever, so wait until no turn is running.
-  private requestReload(): void {
+  private requestReload(announce = true): void {
+    if (announce) this.reloadAnnounce = true
     if (this.turnsInFlight > 0) {
       this.reloadPending = true
       return
@@ -264,12 +294,21 @@ export class ClaudeSession extends EventEmitter {
 
   private reload(): void {
     if (this.disposed || this.dead) return
+    const announce = this.reloadAnnounce
     this.reloadPending = false
+    this.reloadAnnounce = false
     const oldQueue = this.queue
     this.queue = this.startQuery(this.capturedSessionId, this.goNutz)
     oldQueue.close()
-    const event: VibeEvent = { type: 'task_progress', note: 'mcp_config_reloaded' }
-    this.emit('event', event)
+    if (announce) {
+      const event: VibeEvent = { type: 'task_progress', note: 'mcp_config_reloaded' }
+      this.emit('event', event)
+    }
+  }
+
+  /** Secrets changed: restart Claude Code (keeping the conversation) so it gets the new environment. */
+  refreshSecrets(): void {
+    this.requestReload(false)
   }
 
   isDead(): boolean {

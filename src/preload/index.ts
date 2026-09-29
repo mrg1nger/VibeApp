@@ -12,6 +12,8 @@ import type {
   PreviewProblem,
   PreviewState,
   ProjectRecord,
+  PublishStatus,
+  SecretSummary,
   ThemeDefinition,
   TranscriptEntry,
   UsageSnapshot,
@@ -120,6 +122,7 @@ const vibeApi = {
     },
     respondToConfirmation: (projectId: string, confirmationId: string, approved: boolean): void =>
       ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
+    skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
       ipcRenderer.invoke('vibe:chat:pendingConfirmations', projectId),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),
@@ -191,6 +194,30 @@ const vibeApi = {
       ipcRenderer.on('vibe:preview:problem', listener)
       return () => ipcRenderer.removeListener('vibe:preview:problem', listener)
     }
+  },
+
+  secrets: {
+    list: (projectId: string): Promise<SecretSummary[]> => ipcRenderer.invoke('vibe:secrets:list', projectId),
+    set: (projectId: string, name: string, value: string): Promise<SecretSummary> =>
+      ipcRenderer.invoke('vibe:secrets:set', projectId, name, value),
+    delete: (projectId: string, name: string): Promise<void> =>
+      ipcRenderer.invoke('vibe:secrets:delete', projectId, name)
+  },
+
+  publish: {
+    status: (projectId: string, projectPath: string): Promise<PublishStatus> =>
+      ipcRenderer.invoke('vibe:publish:status', projectId, projectPath),
+    github: (
+      projectId: string,
+      projectPath: string,
+      options: { name: string; visibility: 'private' | 'public' }
+    ): Promise<string> => ipcRenderer.invoke('vibe:publish:github', projectId, projectPath, options),
+    ghInstall: (): Promise<string> => ipcRenderer.invoke('vibe:publish:ghInstall'),
+    ghLogin: (): Promise<string> => ipcRenderer.invoke('vibe:publish:ghLogin'),
+    vercel: (projectId: string, projectPath: string, includeSecrets: boolean): Promise<string> =>
+      ipcRenderer.invoke('vibe:publish:vercel', projectId, projectPath, includeSecrets),
+    vercelResult: (sessionId: string): Promise<string | null> =>
+      ipcRenderer.invoke('vibe:publish:vercelResult', sessionId)
   },
 
   usage: {
