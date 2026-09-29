@@ -8,6 +8,9 @@ const TIMEOUT_MS = 20_000
 /** Repeat requests inside this window get the cached snapshot. */
 const MIN_REFRESH_MS = 30_000
 
+/** How long real numbers keep showing through failed checks. */
+const STALE_OK_MS = 15 * 60_000
+
 const cache = new Map<CliName, UsageSnapshot>()
 const inFlight = new Map<CliName, Promise<UsageSnapshot>>()
 
@@ -25,8 +28,14 @@ export function getUsage(cli: CliName, force = false): Promise<UsageSnapshot> {
       fetchedAt: Date.now()
     }))
     .then((snapshot) => {
-      cache.set(cli, snapshot)
       inFlight.delete(cli)
+      // One failed check (a timeout while the machine is busy, say) shouldn't
+      // blank the meter: keep recent real numbers and try again next time.
+      const previous = cache.get(cli)
+      if (snapshot.status === 'error' && previous?.status === 'ok' && Date.now() - previous.fetchedAt < STALE_OK_MS) {
+        return previous
+      }
+      cache.set(cli, snapshot)
       return snapshot
     })
   inFlight.set(cli, fetch)

@@ -6,6 +6,11 @@ export interface CliStatus {
   cli: CliName
   status: AuthStatus
   detail?: string
+  /**
+   * The check didn't get a real answer (timed out on a busy machine, say).
+   * `status` is only a guess then; keep whatever was known before.
+   */
+  inconclusive?: boolean
 }
 
 export interface UsageWindow {

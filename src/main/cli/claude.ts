@@ -1,5 +1,5 @@
 import type { CliStatus } from '@shared/types'
-import { execCli, isCliOnPath, type ExecCliError } from './execCli'
+import { execCli, findCli, isInconclusive, type ExecCliError } from './execCli'
 
 interface ClaudeAuthStatus {
   loggedIn: boolean
@@ -8,16 +8,17 @@ interface ClaudeAuthStatus {
 }
 
 export async function checkClaudeStatus(): Promise<CliStatus> {
-  if (!(await isCliOnPath('claude'))) {
-    return { cli: 'claude', status: 'not_installed' }
-  }
+  const found = await findCli('claude')
+  if (found === 'missing') return { cli: 'claude', status: 'not_installed' }
+  if (found === 'unknown') return { cli: 'claude', status: 'checking', inconclusive: true }
 
   // `claude auth status` exits 1 when logged out, but still prints valid JSON
   // on both stdout (exit 0) and the error's stdout (exit 1).
   let stdout: string
   try {
-    ;({ stdout } = await execCli('claude', ['auth', 'status', '--json']))
+    ;({ stdout } = await execCli('claude', ['auth', 'status', '--json'], { timeout: 30_000 }))
   } catch (err) {
+    if (isInconclusive(err)) return { cli: 'claude', status: 'checking', inconclusive: true }
     stdout = (err as ExecCliError).stdout ?? ''
   }
 
@@ -29,6 +30,7 @@ export async function checkClaudeStatus(): Promise<CliStatus> {
       detail: parsed.email
     }
   } catch {
-    return { cli: 'claude', status: 'logged_out', detail: 'Could not parse claude auth status' }
+    // No usable answer (cut off, or some other output): don't call that logged out.
+    return { cli: 'claude', status: 'checking', inconclusive: true, detail: 'Could not parse claude auth status' }
   }
 }

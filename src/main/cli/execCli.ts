@@ -36,16 +36,31 @@ function toPlatformInvocation(command: string, args: string[]): { file: string; 
  * to distinguish "not installed" from "installed but exited non-zero."
  */
 export async function isCliOnPath(command: string): Promise<boolean> {
+  return (await findCli(command)) === 'found'
+}
+
+/**
+ * Like isCliOnPath, but tells "not installed" apart from "couldn't tell":
+ * on a busy machine the lookup can time out, which says nothing about
+ * whether the tool is installed.
+ */
+export async function findCli(command: string): Promise<'found' | 'missing' | 'unknown'> {
   const { file, args } = toPlatformInvocation(
     process.platform === 'win32' ? 'where' : 'command',
     process.platform === 'win32' ? [command] : ['-v', command]
   )
   try {
-    await execFileAsync(file, args, { timeout: 5_000, windowsHide: true })
-    return true
-  } catch {
-    return false
+    await execFileAsync(file, args, { timeout: 15_000, windowsHide: true })
+    return 'found'
+  } catch (err) {
+    return isInconclusive(err) ? 'unknown' : 'missing'
   }
+}
+
+/** A run that was killed (timeout) or never started, rather than one that answered. */
+export function isInconclusive(err: unknown): boolean {
+  const e = err as { killed?: boolean; signal?: string | null; code?: unknown }
+  return !!e.killed || !!e.signal || typeof e.code === 'string'
 }
 
 /**

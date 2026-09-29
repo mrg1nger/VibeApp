@@ -13,7 +13,9 @@ import { applyTheme } from './lib/theme'
 
 type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory' | 'settings'
 
-const STATUS_POLL_INTERVAL_MS = 15_000
+// Logins and installs re-check right away (AccountsView), so this only catches
+// changes made outside the app.
+const STATUS_POLL_INTERVAL_MS = 60_000
 
 function App() {
   const [screen, setScreen] = useState<Screen>('accounts')
@@ -27,7 +29,11 @@ function App() {
 
   const refreshStatus = useCallback((cli: CliName) => {
     window.vibe.auth.check(cli).then((status) => {
-      setStatuses((prev) => ({ ...prev, [cli]: status }))
+      // A check that timed out on a busy machine says nothing new; keep what
+      // we knew instead of flipping to "logged out" mid-session.
+      setStatuses((prev) =>
+        status.inconclusive && prev[cli].status !== 'checking' ? prev : { ...prev, [cli]: status }
+      )
     })
   }, [])
 
