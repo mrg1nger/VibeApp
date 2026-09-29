@@ -122,7 +122,9 @@ export class ClaudeSession extends EventEmitter {
       // on this exact failure mode).
       command: process.execPath,
       args: [memoryPaths.scriptPath, memoryPaths.projectMemoryPath, memoryPaths.globalMemoryPath, 'claude'],
-      env: { ...(process.env as Record<string, string>), ELECTRON_RUN_AS_NODE: '1' }
+      // Merged over the inherited environment by the CLI; passing all of
+      // process.env here would serialize it onto the command line.
+      env: { ELECTRON_RUN_AS_NODE: '1' }
     }
 
     // canUseTool is NOT called for a Bash command that stays inside the

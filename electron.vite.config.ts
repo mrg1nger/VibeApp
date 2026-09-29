@@ -1,25 +1,31 @@
 import { resolve } from 'path'
-import { existsSync, mkdirSync, copyFileSync } from 'fs'
+import { buildSync } from 'esbuild'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
-function copyMemoryServerPlugin() {
+// The memory server runs as a separate process, loaded by path from inside
+// app.asar. ES-module package resolution from inside the archive breaks when
+// the install path contains a space (e.g. "C:\Program Files"), so bundle its
+// dependencies into one CJS file that needs no package lookups at runtime.
+function bundleMemoryServerPlugin() {
   return {
-    name: 'copy-memory-server',
+    name: 'bundle-memory-server',
     closeBundle() {
-      const destDir = resolve('out/main/memory')
-      if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
-      copyFileSync(
-        resolve('src/main/memory/memoryServer.mjs'),
-        resolve(destDir, 'memoryServer.mjs')
-      )
+      buildSync({
+        entryPoints: [resolve('src/main/memory/memoryServer.mjs')],
+        outfile: resolve('out/main/memory/memoryServer.cjs'),
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        logLevel: 'warning'
+      })
     }
   }
 }
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), copyMemoryServerPlugin()],
+    plugins: [externalizeDepsPlugin(), bundleMemoryServerPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('shared')

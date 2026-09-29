@@ -107,4 +107,7 @@ server.registerTool(
 )
 
 const transport = new StdioServerTransport()
-await server.connect(transport)
+server.connect(transport).catch((err) => {
+  process.stderr.write(`vibeapp-memory failed to start: ${err?.message ?? err}\n`)
+  process.exit(1)
+})
