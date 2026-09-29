@@ -7,7 +7,6 @@ Everything recommended so far, in one place. Tick items off as they ship.
 - [ ] **Stop button.** Stop Claude partway through a request instead of waiting for it to finish and then undoing.
 - [ ] **Shorter action labels.** Show `src/player.js` instead of the full `C:\Users\…\MrgRPG\src\player.js` path in the chat.
 - [ ] **Paste images** (#10). Drop in a screenshot or sketch: "make it look like this."
-- [ ] **Voice input** (#10). Talk instead of typing.
 
 ## Bigger features
 
@@ -34,6 +33,10 @@ From the OpenClaw comparison. Worth revisiting only if VibeApp grows beyond codi
 
 - Message VibeApp from your phone or chat apps (Slack, Discord).
 - A library of ready-made agent skills.
+
+Dropped:
+
+- Voice input (the other half of #10). Not needed.
 
 ## Done
 
