@@ -4,6 +4,7 @@ import type {
   PickedElement,
   PreviewProblem,
   ProjectRecord,
+  QuestionAnswers,
   ReviewFinding,
   SecretLeak,
   VibeEvent
@@ -14,6 +15,7 @@ import PreviewPane from '../components/PreviewPane'
 import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
+import QuestionCard from '../components/QuestionCard'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 
 interface ChatViewProps {
@@ -385,10 +387,16 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   }, [])
 
   const handleConfirmation = useCallback(
-    (approved: boolean) => {
+    (approved: boolean, answers?: QuestionAnswers) => {
       if (!confirmation) return
-      window.vibe.chat.respondToConfirmation(project.id, confirmation.id, approved)
+      window.vibe.chat.respondToConfirmation(project.id, confirmation.id, approved, answers)
       setConfirmations((prev) => prev.filter((c) => c.id !== confirmation.id))
+      if (answers) {
+        const text = Object.entries(answers)
+          .map(([question, answer]) => `${question} → ${answer}`)
+          .join('\n')
+        setItems((prev) => [...prev, { kind: 'user_text', text }])
+      }
     },
     [confirmation, project.id]
   )
@@ -580,7 +588,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             </div>
           )}
 
-          {confirmation && (
+          {confirmation?.questions?.length ? (
+            <QuestionCard
+              key={confirmation.id}
+              questions={confirmation.questions}
+              onAnswer={(answers) => handleConfirmation(true, answers)}
+              onSkip={() => handleConfirmation(false)}
+            />
+          ) : confirmation && (
             <div className="confirmation-banner">
               <span>{confirmation.reason} Allow it?</span>
               <div className="confirmation-actions">

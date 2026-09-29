@@ -1650,3 +1650,112 @@ textarea {
   opacity: 0.45;
   cursor: default;
 }
+
+.question-card {
+  margin-top: 0.75rem;
+  padding: 0.8rem 1rem;
+  border-radius: calc(var(--radius) + 2px);
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  box-shadow: var(--accent-glow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  max-height: 55%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.question-card-title {
+  font-weight: 700;
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.question-header {
+  align-self: flex-start;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.question-text {
+  margin: 0;
+  font-weight: 600;
+}
+
+.question-hint {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.question-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.4rem;
+}
+
+.question-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.question-option span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.question-option.selected {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+  box-shadow: var(--accent-glow);
+}
+
+.question-other {
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text);
+}
+
+.question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.question-actions button {
+  padding: 0.45rem 0.9rem;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.question-actions .question-submit {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.question-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

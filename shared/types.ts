@@ -95,7 +95,20 @@ export interface ConfirmationRequest {
   input: unknown
   /** Human-readable description of what's being asked, e.g. "Claude wants to edit ~/x.txt". */
   reason: string
+  /** Set when Claude is asking the user questions (AskUserQuestion) rather than asking permission. */
+  questions?: UserQuestion[]
 }
+
+export interface UserQuestion {
+  question: string
+  /** Short label, e.g. "Auth method". */
+  header: string
+  options: { label: string; description: string }[]
+  multiSelect: boolean
+}
+
+/** Question text -> chosen label(s) (comma-separated for multi-select) or the user's own words. */
+export type QuestionAnswers = Record<string, string>
 
 export interface ProjectRecord {
   id: string

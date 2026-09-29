@@ -8,6 +8,7 @@ import type {
   PickedElement,
   PreviewProblem,
   PreviewState,
+  QuestionAnswers,
   VibeEvent
 } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
@@ -211,8 +212,15 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   ipcMain.on(
     'vibe:chat:confirmationResponse',
-    (_event, projectId: string, confirmationId: string, approved: boolean) => {
-      getSession(projectId)?.resolveConfirmation(confirmationId, approved)
+    (_event, projectId: string, confirmationId: string, approved: boolean, answers?: QuestionAnswers) => {
+      getSession(projectId)?.resolveConfirmation(confirmationId, approved, answers)
+      if (answers) {
+        // Keep the answers in the chat history, like anything else the user said.
+        const text = Object.entries(answers)
+          .map(([question, answer]) => `${question} → ${answer}`)
+          .join('\n')
+        appendUserMessage(projectId, text)
+      }
     }
   )
 

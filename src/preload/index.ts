@@ -13,6 +13,7 @@ import type {
   PreviewState,
   ProjectRecord,
   PublishStatus,
+  QuestionAnswers,
   SecretSummary,
   ThemeDefinition,
   TranscriptEntry,
@@ -120,8 +121,12 @@ const vibeApi = {
       ipcRenderer.on('vibe:chat:confirmationRequest', listener)
       return () => ipcRenderer.removeListener('vibe:chat:confirmationRequest', listener)
     },
-    respondToConfirmation: (projectId: string, confirmationId: string, approved: boolean): void =>
-      ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved),
+    respondToConfirmation: (
+      projectId: string,
+      confirmationId: string,
+      approved: boolean,
+      answers?: QuestionAnswers
+    ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
       ipcRenderer.invoke('vibe:chat:pendingConfirmations', projectId),

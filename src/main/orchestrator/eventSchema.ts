@@ -26,6 +26,10 @@ function friendlyToolLabel(name: string, input: unknown): string {
     case 'Glob':
     case 'Grep':
       return `Searched files`
+    case 'AskUserQuestion': {
+      const first = (input as { questions?: { question?: string }[] })?.questions?.[0]?.question
+      return first ? `Asked you: ${first}` : 'Asked you a question'
+    }
     case 'mcp__vibe_tools__run_codex_subtask':
       return `Delegated to Codex: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
     default:

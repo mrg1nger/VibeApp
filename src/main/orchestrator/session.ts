@@ -7,7 +7,7 @@ import {
   type HookCallback,
   type PreToolUseHookInput
 } from '@anthropic-ai/claude-agent-sdk'
-import type { ConfirmationRequest, VibeEvent } from '@shared/types'
+import type { ConfirmationRequest, QuestionAnswers, UserQuestion, VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
 import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../memory/paths'
@@ -223,6 +223,17 @@ export class ClaudeSession extends EventEmitter {
         // like .mcp.json, paths outside the project). With no handler those
         // requests were silently denied.
         canUseTool: async (toolName, input, options) => {
+          // Claude asking the user something comes through here too. The
+          // answers go back to it inside the tool's input.
+          if (toolName === 'AskUserQuestion') {
+            const answers = await this.requestAnswers(input)
+            return answers
+              ? { behavior: 'allow', updatedInput: { ...input, answers } }
+              : {
+                  behavior: 'deny',
+                  message: "The user skipped these questions. Continue with your best judgment, or ask in plain text if you're blocked."
+                }
+          }
           const filePath = (input as { file_path?: string }).file_path ?? ''
           if (/(^|[\\/])\.mcp\.json$/.test(filePath)) {
             // Lets Claude install MCP servers; watchMcpConfig reloads them.
@@ -378,13 +389,34 @@ export class ClaudeSession extends EventEmitter {
 
   private confirmationWaiters = new Map<
     string,
-    { resolve: (approved: boolean) => void; request: ConfirmationRequest }
+    { resolve: (approved: boolean, answers?: QuestionAnswers) => void; request: ConfirmationRequest }
   >()
 
   private requestConfirmation(toolName: string, input: unknown, reason: string): Promise<boolean> {
     return new Promise((resolve) => {
       const request: ConfirmationRequest = { id: randomUUID(), toolName, input, reason }
-      this.confirmationWaiters.set(request.id, { resolve, request })
+      this.confirmationWaiters.set(request.id, { resolve: (approved) => resolve(approved), request })
+      this.emit('confirmation_request', request)
+    })
+  }
+
+  /** Shows Claude's questions to the user; resolves with their answers, or null if they skipped. */
+  private requestAnswers(input: unknown): Promise<QuestionAnswers | null> {
+    const questions = ((input as { questions?: UserQuestion[] })?.questions ?? []).filter(
+      (q) => q && typeof q.question === 'string'
+    )
+    return new Promise((resolve) => {
+      const request: ConfirmationRequest = {
+        id: randomUUID(),
+        toolName: 'AskUserQuestion',
+        input,
+        reason: 'Claude has a question for you.',
+        questions
+      }
+      this.confirmationWaiters.set(request.id, {
+        resolve: (approved, answers) => resolve(approved && answers ? answers : null),
+        request
+      })
       this.emit('confirmation_request', request)
     })
   }
@@ -394,10 +426,10 @@ export class ClaudeSession extends EventEmitter {
     return [...this.confirmationWaiters.values()].map((w) => w.request)
   }
 
-  resolveConfirmation(id: string, approved: boolean): void {
+  resolveConfirmation(id: string, approved: boolean, answers?: QuestionAnswers): void {
     const waiter = this.confirmationWaiters.get(id)
     if (waiter) {
-      waiter.resolve(approved)
+      waiter.resolve(approved, answers)
       this.confirmationWaiters.delete(id)
     }
   }
