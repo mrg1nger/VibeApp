@@ -3,7 +3,12 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { AppSettings } from '@shared/types'
 
-const DEFAULTS: AppSettings = { claudeModel: null, codexModel: null, themeId: 'midnight' }
+const DEFAULTS: AppSettings = {
+  claudeModel: null,
+  codexModel: null,
+  themeId: 'midnight',
+  smartRouting: true
+}
 
 function settingsPath(): string {
   return join(app.getPath('userData'), 'settings.json')

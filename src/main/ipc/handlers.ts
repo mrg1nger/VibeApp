@@ -1,6 +1,15 @@
 import { ipcMain, dialog, shell, type WebContents } from 'electron'
 import { mkdirSync } from 'fs'
-import type { AppSettings, CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
+import type {
+  AppSettings,
+  CliName,
+  ConfirmationRequest,
+  MemoryScope,
+  PickedElement,
+  PreviewProblem,
+  PreviewState,
+  VibeEvent
+} from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
 import { isCliOnPath, refreshPathFromRegistry } from '../cli/execCli'
@@ -42,6 +51,9 @@ import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
 import { generateTheme } from '../themes/generate'
 import { getUsage } from '../usage/usage'
+import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
+import { routeMessage } from '../orchestrator/routing'
+import { getPreview, findPreview, previewEvents } from '../preview/preview'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
   ipcMain.handle('vibe:ping', () => 'pong')
@@ -126,18 +138,47 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return recordProjectOpened(result.filePath)
   })
 
-  ipcMain.handle('vibe:chat:send', (_event, projectId: string, projectPath: string, text: string) => {
-    const project = getProject(projectId)
-    const session = getOrCreateSession(
-      projectId,
-      projectPath,
-      project?.sdkSessionId,
-      project?.goNutzMode ?? false
-    )
-    wireSessionEvents(session, projectId, getSender)
-    appendUserMessage(projectId, text)
-    session.send(text)
-  })
+  ipcMain.handle(
+    'vibe:chat:send',
+    async (_event, projectId: string, projectPath: string, text: string, picked?: PickedElement) => {
+      const project = getProject(projectId)
+      const session = getOrCreateSession(
+        projectId,
+        projectPath,
+        project?.sdkSessionId,
+        project?.goNutzMode ?? false
+      )
+      wireSessionEvents(session, projectId, getSender)
+
+      // Snapshot first so "Undo" can put the files back exactly as they
+      // were before this message. A failure only costs the undo button.
+      let snapshot: string | undefined
+      try {
+        snapshot = await takeSnapshot(projectPath, text)
+      } catch (err) {
+        console.warn('Snapshot failed:', (err as Error).message)
+      }
+
+      const route = routeMessage(text, getSettings())
+      try {
+        await session.useModel(route.model)
+      } catch (err) {
+        console.warn('Model switch failed:', (err as Error).message)
+      }
+
+      appendUserMessage(projectId, text, { snapshot, attachment: picked ? describePicked(picked) : undefined })
+      if (route.label) {
+        session.emit('event', { type: 'route', label: route.label, reason: route.reason ?? '' } satisfies VibeEvent)
+      }
+      const message = [route.note, picked ? pickedNote(picked) : undefined, text].filter(Boolean).join('\n\n')
+      session.send(message)
+      return { snapshot }
+    }
+  )
+
+  ipcMain.handle('vibe:chat:undo', (_event, projectPath: string, snapshot: string) =>
+    restoreSnapshot(projectPath, snapshot)
+  )
 
   ipcMain.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
     setGoNutzMode(projectId, enabled)
@@ -228,6 +269,37 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
 
   ipcMain.handle('vibe:usage:get', (_event, cli: CliName, force?: boolean) => getUsage(cli, force))
+
+  previewEvents.on('state', (projectId: string, state: PreviewState) => {
+    getSender()?.send('vibe:preview:state', projectId, state)
+  })
+  previewEvents.on('problem', (projectId: string, problem: PreviewProblem) => {
+    getSender()?.send('vibe:preview:problem', projectId, problem)
+  })
+  ipcMain.handle('vibe:preview:start', (_event, projectId: string, projectPath: string) =>
+    getPreview(projectId, projectPath).start()
+  )
+  ipcMain.handle('vibe:preview:stop', (_event, projectId: string) => findPreview(projectId)?.stop())
+  ipcMain.handle(
+    'vibe:preview:state',
+    (_event, projectId: string): PreviewState => findPreview(projectId)?.getState() ?? { status: 'idle' }
+  )
+  ipcMain.handle('vibe:preview:log', (_event, projectId: string) => findPreview(projectId)?.getLog() ?? '')
+}
+
+function describePicked(picked: PickedElement): string {
+  const text = picked.text.trim().replace(/\s+/g, ' ').slice(0, 40)
+  return `<${picked.tag}>${text ? ` "${text}"` : ''}`
+}
+
+function pickedNote(picked: PickedElement): string {
+  return [
+    '[VibeApp note: the user pointed at this element in the live preview. "This" / "it" in their message most likely means this element. Find where it comes from in the source and change it there.',
+    `Page: ${picked.pageUrl}`,
+    `CSS selector: ${picked.selector}`,
+    `Visible text: ${picked.text.slice(0, 300) || '(none)'}`,
+    `HTML: ${picked.html}]`
+  ].join('\n')
 }
 
 const wiredSessions = new WeakSet<object>()

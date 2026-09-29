@@ -8,6 +8,9 @@ import type {
   MemoryFact,
   MemoryScope,
   ModelOption,
+  PickedElement,
+  PreviewProblem,
+  PreviewState,
   ProjectRecord,
   ThemeDefinition,
   TranscriptEntry,
@@ -83,8 +86,18 @@ const vibeApi = {
   },
 
   chat: {
-    send: (projectId: string, projectPath: string, text: string): Promise<void> =>
-      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text),
+    send: (
+      projectId: string,
+      projectPath: string,
+      text: string,
+      picked?: PickedElement
+    ): Promise<{ snapshot?: string }> =>
+      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked),
+    undo: (
+      projectPath: string,
+      snapshot: string
+    ): Promise<{ redoSnapshot: string; changedFiles: string[] }> =>
+      ipcRenderer.invoke('vibe:chat:undo', projectPath, snapshot),
     onEvent: (cb: (projectId: string, event: VibeEvent) => void): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -158,6 +171,26 @@ const vibeApi = {
     generate: (description: string): Promise<ThemeDefinition> =>
       ipcRenderer.invoke('vibe:themes:generate', description),
     openFolder: (): Promise<string> => ipcRenderer.invoke('vibe:themes:openFolder')
+  },
+
+  preview: {
+    start: (projectId: string, projectPath: string): Promise<void> =>
+      ipcRenderer.invoke('vibe:preview:start', projectId, projectPath),
+    stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:preview:stop', projectId),
+    state: (projectId: string): Promise<PreviewState> => ipcRenderer.invoke('vibe:preview:state', projectId),
+    log: (projectId: string): Promise<string> => ipcRenderer.invoke('vibe:preview:log', projectId),
+    onState: (cb: (projectId: string, state: PreviewState) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, projectId: string, state: PreviewState): void =>
+        cb(projectId, state)
+      ipcRenderer.on('vibe:preview:state', listener)
+      return () => ipcRenderer.removeListener('vibe:preview:state', listener)
+    },
+    onProblem: (cb: (projectId: string, problem: PreviewProblem) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, projectId: string, problem: PreviewProblem): void =>
+        cb(projectId, problem)
+      ipcRenderer.on('vibe:preview:problem', listener)
+      return () => ipcRenderer.removeListener('vibe:preview:problem', listener)
+    }
   },
 
   usage: {

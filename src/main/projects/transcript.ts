@@ -13,8 +13,12 @@ function transcriptPath(projectId: string): string {
   return join(transcriptDir(), `${projectId}.jsonl`)
 }
 
-export function appendUserMessage(projectId: string, text: string): void {
-  const entry: TranscriptEntry = { direction: 'user', text }
+export function appendUserMessage(
+  projectId: string,
+  text: string,
+  extras: { snapshot?: string; attachment?: string } = {}
+): void {
+  const entry: TranscriptEntry = { direction: 'user', text, ...extras }
   appendFileSync(transcriptPath(projectId), `${JSON.stringify(entry)}\n`, 'utf-8')
 }
 

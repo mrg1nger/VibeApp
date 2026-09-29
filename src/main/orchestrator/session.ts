@@ -14,12 +14,16 @@ import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
 
-const MEMORY_INSTRUCTIONS = `# Project memory (required)
+const APP_INSTRUCTIONS = `# Project memory (required)
 This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
 1. Before starting work on any user request, call mcp__vibe_memory__recall once.
 2. Before your final reply for a request, call mcp__vibe_memory__remember for each new durable fact you learned or decided: the project's purpose, tech stack and structure, how to run/build/test it, key decisions, the user's stated preferences, and non-obvious gotchas. Skip facts already in memory.
 3. One standalone sentence per fact. Never save secrets, credentials, or temporary task state.
-4. Set global: true only for the user's preferences that apply to all their projects.`
+4. Set global: true only for the user's preferences that apply to all their projects.
+
+# Live preview
+VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
+Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview). Use them as context; they're not something the user typed.`
 
 /** A pushable async queue feeding query()'s streaming-input mode. */
 class MessageQueue implements AsyncIterable<SDKUserMessage> {
@@ -74,6 +78,7 @@ export class ClaudeSession extends EventEmitter {
   private reloadPending = false
   private mcpWatcher: FSWatcher | undefined
   private reloadTimer: NodeJS.Timeout | undefined
+  private activeModel: string | null = null
 
   constructor(
     private readonly projectId: string,
@@ -170,19 +175,20 @@ export class ClaudeSession extends EventEmitter {
     }
 
     const queue = new MessageQueue()
+    this.activeModel = getSettings().claudeModel
     this.queryHandle = query({
       prompt: queue,
       options: {
         cwd: this.projectPath,
         pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-        model: getSettings().claudeModel ?? undefined,
+        model: this.activeModel ?? undefined,
         permissionMode: goNutz ? 'bypassPermissions' : 'acceptEdits',
         // Always set so setPermissionMode('bypassPermissions') can be used
         // later to enter Go Nutz mode without recreating the session -- this
         // flag only takes effect once that mode is actually switched to.
         allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
-        systemPrompt: { type: 'preset', preset: 'claude_code', append: MEMORY_INSTRUCTIONS },
+        systemPrompt: { type: 'preset', preset: 'claude_code', append: APP_INSTRUCTIONS },
         mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
         // Only called when Claude Code itself wants to ask (sensitive files
         // like .mcp.json, paths outside the project). With no handler those
@@ -281,6 +287,13 @@ export class ClaudeSession extends EventEmitter {
   async setModel(model: string | null): Promise<void> {
     if (this.dead || this.disposed) return
     await this.queryHandle.setModel(model ?? undefined)
+    this.activeModel = model
+  }
+
+  /** Switches model for the next message only if it differs; null = the user's chosen model. */
+  async useModel(model: string | null): Promise<void> {
+    const target = model ?? getSettings().claudeModel
+    if (target !== this.activeModel) await this.setModel(target)
   }
 
   async setGoNutzMode(enabled: boolean): Promise<void> {

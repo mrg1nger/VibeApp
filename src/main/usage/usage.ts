@@ -33,6 +33,18 @@ export function getUsage(cli: CliName, force = false): Promise<UsageSnapshot> {
   return fetch
 }
 
+/** Latest known usage without waiting; kicks off a background refresh if it's stale. */
+export function peekUsage(cli: CliName): UsageSnapshot | undefined {
+  getUsage(cli).catch(() => undefined)
+  return cache.get(cli)
+}
+
+/** Lowest share left across a snapshot's windows (0-100), or undefined if unknown. */
+export function percentLeft(snapshot: UsageSnapshot | undefined): number | undefined {
+  if (snapshot?.status !== 'ok' || snapshot.windows.length === 0) return undefined
+  return Math.min(...snapshot.windows.map((w) => 100 - w.usedPercent))
+}
+
 function withTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
   return Promise.race([
     promise,

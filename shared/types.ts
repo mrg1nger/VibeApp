@@ -37,6 +37,30 @@ export type VibeEvent =
   | { type: 'task_progress'; note: string }
   | { type: 'turn_complete' }
   | { type: 'error'; message: string }
+  /** Smart model switching picked a model for this message. */
+  | { type: 'route'; label: string; reason: string }
+
+/** An element the user pointed at in the live preview. */
+export interface PickedElement {
+  pageUrl: string
+  selector: string
+  tag: string
+  text: string
+  html: string
+}
+
+export type PreviewState =
+  | { status: 'idle' }
+  | { status: 'none'; message: string }
+  | { status: 'starting'; command: string }
+  | { status: 'running'; command: string; url: string }
+  | { status: 'crashed'; command: string; exitCode: number | null }
+
+/** A problem spotted in the running app (server output or the page itself). */
+export interface PreviewProblem {
+  source: 'server' | 'page'
+  message: string
+}
 
 export interface ConfirmationRequest {
   id: string
@@ -65,6 +89,10 @@ export interface TranscriptEntry {
   direction: 'user' | 'event'
   text?: string
   event?: VibeEvent
+  /** Snapshot of the project's files taken just before this message (for undo). */
+  snapshot?: string
+  /** Short description of an element the user pointed at, shown with the message. */
+  attachment?: string
 }
 
 export interface MemoryFact {
@@ -123,6 +151,8 @@ export interface AppSettings {
   /** null = whatever ~/.codex/config.toml defaults to. */
   codexModel: string | null
   themeId: string
+  /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
+  smartRouting: boolean
 }
 
 export interface ModelOption {

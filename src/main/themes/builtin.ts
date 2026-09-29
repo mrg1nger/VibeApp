@@ -41,7 +41,8 @@ export const BUILT_IN_THEMES: ThemeDefinition[] = [
     source: 'built-in',
     thinkingLabel: 'Claude is coding… (ง •̀_•́)ง',
     vars: {
-      font: "'Segoe UI Rounded', 'Yu Gothic UI', 'Segoe UI', system-ui, sans-serif",
+      // No Japanese UI fonts here: they draw backslashes in file paths as ¥.
+      font: "'Segoe UI Rounded', 'Segoe UI', system-ui, sans-serif",
       radius: '14px',
       bg: '#0f0a1f',
       'bg-image':

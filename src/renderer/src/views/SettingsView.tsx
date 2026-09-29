@@ -104,6 +104,22 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           />
           <small>A Codex model name like gpt-5-codex. Leave blank for Codex's default.</small>
         </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.smartRouting}
+            onChange={(e) => onSettingsChange({ smartRouting: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Smart model switching
+            <small>
+              Uses Haiku for quick edits like colors and wording, switches to Sonnet when your Claude plan
+              usage runs low, and hands more work to Codex (or less, when Codex is running low). Chats show a
+              ⚡ badge when it steps in.
+            </small>
+          </span>
+        </label>
       </section>
 
       <section className="settings-section">
