@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { promisify } from 'util'
 import type { PublishStatus } from '@shared/types'
 import { isCliOnPath } from '../cli/execCli'
@@ -197,6 +197,45 @@ export function parseVercelLoginUrl(output: string): string | null {
   return /https:\/\/vercel\.com\/oauth\/device\?user_code=[A-Z0-9-]+/.exec(output)?.[0] ?? null
 }
 
+/**
+ * A name Vercel accepts: lowercase, letters/digits/.-_ only, no "---",
+ * at most 100 characters.
+ */
+export function vercelProjectName(folderName: string): string {
+  const name = folderName
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // é -> e
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-{3,}/g, '--')
+    .replace(/^[-._]+|[-._]+$/g, '')
+    .slice(0, 100)
+  return name || 'vibe-app'
+}
+
+/**
+ * Connects the folder to a Vercel project the first time. Left to itself,
+ * the deploy names the project after the folder as-is, and Vercel rejects
+ * names with capitals ("MyGame"), so give it a valid name explicitly.
+ * `link --yes --project <name>` uses that project, creating it if needed.
+ */
+async function ensureVercelLink(projectPath: string): Promise<void> {
+  if (existsSync(join(projectPath, '.vercel', 'project.json'))) return
+  const npx = await resolveNpx()
+  const name = vercelProjectName(basename(projectPath))
+  try {
+    await execFileAsync(
+      npx.file,
+      [...npx.prefixArgs, '--yes', 'vercel@latest', 'link', '--yes', '--project', name],
+      { cwd: projectPath, windowsHide: true, timeout: 180_000 }
+    )
+  } catch (err) {
+    const { stderr, stdout } = err as { stderr?: string; stdout?: string }
+    const detail = `${stderr ?? ''}\n${stdout ?? ''}`.replace(ANSI, '').trim().split('\n').slice(-6).join('\n')
+    throw new Error(`Couldn't set up the Vercel project "${name}":\n${detail || (err as Error).message}`)
+  }
+}
+
 /** The terminal command that deploys the project to Vercel (already signed in). */
 export async function vercelDeploySessionOptions(
   projectId: string,
@@ -205,6 +244,7 @@ export async function vercelDeploySessionOptions(
 ): Promise<PtySessionOptions> {
   await assertNoLeaks(projectId, projectPath)
   ensureVercelIgnore(projectPath)
+  await ensureVercelLink(projectPath)
   const npx = await resolveNpx()
   const secretArgs = includeSecrets
     ? Object.entries(secretEnv(projectId)).flatMap(([name, value]) => [
