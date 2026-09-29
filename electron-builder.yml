@@ -8,6 +8,7 @@ files:
   - package.json
 asarUnpack:
   - '**/node_modules/node-pty/**/*'
+  - '**/node_modules/@anthropic-ai/**/*'
 npmRebuild: false
 win:
   target: nsis
