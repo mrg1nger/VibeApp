@@ -11,6 +11,7 @@ import type {
   ProjectRecord,
   ThemeDefinition,
   TranscriptEntry,
+  UsageSnapshot,
   VibeEvent
 } from '@shared/types'
 
@@ -157,6 +158,11 @@ const vibeApi = {
     generate: (description: string): Promise<ThemeDefinition> =>
       ipcRenderer.invoke('vibe:themes:generate', description),
     openFolder: (): Promise<string> => ipcRenderer.invoke('vibe:themes:openFolder')
+  },
+
+  usage: {
+    get: (cli: CliName, force?: boolean): Promise<UsageSnapshot> =>
+      ipcRenderer.invoke('vibe:usage:get', cli, force)
   }
 }
 

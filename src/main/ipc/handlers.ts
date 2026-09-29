@@ -41,6 +41,7 @@ import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
 import { generateTheme } from '../themes/generate'
+import { getUsage } from '../usage/usage'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
   ipcMain.handle('vibe:ping', () => 'pong')
@@ -225,6 +226,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.handle('vibe:themes:delete', (_event, id: string) => deleteTheme(id))
   ipcMain.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
   ipcMain.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
+
+  ipcMain.handle('vibe:usage:get', (_event, cli: CliName, force?: boolean) => getUsage(cli, force))
 }
 
 const wiredSessions = new WeakSet<object>()

@@ -8,6 +8,25 @@ export interface CliStatus {
   detail?: string
 }
 
+export interface UsageWindow {
+  label: string
+  /** Percentage of this plan window already used, 0-100. */
+  usedPercent: number
+  /** When the window resets, in epoch ms, if known. */
+  resetsAt: number | null
+}
+
+/** Plan usage for one CLI's signed-in account (subscription windows, not raw token counts). */
+export interface UsageSnapshot {
+  cli: CliName
+  status: 'ok' | 'unavailable' | 'error'
+  plan?: string
+  windows: UsageWindow[]
+  /** Why usage isn't shown (status 'unavailable' or 'error'). */
+  message?: string
+  fetchedAt: number
+}
+
 export type VibeEvent =
   | { type: 'assistant_text'; text: string; partial: boolean }
   | { type: 'tool_call'; toolUseId: string; name: string; input: unknown; friendlyLabel: string }

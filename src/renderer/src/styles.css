@@ -945,3 +945,86 @@ select,
 textarea {
   font-family: inherit;
 }
+
+.usage-meters {
+  margin-left: auto;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.usage-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.usage-meter-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.usage-meter-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.usage-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.usage-bar-label {
+  width: 1.3rem;
+  text-align: left;
+}
+
+.usage-bar {
+  width: 72px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.usage-bar-value {
+  width: 2rem;
+  text-align: right;
+}
+
+.usage-warning .usage-bar-fill {
+  background: var(--warning-text);
+}
+
+.usage-danger .usage-bar-fill {
+  background: var(--danger);
+}
+
+.usage-warning .usage-bar-value,
+.usage-danger .usage-bar-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.usage-bar-empty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}

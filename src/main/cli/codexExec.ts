@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile)
 
 const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. Call recall first to see what's known about this project. Before finishing, use remember to save anything worth keeping across sessions (architecture choices, how to run/build/test, gotchas), one standalone sentence per fact. Don't save secrets or temporary task state.`
 
-interface CodexLaunch {
+export interface CodexLaunch {
   file: string
   prefixArgs: string[]
   env?: NodeJS.ProcessEnv
@@ -23,7 +23,7 @@ interface CodexLaunch {
  * bin/codex.js with Node, and this app's own binary is a Node runtime
  * (ELECTRON_RUN_AS_NODE), so run codex.js directly.
  */
-async function resolveCodexLaunch(): Promise<CodexLaunch> {
+export async function resolveCodexLaunch(): Promise<CodexLaunch> {
   if (process.platform !== 'win32') return { file: 'codex', prefixArgs: [] }
   try {
     const { stdout } = await execFileAsync('where', ['codex'], { timeout: 5_000 })
@@ -49,7 +49,7 @@ async function resolveCodexLaunch(): Promise<CodexLaunch> {
   return { file: 'cmd.exe', prefixArgs: ['/d', '/s', '/c', 'codex'] }
 }
 
-function killTree(child: ChildProcess): void {
+export function killTree(child: ChildProcess): void {
   if (process.platform === 'win32' && child.pid) {
     // child.kill() only ends the direct child; Codex's own subprocesses
     // (and codex.exe under the node launcher) would keep running.

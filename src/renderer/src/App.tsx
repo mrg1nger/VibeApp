@@ -7,6 +7,7 @@ import HistoryView from './views/HistoryView'
 import MemoryView from './views/MemoryView'
 import SettingsView from './views/SettingsView'
 import ToastHost from './components/ToastHost'
+import UsageMeters from './components/UsageMeters'
 import { useToasts } from './lib/useToasts'
 import { applyTheme } from './lib/theme'
 
@@ -101,6 +102,7 @@ function App() {
             Settings
           </button>
         </div>
+        <UsageMeters statuses={statuses} />
       </div>
 
       {screen === 'accounts' && <AccountsView statuses={statuses} onRefresh={refreshStatus} />}
