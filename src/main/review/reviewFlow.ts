@@ -54,7 +54,8 @@ export function handleSessionEvent(
   forward: (event: VibeEvent) => void
 ): void {
   const turn = turns.get(projectId)
-  if (turn && event.type === 'error') turn.hadError = true
+  // An error or a Stop leaves a half-finished change: not worth reviewing.
+  if (turn && (event.type === 'error' || event.type === 'stopped')) turn.hadError = true
 
   if (event.type !== 'turn_complete' || !turn || turn.phase === 'reviewing') {
     forward(event)
@@ -80,7 +81,9 @@ export function handleSessionEvent(
   }
   turn.finishNow = () => {
     abort.abort()
-    forward({ type: 'review_result', ok: false, summary: 'Review skipped.', findings: [], fixing: false })
+    if (reviewStarted) {
+      forward({ type: 'review_result', ok: false, summary: 'Review skipped.', findings: [], fixing: false })
+    }
     finish()
   }
 
@@ -123,7 +126,9 @@ export function handleSessionEvent(
   })()
 }
 
-/** The user chose not to wait for the review. */
-export function skipReview(projectId: string): void {
-  turns.get(projectId)?.finishNow?.()
+/** The user chose not to wait for the review. Returns false if no review was running. */
+export function skipReview(projectId: string): boolean {
+  const finishNow = turns.get(projectId)?.finishNow
+  finishNow?.()
+  return !!finishNow
 }

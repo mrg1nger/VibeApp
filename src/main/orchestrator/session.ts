@@ -14,6 +14,7 @@ import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
 import { agentSecretEnv, listSecrets } from '../secrets/vault'
+import type { PreparedImage } from '../attachments/images'
 
 const APP_INSTRUCTIONS = `# Project memory (required)
 This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
@@ -52,10 +53,10 @@ class MessageQueue implements AsyncIterable<SDKUserMessage> {
   private waiter: ((msg: SDKUserMessage | null) => void) | undefined
   private closed = false
 
-  push(text: string): void {
+  push(content: SDKUserMessage['message']['content']): void {
     const message: SDKUserMessage = {
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content },
       parent_tool_use_id: null
     }
     const waiter = this.waiter
@@ -96,6 +97,10 @@ export class ClaudeSession extends EventEmitter {
   private disposed = false
   private dead = false
   private turnsInFlight = 0
+  /** Set by stop() until the interrupted turn's result arrives. */
+  private stopping = false
+  /** Cancels running Codex hand-offs when the user presses Stop. */
+  private delegationAbort = new AbortController()
   private reloadPending = false
   /** Whether the pending reload is for .mcp.json (shown in the chat) rather than secrets. */
   private reloadAnnounce = false
@@ -131,7 +136,8 @@ export class ClaudeSession extends EventEmitter {
         this.emit('event', event)
       },
       () => this.goNutz,
-      memoryPaths
+      memoryPaths,
+      () => this.delegationAbort.signal
     )
 
     const memoryServer = {
@@ -364,8 +370,14 @@ export class ClaudeSession extends EventEmitter {
         if (message.type === 'result') {
           this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
         }
-        for (const event of mapSdkMessage(message)) {
-          this.emit('event', event)
+        if (message.type === 'result' && this.stopping) {
+          this.stopping = false
+          this.emit('event', { type: 'stopped' } satisfies VibeEvent)
+          this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
+        } else {
+          for (const event of mapSdkMessage(message)) {
+            this.emit('event', event)
+          }
         }
         if (message.type === 'result' && this.reloadPending && this.turnsInFlight === 0) {
           this.reload()
@@ -434,12 +446,30 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
-  send(text: string): void {
+  /** Sends a message; images (Claude image content blocks) go ahead of the text. */
+  send(text: string, images: PreparedImage['block'][] = []): void {
     this.turnsInFlight++
-    this.queue.push(text)
+    this.queue.push(images.length ? [...images, { type: 'text', text }] : text)
   }
 
-  async abort(): Promise<void> {
+  isBusy(): boolean {
+    return this.turnsInFlight > 0
+  }
+
+  /**
+   * The user's Stop button. Interrupting ends the turn with an
+   * error_during_execution result (confirmed experimentally), which consume()
+   * reports as "stopped" rather than an error; the session stays usable.
+   */
+  async stop(): Promise<void> {
+    if (this.dead || this.disposed || this.turnsInFlight === 0) return
+    this.stopping = true
+    // Codex runs inside a tool call; interrupting Claude doesn't end it.
+    this.delegationAbort.abort()
+    this.delegationAbort = new AbortController()
+    // Unanswered prompts would otherwise hold the turn open.
+    for (const { resolve } of this.confirmationWaiters.values()) resolve(false)
+    this.confirmationWaiters.clear()
     await this.queryHandle.interrupt()
   }
 

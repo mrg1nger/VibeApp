@@ -9,7 +9,9 @@ export function createCodexDelegationServer(
   projectPath: string,
   onProgress: DelegationProgressListener,
   isGoNutzMode: () => boolean,
-  memory?: NonNullable<CodexExecArgs['memory']>
+  memory?: NonNullable<CodexExecArgs['memory']>,
+  /** Aborted when the user presses Stop. */
+  getStopSignal?: () => AbortSignal
 ): ReturnType<typeof createSdkMcpServer> {
   return createSdkMcpServer({
     name: 'vibe_tools',
@@ -34,7 +36,8 @@ export function createCodexDelegationServer(
                 timeoutMs: args.timeoutMs ?? 300_000,
                 unsandboxed: isGoNutzMode(),
                 model: getSettings().codexModel ?? undefined,
-                memory
+                memory,
+                signal: getStopSignal?.()
               },
               onProgress
             )

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ConfirmationRequest,
+  ImageAttachment,
   PickedElement,
   PreviewProblem,
   ProjectRecord,
@@ -16,6 +17,7 @@ import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
 import QuestionCard from '../components/QuestionCard'
+import { shortenProjectPaths } from '../lib/labels'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 
 interface ChatViewProps {
@@ -27,7 +29,7 @@ interface ChatViewProps {
 }
 
 type ChatItem =
-  | { kind: 'user_text'; text: string; snapshot?: string; attachment?: string }
+  | { kind: 'user_text'; text: string; snapshot?: string; attachment?: string; images?: string[] }
   | { kind: 'assistant_text'; text: string }
   | {
       kind: 'tool'
@@ -58,6 +60,33 @@ function describePicked(picked: PickedElement): string {
   return `<${picked.tag}>${text ? ` "${text}"` : ''}`
 }
 
+/** An image waiting to be sent with the next message. */
+interface PendingImage {
+  name: string
+  mediaType: string
+  dataUrl: string
+}
+
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+function readImageFile(file: File): Promise<PendingImage> {
+  return new Promise((resolve, reject) => {
+    if (file.size > MAX_IMAGE_BYTES) {
+      reject(new Error(`${file.name || 'That image'} is over 20 MB.`))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () =>
+      resolve({ name: file.name || 'pasted-image', mediaType: file.type, dataUrl: String(reader.result) })
+    reader.onerror = () => reject(new Error(`Couldn't read ${file.name || 'that image'}.`))
+    reader.readAsDataURL(file)
+  })
+}
+
+function toAttachment(image: PendingImage): ImageAttachment {
+  return { name: image.name, mediaType: image.mediaType, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1) }
+}
+
 function readPreviewPref(): boolean {
   try {
     return localStorage.getItem(PREVIEW_PREF_KEY) !== 'false'
@@ -84,11 +113,16 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [problemExpanded, setProblemExpanded] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const [dialog, setDialog] = useState<'secrets' | 'publish' | null>(null)
+  const [stopping, setStopping] = useState(false)
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [dragging, setDragging] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [leaks, setLeaks] = useState<SecretLeak[] | null>(null)
   // A message that looked like it contained an API key, waiting on the user.
   const [pendingSecret, setPendingSecret] = useState<{
     text: string
     element?: PickedElement
+    images: PendingImage[]
     found: (DetectedSecret & { saveAs: string })[]
   } | null>(null)
   const busyRef = useRef(false)
@@ -193,6 +227,10 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               ? [...prev, result]
               : prev.map((item, i) => (i === runningIndex ? result : item))
           }
+          case 'stopped':
+            // Stop also cancelled any open prompts or questions.
+            if (!isReplay) setConfirmations([])
+            return [...prev, { kind: 'notice', text: '⏹ Stopped.' }]
           case 'turn_complete':
             if (!isReplay) {
               setBusy(false)
@@ -218,7 +256,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             kind: 'user_text',
             text: entry.text,
             snapshot: entry.snapshot,
-            attachment: entry.attachment
+            attachment: entry.attachment,
+            images: entry.images
           }
           setItems((prev) => [...prev, item])
         } else if (entry.direction === 'event' && entry.event) {
@@ -262,47 +301,92 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   }, [items])
 
   const sendMessage = useCallback(
-    async (text: string, element?: PickedElement) => {
+    async (text: string, element?: PickedElement, images: PendingImage[] = []) => {
       const index = { value: -1 }
       setItems((prev) => {
         index.value = prev.length
         return [
           ...prev,
-          { kind: 'user_text', text, attachment: element ? describePicked(element) : undefined }
+          {
+            kind: 'user_text',
+            text,
+            attachment: element ? describePicked(element) : undefined,
+            images: images.length ? images.map((img) => img.dataUrl) : undefined
+          }
         ]
       })
       setBusy(true)
       setProblem(null)
       try {
-        const { snapshot } = await window.vibe.chat.send(project.id, project.path, text, element)
-        if (snapshot) {
-          setItems((prev) =>
-            prev.map((item, i) => (i === index.value && item.kind === 'user_text' ? { ...item, snapshot } : item))
+        const { snapshot, thumbnails } = await window.vibe.chat.send(
+          project.id,
+          project.path,
+          text,
+          element,
+          images.map(toAttachment)
+        )
+        // Swap the full-size local previews for the small saved thumbnails.
+        setItems((prev) =>
+          prev.map((item, i) =>
+            i === index.value && item.kind === 'user_text'
+              ? { ...item, snapshot, images: thumbnails.length ? thumbnails : item.images }
+              : item
           )
-        }
+        )
       } catch (err) {
         setBusy(false)
-        onError(`Failed to send message: ${(err as Error).message}`)
+        onError(`Failed to send message: ${(err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`)
       }
     },
     [project, onError]
   )
 
   const handleSend = useCallback(() => {
-    const text = input.trim()
+    const images = pendingImages
+    const text = input.trim() || (images.length ? 'Take a look at this.' : '')
     if (!text || busy) return
     setInput('')
+    setPendingImages([])
     const element = picked ?? undefined
     setPicked(null)
     // Keys pasted into the chat would be sent to the AI and saved in the
     // transcript; offer to keep them in Secrets instead.
     const found = detectSecrets(text)
     if (found.length) {
-      setPendingSecret({ text, element, found: found.map((f) => ({ ...f, saveAs: f.name })) })
+      setPendingSecret({ text, element, images, found: found.map((f) => ({ ...f, saveAs: f.name })) })
       return
     }
-    sendMessage(text, element)
-  }, [input, busy, picked, sendMessage])
+    sendMessage(text, element, images)
+  }, [input, busy, picked, pendingImages, sendMessage])
+
+  const addImageFiles = useCallback(
+    async (files: File[]) => {
+      const images = files.filter((f) => f.type.startsWith('image/'))
+      if (images.length === 0) return
+      try {
+        const read = await Promise.all(images.map(readImageFile))
+        setPendingImages((prev) => [...prev, ...read].slice(0, 10))
+      } catch (err) {
+        onError((err as Error).message)
+      }
+    },
+    [onError]
+  )
+
+  const handleStop = useCallback(async () => {
+    setStopping(true)
+    try {
+      await window.vibe.chat.stop(project.id)
+    } catch (err) {
+      onError(`Couldn't stop: ${(err as Error).message}`)
+      setStopping(false)
+    }
+  }, [project.id, onError])
+
+  // Stopping ends when the turn does.
+  useEffect(() => {
+    if (!busy) setStopping(false)
+  }, [busy])
 
   const handleSaveDetectedSecrets = useCallback(async () => {
     if (!pendingSecret) return
@@ -317,7 +401,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       return
     }
     setPendingSecret(null)
-    sendMessage(text, pendingSecret.element)
+    sendMessage(text, pendingSecret.element, pendingSecret.images)
   }, [pendingSecret, project.id, sendMessage, onError])
 
   const handleFixLeaks = useCallback(
@@ -446,13 +530,36 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       )}
 
       <div className={`chat-body${showPreview ? ' with-preview' : ''}`}>
-        <div className="chat-main">
+        <div
+          className={`chat-main${dragging ? ' dragging' : ''}`}
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes('Files')) return
+            e.preventDefault()
+            setDragging(true)
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false)
+          }}
+          onDrop={(e) => {
+            if (!e.dataTransfer.files.length) return
+            e.preventDefault()
+            setDragging(false)
+            addImageFiles([...e.dataTransfer.files])
+          }}
+        >
           <div className="chat-log" ref={scrollRef}>
             {items.map((item, i) => (
               <div key={i} className={`chat-item chat-item-${item.kind}`}>
                 {item.kind === 'user_text' && (
                   <>
                     {item.attachment && <span className="chat-attachment">📍 {item.attachment}</span>}
+                    {item.images && item.images.length > 0 && (
+                      <div className="chat-images">
+                        {item.images.map((src, j) =>
+                          src ? <img key={j} src={src} alt="" /> : <span key={j} className="chat-image-missing">🖼</span>
+                        )}
+                      </div>
+                    )}
                     <p>{item.text}</p>
                     {item.snapshot && (
                       <button
@@ -471,7 +578,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   <div
                     className={`tool-card tool-card-${item.status} ${item.isDelegation ? 'tool-card-delegation' : ''}`}
                   >
-                    <span>{item.label}</span>
+                    <span className="tool-card-label" title={item.label}>
+                      {shortenProjectPaths(item.label, project.path)}
+                    </span>
                     {item.status === 'running' && (
                       <span className="tool-status">{item.progressNote ?? 'working…'}</span>
                     )}
@@ -614,23 +723,79 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             </div>
           )}
 
+          {pendingImages.length > 0 && (
+            <div className="pending-images">
+              {pendingImages.map((img, i) => (
+                <div key={i} className="pending-image" title={img.name}>
+                  <img src={img.dataUrl} alt={img.name} />
+                  <button onClick={() => setPendingImages((prev) => prev.filter((_, j) => j !== i))} title="Remove">
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="chat-input-row">
+            <button
+              className="chat-attach"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy}
+              title="Attach images (you can also paste or drag them in)"
+            >
+              📎
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              hidden
+              onChange={(e) => {
+                addImageFiles([...(e.target.files ?? [])])
+                e.target.value = ''
+              }}
+            />
             <input
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'))
+                if (files.length) {
+                  e.preventDefault()
+                  addImageFiles(files)
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
                   handleSend()
                 }
               }}
-              placeholder={picked ? 'What should change about this?' : 'Tell VibeApp what to build…'}
+              placeholder={
+                picked
+                  ? 'What should change about this?'
+                  : pendingImages.length
+                    ? 'What should Claude do with this?'
+                    : 'Tell VibeApp what to build… (paste or drop images too)'
+              }
               disabled={busy}
             />
-            <button onClick={handleSend} disabled={busy || !input.trim()}>
-              Send
-            </button>
+            {busy ? (
+              <button
+                className="chat-stop"
+                onClick={handleStop}
+                disabled={stopping}
+                title="Stop Claude (and any Codex work) right now"
+              >
+                {stopping ? 'Stopping…' : '■ Stop'}
+              </button>
+            ) : (
+              <button onClick={handleSend} disabled={!input.trim() && pendingImages.length === 0}>
+                Send
+              </button>
+            )}
           </div>
         </div>
 
@@ -660,6 +825,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             // Cancelled: put the message back so nothing is lost.
             setInput(pendingSecret.text)
             if (pendingSecret.element) setPicked(pendingSecret.element)
+            setPendingImages(pendingSecret.images)
             setPendingSecret(null)
           }}
         >
@@ -688,9 +854,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           <div className="modal-actions">
             <button
               onClick={() => {
-                const { text, element } = pendingSecret
+                const { text, element, images } = pendingSecret
                 setPendingSecret(null)
-                sendMessage(text, element)
+                sendMessage(text, element, images)
               }}
             >
               Send it anyway

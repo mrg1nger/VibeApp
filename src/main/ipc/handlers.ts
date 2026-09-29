@@ -4,6 +4,7 @@ import type {
   AppSettings,
   CliName,
   ConfirmationRequest,
+  ImageAttachment,
   MemoryScope,
   PickedElement,
   PreviewProblem,
@@ -59,6 +60,7 @@ import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
+import { prepareImages, imagesNote } from '../attachments/images'
 import { listSecrets, setSecret, deleteSecret } from '../secrets/vault'
 import {
   publishStatus,
@@ -155,7 +157,14 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   ipcMain.handle(
     'vibe:chat:send',
-    async (_event, projectId: string, projectPath: string, text: string, picked?: PickedElement) => {
+    async (
+      _event,
+      projectId: string,
+      projectPath: string,
+      text: string,
+      picked?: PickedElement,
+      images?: ImageAttachment[]
+    ) => {
       const project = getProject(projectId)
       const session = getOrCreateSession(
         projectId,
@@ -164,6 +173,9 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         project?.goNutzMode ?? false
       )
       wireSessionEvents(session, projectId, getSender)
+
+      // Before anything else, so a bad file fails the send cleanly.
+      const prepared = images?.length ? prepareImages(projectId, images) : []
 
       // Snapshot first so "Undo" can put the files back exactly as they
       // were before this message. A failure only costs the undo button.
@@ -174,7 +186,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         console.warn('Snapshot failed:', (err as Error).message)
       }
 
-      const route = routeMessage(text, getSettings())
+      const route = routeMessage(text, getSettings(), { hasImages: prepared.length > 0 })
       try {
         await session.useModel(route.model)
       } catch (err) {
@@ -183,13 +195,28 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
       // Quick edits skip the Codex review: it would take longer than the edit.
       beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.model === 'haiku' })
-      appendUserMessage(projectId, text, { snapshot, attachment: picked ? describePicked(picked) : undefined })
+      const thumbnails = prepared.map((p) => p.thumbnail)
+      appendUserMessage(projectId, text, {
+        snapshot,
+        attachment: picked ? describePicked(picked) : undefined,
+        images: thumbnails.length ? thumbnails : undefined
+      })
       if (route.label) {
         session.emit('event', { type: 'route', label: route.label, reason: route.reason ?? '' } satisfies VibeEvent)
       }
-      const message = [route.note, picked ? pickedNote(picked) : undefined, text].filter(Boolean).join('\n\n')
-      session.send(message)
-      return { snapshot }
+      const message = [
+        route.note,
+        picked ? pickedNote(picked) : undefined,
+        prepared.length ? imagesNote(prepared) : undefined,
+        text
+      ]
+        .filter(Boolean)
+        .join('\n\n')
+      session.send(
+        message,
+        prepared.map((p) => p.block)
+      )
+      return { snapshot, thumbnails }
     }
   )
 
@@ -198,6 +225,13 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   )
 
   ipcMain.on('vibe:chat:skipReview', (_event, projectId: string) => skipReview(projectId))
+
+  // Stop: while Codex is reviewing, Claude is already done, so just skip the
+  // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
+  ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
+    if (skipReview(projectId)) return
+    await getSession(projectId)?.stop()
+  })
 
   ipcMain.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
     setGoNutzMode(projectId, enabled)

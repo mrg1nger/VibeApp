@@ -5,6 +5,7 @@ import type {
   CliName,
   CliStatus,
   ConfirmationRequest,
+  ImageAttachment,
   MemoryFact,
   MemoryScope,
   ModelOption,
@@ -93,9 +94,10 @@ const vibeApi = {
       projectId: string,
       projectPath: string,
       text: string,
-      picked?: PickedElement
-    ): Promise<{ snapshot?: string }> =>
-      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked),
+      picked?: PickedElement,
+      images?: ImageAttachment[]
+    ): Promise<{ snapshot?: string; thumbnails: string[] }> =>
+      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images),
     undo: (
       projectPath: string,
       snapshot: string
@@ -128,6 +130,7 @@ const vibeApi = {
       answers?: QuestionAnswers
     ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
+    stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:chat:stop', projectId),
     pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
       ipcRenderer.invoke('vibe:chat:pendingConfirmations', projectId),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),

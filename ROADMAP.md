@@ -4,9 +4,9 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Next up
 
-- [ ] **Stop button.** Stop Claude partway through a request instead of waiting for it to finish and then undoing.
-- [ ] **Shorter action labels.** Show `src/player.js` instead of the full `C:\Users\…\MrgRPG\src\player.js` path in the chat.
-- [ ] **Paste images** (#10). Drop in a screenshot or sketch: "make it look like this."
+- [x] **Stop button.** Stop Claude partway through a request instead of waiting for it to finish and then undoing. Also stops Codex hand-offs and skips a running review.
+- [x] **Shorter action labels.** Show `src/player.js` instead of the full `C:\Users\…\MrgRPG\src\player.js` path in the chat.
+- [x] **Paste images** (#10). Paste, drop, or 📎 a screenshot or sketch: "make it look like this." Originals are kept so Claude can use them as project files.
 
 ## Bigger features
 

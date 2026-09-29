@@ -16,7 +16,7 @@ function transcriptPath(projectId: string): string {
 export function appendUserMessage(
   projectId: string,
   text: string,
-  extras: { snapshot?: string; attachment?: string } = {}
+  extras: { snapshot?: string; attachment?: string; images?: string[] } = {}
 ): void {
   const entry: TranscriptEntry = { direction: 'user', text, ...extras }
   appendFileSync(transcriptPath(projectId), `${JSON.stringify(entry)}\n`, 'utf-8')

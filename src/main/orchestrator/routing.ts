@@ -30,7 +30,11 @@ export function isQuickEdit(text: string): boolean {
 
 const CHEAP_MODELS = /haiku|sonnet/i
 
-export function routeMessage(text: string, settings: AppSettings): RouteDecision {
+export function routeMessage(
+  text: string,
+  settings: AppSettings,
+  options: { hasImages?: boolean } = {}
+): RouteDecision {
   if (!settings.smartRouting) return { model: null }
   const baseline = settings.claudeModel
   const claudeLeft = percentLeft(peekUsage('claude'))
@@ -52,7 +56,8 @@ export function routeMessage(text: string, settings: AppSettings): RouteDecision
 
   if (baseline && /haiku/i.test(baseline)) return { model: null, note }
 
-  if (isQuickEdit(text)) {
+  // A screenshot usually means "make it look like this": rarely a quick edit.
+  if (isQuickEdit(text) && !options.hasImages) {
     return { model: 'haiku', label: 'Haiku', reason: 'quick edit', note }
   }
   if (claudeLow && !(baseline && CHEAP_MODELS.test(baseline))) {

@@ -42,6 +42,8 @@ export type VibeEvent =
   | { type: 'task_progress'; note: string }
   | { type: 'turn_complete' }
   | { type: 'error'; message: string }
+  /** The user pressed Stop; the turn ended early on purpose. */
+  | { type: 'stopped' }
   /** Smart model switching picked a model for this message. */
   | { type: 'route'; label: string; reason: string }
   /** Codex started reviewing the changes Claude just made. */
@@ -70,6 +72,14 @@ export interface ReviewFinding {
   line: number | null
   title: string
   detail: string
+}
+
+/** An image the user pasted, dropped, or picked for a message. */
+export interface ImageAttachment {
+  name?: string
+  mediaType: string
+  /** Base64, no data: prefix. */
+  data: string
 }
 
 /** An element the user pointed at in the live preview. */
@@ -153,6 +163,8 @@ export interface TranscriptEntry {
   snapshot?: string
   /** Short description of an element the user pointed at, shown with the message. */
   attachment?: string
+  /** Thumbnails (data: URLs) of images attached to the message. */
+  images?: string[]
 }
 
 export interface MemoryFact {

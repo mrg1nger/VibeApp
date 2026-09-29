@@ -32,8 +32,28 @@ function friendlyToolLabel(name: string, input: unknown): string {
     }
     case 'mcp__vibe_tools__run_codex_subtask':
       return `Delegated to Codex: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
-    default:
-      return name
+    case 'mcp__vibe_memory__recall':
+      return 'Checked memory'
+    case 'mcp__vibe_memory__remember':
+      return `Remembered: ${(input as { fact?: string })?.fact ?? 'a fact'}`
+    case 'MultiEdit':
+      return `Edited ${(input as { file_path?: string })?.file_path ?? 'a file'}`
+    case 'NotebookEdit':
+      return `Edited ${(input as { notebook_path?: string })?.notebook_path ?? 'a notebook'}`
+    case 'TodoWrite':
+      return 'Updated its to-do list'
+    case 'WebFetch':
+      return `Read web page: ${(input as { url?: string })?.url ?? ''}`.trim()
+    case 'WebSearch':
+      return `Searched the web: ${(input as { query?: string })?.query ?? ''}`.trim()
+    case 'Task':
+    case 'Agent':
+      return `Started a helper: ${(input as { description?: string })?.description ?? 'a subtask'}`
+    default: {
+      // Other MCP tools: "mcp__github__create_issue" -> "github: create issue".
+      const mcp = /^mcp__(.+?)__(.+)$/.exec(name)
+      return mcp ? `${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}` : name
+    }
   }
 }
 
