@@ -56,3 +56,58 @@ export interface MemoryFact {
 }
 
 export type MemoryScope = 'project' | 'global'
+
+/** Every CSS variable a theme may set; see the :root block in styles.css. */
+export const THEME_VARS = [
+  'font',
+  'radius',
+  'bg',
+  'bg-image',
+  'surface',
+  'surface-raised',
+  'surface-sunken',
+  'border',
+  'text',
+  'text-muted',
+  'accent',
+  'accent-text',
+  'accent-glow',
+  'title',
+  'user-bubble',
+  'success-bg',
+  'success-text',
+  'warning-bg',
+  'warning-text',
+  'danger',
+  'danger-bg',
+  'danger-text',
+  'delegation-bg',
+  'delegation-text',
+  'overlay'
+] as const
+
+export type ThemeVar = (typeof THEME_VARS)[number]
+
+export interface ThemeDefinition {
+  id: string
+  name: string
+  description?: string
+  source: 'built-in' | 'custom' | 'generated'
+  vars: Record<ThemeVar, string>
+  /** Optional replacement for "Claude is working…". */
+  thinkingLabel?: string
+}
+
+export interface AppSettings {
+  /** null = whatever the Claude Code account/settings default to. */
+  claudeModel: string | null
+  /** null = whatever ~/.codex/config.toml defaults to. */
+  codexModel: string | null
+  themeId: string
+}
+
+export interface ModelOption {
+  value: string
+  displayName: string
+  description: string
+}

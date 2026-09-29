@@ -1,12 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AppSettings,
   CheckpointRecord,
   CliName,
   CliStatus,
   ConfirmationRequest,
   MemoryFact,
   MemoryScope,
+  ModelOption,
   ProjectRecord,
+  ThemeDefinition,
   TranscriptEntry,
   VibeEvent
 } from '@shared/types'
@@ -136,6 +139,24 @@ const vibeApi = {
       ipcRenderer.invoke('vibe:memory:update', projectId, scope, id, text),
     delete: (projectId: string, scope: MemoryScope, id: string): Promise<boolean> =>
       ipcRenderer.invoke('vibe:memory:delete', projectId, scope, id)
+  },
+
+  settings: {
+    get: (): Promise<AppSettings> => ipcRenderer.invoke('vibe:settings:get'),
+    update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+      ipcRenderer.invoke('vibe:settings:update', patch)
+  },
+
+  models: {
+    claude: (): Promise<ModelOption[]> => ipcRenderer.invoke('vibe:models:claude')
+  },
+
+  themes: {
+    list: (): Promise<ThemeDefinition[]> => ipcRenderer.invoke('vibe:themes:list'),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('vibe:themes:delete', id),
+    generate: (description: string): Promise<ThemeDefinition> =>
+      ipcRenderer.invoke('vibe:themes:generate', description),
+    openFolder: (): Promise<string> => ipcRenderer.invoke('vibe:themes:openFolder')
   }
 }
 

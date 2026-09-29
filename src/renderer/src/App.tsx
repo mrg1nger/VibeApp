@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CliName, CliStatus, ProjectRecord } from '@shared/types'
+import type { AppSettings, CliName, CliStatus, ProjectRecord, ThemeDefinition } from '@shared/types'
 import AccountsView from './views/AccountsView'
 import ProjectPickerView from './views/ProjectPickerView'
 import ChatView from './views/ChatView'
 import HistoryView from './views/HistoryView'
 import MemoryView from './views/MemoryView'
+import SettingsView from './views/SettingsView'
 import ToastHost from './components/ToastHost'
 import { useToasts } from './lib/useToasts'
+import { applyTheme } from './lib/theme'
 
-type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory'
+type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory' | 'settings'
 
 const STATUS_POLL_INTERVAL_MS = 15_000
 
@@ -38,6 +40,35 @@ function App() {
     return () => clearInterval(interval)
   }, [refreshStatus])
 
+  const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [themes, setThemes] = useState<ThemeDefinition[]>([])
+
+  const reloadThemes = useCallback(async () => {
+    setThemes(await window.vibe.themes.list())
+  }, [])
+
+  useEffect(() => {
+    window.vibe.settings.get().then(setSettings)
+    reloadThemes()
+  }, [reloadThemes])
+
+  const activeTheme = themes.find((t) => t.id === settings?.themeId) ?? themes[0]
+  useEffect(() => {
+    if (activeTheme) applyTheme(activeTheme)
+  }, [activeTheme])
+
+  const changeSettings = useCallback(
+    async (patch: Partial<AppSettings>) => {
+      try {
+        setSettings(await window.vibe.settings.update(patch))
+      } catch (err) {
+        showError(`Couldn't save settings: ${(err as Error).message}`)
+        throw err
+      }
+    },
+    [showError]
+  )
+
   const claudeReady = statuses.claude.status === 'logged_in'
   const claudeChecking = statuses.claude.status === 'checking'
 
@@ -62,6 +93,12 @@ function App() {
           </button>
           <button className={screen === 'memory' ? 'active' : ''} onClick={() => setScreen('memory')}>
             Memory
+          </button>
+          <button
+            className={screen === 'settings' ? 'active' : ''}
+            onClick={() => setScreen('settings')}
+          >
+            Settings
           </button>
         </div>
       </div>
@@ -95,6 +132,7 @@ function App() {
           onBack={() => setScreen('projects')}
           onOpenHistory={() => setScreen('history')}
           onError={showError}
+          thinkingLabel={activeTheme?.thinkingLabel ?? 'Claude is working…'}
         />
       )}
       {screen === 'history' && activeProject && (
@@ -105,6 +143,15 @@ function App() {
         />
       )}
       {screen === 'memory' && <MemoryView project={activeProject} />}
+      {screen === 'settings' && settings && (
+        <SettingsView
+          settings={settings}
+          themes={themes}
+          onSettingsChange={changeSettings}
+          onThemesChange={reloadThemes}
+          onError={showError}
+        />
+      )}
 
       <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>

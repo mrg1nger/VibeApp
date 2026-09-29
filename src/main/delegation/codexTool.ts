@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import * as z from 'zod/v4'
 import { runCodexExec, type CodexExecArgs } from '../cli/codexExec'
+import { getSettings } from '../settings/store'
 
 export type DelegationProgressListener = (note: string) => void
 
@@ -32,6 +33,7 @@ export function createCodexDelegationServer(
                 cwd: projectPath,
                 timeoutMs: args.timeoutMs ?? 300_000,
                 unsandboxed: isGoNutzMode(),
+                model: getSettings().codexModel ?? undefined,
                 memory
               },
               onProgress

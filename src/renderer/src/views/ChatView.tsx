@@ -8,6 +8,7 @@ interface ChatViewProps {
   onBack: () => void
   onOpenHistory: () => void
   onError: (message: string) => void
+  thinkingLabel: string
 }
 
 type ChatItem =
@@ -27,7 +28,7 @@ type ChatItem =
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 
-function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
+function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -235,7 +236,7 @@ function ChatView({ project, onBack, onOpenHistory, onError }: ChatViewProps) {
             {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
           </div>
         ))}
-        {busy && <div className="chat-item chat-item-thinking">Claude is working…</div>}
+        {busy && <div className="chat-item chat-item-thinking">{thinkingLabel}</div>}
       </div>
 
       {confirmation && (

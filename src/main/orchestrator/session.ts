@@ -1,6 +1,5 @@
 import { EventEmitter } from 'events'
 import { watch, type FSWatcher } from 'fs'
-import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import {
   query,
@@ -12,23 +11,8 @@ import type { ConfirmationRequest, VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
 import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../memory/paths'
-
-/**
- * The SDK locates its native binary relative to its own module URL, which in
- * a packaged app points inside app.asar. Electron's fs patch makes that path
- * pass existsSync, but the OS can't spawn a file inside the archive, so the
- * launch fails. Resolve it ourselves and point at the unpacked copy.
- */
-function resolveClaudeExecutable(): string | undefined {
-  try {
-    const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`
-    const binary = process.platform === 'win32' ? 'claude.exe' : 'claude'
-    const resolved = join(dirname(require.resolve(`${pkg}/package.json`)), binary)
-    return resolved.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
-  } catch {
-    return undefined
-  }
-}
+import { resolveClaudeExecutable } from '../cli/claudeBinary'
+import { getSettings } from '../settings/store'
 
 const MEMORY_INSTRUCTIONS = `# Project memory (required)
 This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
@@ -191,6 +175,7 @@ export class ClaudeSession extends EventEmitter {
       options: {
         cwd: this.projectPath,
         pathToClaudeCodeExecutable: resolveClaudeExecutable(),
+        model: getSettings().claudeModel ?? undefined,
         permissionMode: goNutz ? 'bypassPermissions' : 'acceptEdits',
         // Always set so setPermissionMode('bypassPermissions') can be used
         // later to enter Go Nutz mode without recreating the session -- this
@@ -291,6 +276,11 @@ export class ClaudeSession extends EventEmitter {
 
   isGoNutzMode(): boolean {
     return this.goNutz
+  }
+
+  async setModel(model: string | null): Promise<void> {
+    if (this.dead || this.disposed) return
+    await this.queryHandle.setModel(model ?? undefined)
   }
 
   async setGoNutzMode(enabled: boolean): Promise<void> {
@@ -416,6 +406,11 @@ export function getOrCreateSession(
   const session = new ClaudeSession(projectId, projectPath, resumeSessionId, initialGoNutz)
   sessions.set(projectId, session)
   return session
+}
+
+/** Applies a model change to every open chat; new chats read it from settings. */
+export async function setModelForAllSessions(model: string | null): Promise<void> {
+  await Promise.all([...sessions.values()].map((s) => s.setModel(model).catch(() => undefined)))
 }
 
 export function getSession(projectId: string): ClaudeSession | undefined {

@@ -1,6 +1,6 @@
-import { ipcMain, dialog, type WebContents } from 'electron'
+import { ipcMain, dialog, shell, type WebContents } from 'electron'
 import { mkdirSync } from 'fs'
-import type { CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
+import type { AppSettings, CliName, ConfirmationRequest, MemoryScope } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
 import { isCliOnPath, refreshPathFromRegistry } from '../cli/execCli'
@@ -29,9 +29,18 @@ import {
   history,
   restoreCheckpoint
 } from '../git/repo'
-import { getOrCreateSession, getSession, disposeSession } from '../orchestrator/session'
+import {
+  getOrCreateSession,
+  getSession,
+  disposeSession,
+  setModelForAllSessions
+} from '../orchestrator/session'
 import { addFact, listFacts, deleteFact, updateFact } from '../memory/storage'
 import { projectMemoryPath, globalMemoryPath } from '../memory/paths'
+import { getSettings, updateSettings } from '../settings/store'
+import { listClaudeModels } from '../cli/claudeModels'
+import { listThemes, deleteTheme, themesDir } from '../themes/store'
+import { generateTheme } from '../themes/generate'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
   ipcMain.handle('vibe:ping', () => 'pong')
@@ -198,6 +207,24 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     (_event, projectId: string, scope: MemoryScope, id: string) =>
       deleteFact(pathForScope(scope, projectId), id)
   )
+
+  ipcMain.handle('vibe:settings:get', () => getSettings())
+
+  ipcMain.handle('vibe:settings:update', async (_event, patch: Partial<AppSettings>) => {
+    const before = getSettings()
+    const next = updateSettings(patch)
+    if ('claudeModel' in patch && next.claudeModel !== before.claudeModel) {
+      await setModelForAllSessions(next.claudeModel)
+    }
+    return next
+  })
+
+  ipcMain.handle('vibe:models:claude', () => listClaudeModels())
+
+  ipcMain.handle('vibe:themes:list', () => listThemes())
+  ipcMain.handle('vibe:themes:delete', (_event, id: string) => deleteTheme(id))
+  ipcMain.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
+  ipcMain.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
 }
 
 const wiredSessions = new WeakSet<object>()

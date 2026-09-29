@@ -65,6 +65,8 @@ export interface CodexExecArgs {
   timeoutMs?: number
   /** Go Nutz mode: no sandbox, no approval prompts. EXTREMELY DANGEROUS -- see codex exec --help. */
   unsandboxed?: boolean
+  /** Codex model override; omitted means Codex's own configured default. */
+  model?: string
   /** Paths to the shared memory MCP server's storage files and script, if memory access should be wired in. */
   memory?: {
     scriptPath: string
@@ -124,6 +126,9 @@ export async function runCodexExec(
   ]
   if (args.cwd) {
     cliArgs.push('-C', args.cwd)
+  }
+  if (args.model) {
+    cliArgs.push('-m', args.model)
   }
   if (args.memory && !args.unsandboxed) {
     cliArgs.push('--approve-for-me')
