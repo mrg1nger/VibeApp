@@ -41,7 +41,7 @@ export async function isCliOnPath(command: string): Promise<boolean> {
     process.platform === 'win32' ? [command] : ['-v', command]
   )
   try {
-    await execFileAsync(file, args, { timeout: 5_000 })
+    await execFileAsync(file, args, { timeout: 5_000, windowsHide: true })
     return true
   } catch {
     return false
@@ -93,7 +93,7 @@ export async function execCli(
 ): Promise<ExecCliResult> {
   const { file, args: finalArgs } = toPlatformInvocation(command, args)
   try {
-    return await execFileAsync(file, finalArgs, { timeout: options.timeout ?? 10_000 })
+    return await execFileAsync(file, finalArgs, { timeout: options.timeout ?? 10_000, windowsHide: true })
   } catch (err) {
     throw err as ExecCliError
   }

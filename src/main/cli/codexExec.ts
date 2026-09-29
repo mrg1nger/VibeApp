@@ -15,30 +15,62 @@ export interface CodexLaunch {
   env?: NodeJS.ProcessEnv
 }
 
+const WINDOWS_TARGET = process.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
+const WINDOWS_PACKAGE = process.arch === 'arm64' ? 'codex-win32-arm64' : 'codex-win32-x64'
+
+/**
+ * The native codex.exe inside an npm install, found the same way the
+ * package's own bin/codex.js launcher finds it.
+ */
+function nativeCodexExe(packageRoot: string): string | undefined {
+  const vendorRoots = [
+    join(packageRoot, 'node_modules', '@openai', WINDOWS_PACKAGE, 'vendor'),
+    join(packageRoot, '..', WINDOWS_PACKAGE, 'vendor'), // hoisted
+    join(packageRoot, 'vendor')
+  ]
+  return vendorRoots.map((root) => join(root, WINDOWS_TARGET, 'bin', 'codex.exe')).find((p) => existsSync(p))
+}
+
+let cachedLaunch: CodexLaunch | undefined
+
 /**
  * Finds a way to start Codex without going through cmd.exe. On Windows an npm
  * install is a codex.cmd shim, and spawning that means cmd.exe parses the
  * whole command line: quotes and & in arguments can split it into extra
- * commands, and it caps the line at ~8K characters. The shim just runs
- * bin/codex.js with Node, and this app's own binary is a Node runtime
- * (ELECTRON_RUN_AS_NODE), so run codex.js directly.
+ * commands, and it caps the line at ~8K characters.
+ *
+ * Best is the native codex.exe itself. The shim's bin/codex.js launcher
+ * starts it without hiding its window, so from a windowless app every run
+ * flashed a console window on screen. codex.js via this app's own Node
+ * runtime (ELECTRON_RUN_AS_NODE) is the fallback.
  */
 export async function resolveCodexLaunch(): Promise<CodexLaunch> {
   if (process.platform !== 'win32') return { file: 'codex', prefixArgs: [] }
+  if (cachedLaunch && existsSync(cachedLaunch.prefixArgs[0] ?? cachedLaunch.file)) return cachedLaunch
   try {
-    const { stdout } = await execFileAsync('where', ['codex'], { timeout: 5_000 })
+    const { stdout } = await execFileAsync('where', ['codex'], { timeout: 5_000, windowsHide: true })
     const matches = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
     const exe = matches.find((m) => m.toLowerCase().endsWith('.exe'))
-    if (exe) return { file: exe, prefixArgs: [] }
+    if (exe) return (cachedLaunch = { file: exe, prefixArgs: [] })
     const shim = matches.find((m) => m.toLowerCase().endsWith('.cmd'))
     if (shim) {
-      const codexJs = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+      const packageRoot = join(dirname(shim), 'node_modules', '@openai', 'codex')
+      const native = nativeCodexExe(packageRoot)
+      if (native) {
+        return (cachedLaunch = {
+          file: native,
+          prefixArgs: [],
+          // What codex.js sets: lets Codex give the right update instructions.
+          env: { ...process.env, CODEX_MANAGED_PACKAGE_ROOT: packageRoot, CODEX_MANAGED_BY_NPM: '1' }
+        })
+      }
+      const codexJs = join(packageRoot, 'bin', 'codex.js')
       if (existsSync(codexJs)) {
-        return {
+        return (cachedLaunch = {
           file: process.execPath,
           prefixArgs: [codexJs],
           env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
-        }
+        })
       }
     }
   } catch {
