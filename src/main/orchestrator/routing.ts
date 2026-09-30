@@ -74,6 +74,8 @@ export async function routeMessage(
   } else if (claudeLow && codexLeft !== undefined && request.size !== 'quick') {
     notes.push(`Claude plan usage is low (${Math.round(claudeLeft)}% left). Delegate implementation work to Codex with run_codex_subtask wherever it's reasonable, and keep your own work to planning, coordination and review.`)
   }
+  // Checking and saving memory would cost more than a quick edit itself.
+  if (request.size === 'quick') notes.push('This is a quick edit: skip the memory tools.')
   const note = notes.length ? `[VibeApp note: ${notes.join(' ')}]` : undefined
 
   // Which Claude model.

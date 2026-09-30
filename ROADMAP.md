@@ -42,7 +42,8 @@ Dropped:
 
 - [x] Accounts: install and sign in to Claude Code, Codex, Node and Git from inside the app
 - [x] Projects with automatic git, checkpoints, history and restore
-- [x] Claude hands tasks to Codex; shared project and global memory (safe with many writers)
+- [x] Claude hands tasks to Codex; shared project and global memory
+- [x] Memory v2 on SQLite: key facts given up front, the rest searchable; Claude and Codex can update and forget facts; duplicates merge; Haiku tidy-up sorts, merges and retires outdated facts (restorable); quick edits skip memory
 - [x] Go Nutz mode, destructive-command confirmations, MCP servers loaded on the fly
 - [x] Model picker, themes (Midnight, Sakura Neon), theme generator and theme files
 - [x] Claude and Codex plan-usage meters

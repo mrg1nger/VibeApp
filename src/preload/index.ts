@@ -6,8 +6,10 @@ import type {
   CliStatus,
   ConfirmationRequest,
   ImageAttachment,
+  MemoryCategory,
   MemoryFact,
   MemoryScope,
+  MemoryTidyResult,
   ModelOption,
   PickedElement,
   PreviewProblem,
@@ -156,14 +158,24 @@ const vibeApi = {
   },
 
   memory: {
-    list: (projectId: string, scope: MemoryScope): Promise<MemoryFact[]> =>
-      ipcRenderer.invoke('vibe:memory:list', projectId, scope),
-    add: (projectId: string, scope: MemoryScope, text: string): Promise<MemoryFact> =>
-      ipcRenderer.invoke('vibe:memory:add', projectId, scope, text),
-    update: (projectId: string, scope: MemoryScope, id: string, text: string): Promise<boolean> =>
-      ipcRenderer.invoke('vibe:memory:update', projectId, scope, id, text),
-    delete: (projectId: string, scope: MemoryScope, id: string): Promise<boolean> =>
-      ipcRenderer.invoke('vibe:memory:delete', projectId, scope, id)
+    list: (projectId: string, scope: MemoryScope, includeForgotten = false): Promise<MemoryFact[]> =>
+      ipcRenderer.invoke('vibe:memory:list', projectId, scope, includeForgotten),
+    add: (
+      projectId: string,
+      scope: MemoryScope,
+      text: string,
+      category?: MemoryCategory,
+      key?: boolean
+    ): Promise<MemoryFact> => ipcRenderer.invoke('vibe:memory:add', projectId, scope, text, category, key),
+    update: (
+      id: string,
+      patch: { text?: string; category?: MemoryCategory; key?: boolean }
+    ): Promise<MemoryFact | null> => ipcRenderer.invoke('vibe:memory:update', id, patch),
+    forget: (id: string): Promise<boolean> => ipcRenderer.invoke('vibe:memory:forget', id),
+    restore: (id: string): Promise<boolean> => ipcRenderer.invoke('vibe:memory:restore', id),
+    delete: (id: string): Promise<boolean> => ipcRenderer.invoke('vibe:memory:delete', id),
+    tidy: (projectId: string, scope: MemoryScope): Promise<MemoryTidyResult> =>
+      ipcRenderer.invoke('vibe:memory:tidy', projectId, scope)
   },
 
   settings: {

@@ -167,11 +167,29 @@ export interface TranscriptEntry {
   images?: string[]
 }
 
+export const MEMORY_CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other'] as const
+export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number]
+
 export interface MemoryFact {
   id: string
   text: string
+  category: MemoryCategory
+  /** Key facts go into Claude's and Codex's instructions up front; the rest are searched when needed. */
+  key: boolean
+  source: 'claude' | 'codex' | 'user' | 'tidy'
   createdAt: string
-  source: 'claude' | 'codex' | 'user'
+  updatedAt: string
+  lastUsedAt: string | null
+  useCount: number
+  /** Set when a fact was forgotten (by an agent, the tidy-up, or merged into another); it can be restored. */
+  forgottenAt: string | null
+  forgottenReason: string | null
+}
+
+export interface MemoryTidyResult {
+  categorized: number
+  merged: number
+  outdated: number
 }
 
 export type MemoryScope = 'project' | 'global'

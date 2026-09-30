@@ -5,6 +5,7 @@ import type {
   CliName,
   ConfirmationRequest,
   ImageAttachment,
+  MemoryCategory,
   MemoryScope,
   PickedElement,
   PreviewProblem,
@@ -49,8 +50,17 @@ import {
   disposeSession,
   setModelForAllSessions
 } from '../orchestrator/session'
-import { addFact, listFacts, deleteFact, updateFact } from '../memory/storage'
-import { projectMemoryPath, globalMemoryPath } from '../memory/paths'
+import {
+  GLOBAL_SCOPE,
+  listFacts,
+  rememberFact,
+  updateFact,
+  forgetFact,
+  restoreFact,
+  deleteFact
+} from '../memory/store'
+import { memoryDb } from '../memory/paths'
+import { tidyMemory, maybeTidy } from '../memory/tidy'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
@@ -289,30 +299,33 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     restoreCheckpoint(projectPath, commitHash)
   )
 
-  function pathForScope(scope: MemoryScope, projectId: string): string {
-    return scope === 'global' ? globalMemoryPath() : projectMemoryPath(projectId)
+  function scopeKey(scope: MemoryScope, projectId: string): string {
+    return scope === 'global' ? GLOBAL_SCOPE : projectId
   }
 
-  ipcMain.handle('vibe:memory:list', (_event, projectId: string, scope: MemoryScope) =>
-    listFacts(pathForScope(scope, projectId))
+  ipcMain.handle(
+    'vibe:memory:list',
+    (_event, projectId: string, scope: MemoryScope, includeForgotten?: boolean) =>
+      listFacts(memoryDb(), scopeKey(scope, projectId), !!includeForgotten)
   )
 
   ipcMain.handle(
     'vibe:memory:add',
-    (_event, projectId: string, scope: MemoryScope, text: string) =>
-      addFact(pathForScope(scope, projectId), text, 'user')
+    (_event, projectId: string, scope: MemoryScope, text: string, category?: MemoryCategory, key?: boolean) =>
+      rememberFact(memoryDb(), scopeKey(scope, projectId), text, 'user', { category, key }).fact
   )
 
   ipcMain.handle(
     'vibe:memory:update',
-    (_event, projectId: string, scope: MemoryScope, id: string, text: string) =>
-      updateFact(pathForScope(scope, projectId), id, text)
+    (_event, id: string, patch: { text?: string; category?: MemoryCategory; key?: boolean }) =>
+      updateFact(memoryDb(), id, patch)
   )
 
-  ipcMain.handle(
-    'vibe:memory:delete',
-    (_event, projectId: string, scope: MemoryScope, id: string) =>
-      deleteFact(pathForScope(scope, projectId), id)
+  ipcMain.handle('vibe:memory:forget', (_event, id: string) => forgetFact(memoryDb(), id, 'forgotten by you'))
+  ipcMain.handle('vibe:memory:restore', (_event, id: string) => restoreFact(memoryDb(), id))
+  ipcMain.handle('vibe:memory:delete', (_event, id: string) => deleteFact(memoryDb(), id))
+  ipcMain.handle('vibe:memory:tidy', (_event, projectId: string, scope: MemoryScope) =>
+    tidyMemory(scopeKey(scope, projectId))
   )
 
   ipcMain.handle('vibe:settings:get', () => getSettings())
@@ -452,6 +465,11 @@ function wireSessionEvents(
     handleSessionEvent(projectId, session, event, (forwarded) => {
       appendEvent(projectId, forwarded)
       getSender()?.send('vibe:chat:event', projectId, forwarded)
+      // Between requests is a good moment to tidy memory, if it needs it.
+      if (forwarded.type === 'turn_complete') {
+        maybeTidy(projectId)
+        maybeTidy(GLOBAL_SCOPE)
+      }
     })
   })
   session.on('confirmation_request', (request: ConfirmationRequest) => {

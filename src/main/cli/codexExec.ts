@@ -7,7 +7,7 @@ import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
 
-const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. Call recall first to see what's known about this project. Before finishing, use remember to save anything worth keeping across sessions (architecture choices, how to run/build/test, gotchas), one standalone sentence per fact. Don't save secrets or temporary task state.`
+const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category. If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
 
 export interface CodexLaunch {
   file: string
@@ -107,11 +107,14 @@ export interface CodexExecArgs {
   outputSchema?: object
   /** Aborting kills the Codex process and rejects. */
   signal?: AbortSignal
-  /** Paths to the shared memory MCP server's storage files and script, if memory access should be wired in. */
+  /** The shared memory MCP server's script and database, if memory access should be wired in. */
   memory?: {
     scriptPath: string
-    projectMemoryPath: string
-    globalMemoryPath: string
+    dbPath: string
+    /** App-generated id (safe to embed in a TOML string). */
+    projectId: string
+    /** The project's key facts, given to Codex up front. */
+    keyFacts?: string
   }
 }
 
@@ -149,7 +152,9 @@ export async function runCodexExec(
   // still enforces an equivalent workspace-only write boundary (a write
   // outside the project folder was denied), regardless of this machine's
   // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
-  const prompt = args.memory ? `${CODEX_MEMORY_INSTRUCTIONS}\n\n${args.prompt}` : args.prompt
+  const prompt = args.memory
+    ? `${CODEX_MEMORY_INSTRUCTIONS}\n\nKey facts:\n${args.memory.keyFacts ?? '(none yet)'}\n\n${args.prompt}`
+    : args.prompt
 
   const cliArgs = [
     'exec',
@@ -193,8 +198,8 @@ export async function runCodexExec(
       `mcp_servers.vibe_memory.command="${toForwardSlash(process.execPath)}"`,
       '-c',
       `mcp_servers.vibe_memory.args=["${toForwardSlash(args.memory.scriptPath)}","${toForwardSlash(
-        args.memory.projectMemoryPath
-      )}","${toForwardSlash(args.memory.globalMemoryPath)}","codex"]`,
+        args.memory.dbPath
+      )}","${args.memory.projectId}","codex"]`,
       '-c',
       'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}'
     )

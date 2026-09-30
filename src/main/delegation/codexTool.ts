@@ -2,8 +2,18 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import * as z from 'zod/v4'
 import { runCodexExec, type CodexExecArgs } from '../cli/codexExec'
 import { getSettings } from '../settings/store'
+import { memoryDb } from '../memory/paths'
+import { keyFactsBlock } from '../memory/store'
 
 export type DelegationProgressListener = (note: string) => void
+
+function currentKeyFacts(projectId: string): string | undefined {
+  try {
+    return keyFactsBlock(memoryDb(), projectId)
+  } catch {
+    return undefined // memory unavailable: Codex can still search it
+  }
+}
 
 export function createCodexDelegationServer(
   projectPath: string,
@@ -36,7 +46,8 @@ export function createCodexDelegationServer(
                 timeoutMs: args.timeoutMs ?? 300_000,
                 unsandboxed: isGoNutzMode(),
                 model: getSettings().codexModel ?? undefined,
-                memory,
+                // Read fresh at hand-off time: Claude may have just saved some.
+                memory: memory ? { ...memory, keyFacts: currentKeyFacts(memory.projectId) } : undefined,
                 signal: getStopSignal?.()
               },
               onProgress

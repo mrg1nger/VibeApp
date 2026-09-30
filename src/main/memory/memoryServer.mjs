@@ -5,79 +5,119 @@
 // against the same storage, verified against the real codex CLI.
 //
 // Bundled on its own by esbuild (see electron.vite.config.ts), so it shares
-// the locked storage module with the main process: several of these
-// servers, plus the Memory screen, can write the same file at once.
+// the SQLite memory store with the main process: several of these servers,
+// plus the Memory screen, can read and write the database at once.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { addFact, listFacts } from './storage'
+import {
+  GLOBAL_SCOPE,
+  openMemory,
+  searchFacts,
+  keyFactsBlock,
+  rememberFact,
+  updateFact,
+  forgetFact,
+  getFact
+} from './store'
 
-const projectMemoryPath = process.argv[2]
-const globalMemoryPath = process.argv[3]
-const agentSource = process.argv[4] ?? 'unknown'
+const dbPath = process.argv[2]
+const projectId = process.argv[3]
+const agentSource = process.argv[4] ?? 'claude'
 
-if (!projectMemoryPath || !globalMemoryPath) {
-  process.stderr.write('Usage: memoryServer.mjs <projectMemoryPath> <globalMemoryPath> <agentSource>\n')
+if (!dbPath || !projectId) {
+  process.stderr.write('Usage: memoryServer <dbPath> <projectId> <agentSource>\n')
   process.exit(1)
 }
 
-function pathForScope(scope) {
-  return scope === 'global' ? globalMemoryPath : projectMemoryPath
+const db = openMemory(dbPath)
+const CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other']
+const text = (value) => ({ content: [{ type: 'text', text: value }] })
+const describe = (f) => `- [${f.category}${f.key ? ', key' : ''}] ${f.text} (id ${f.id})`
+
+/** Only facts from this project or the global scope may be changed from here. */
+function ownFact(id) {
+  const fact = getFact(db, id)
+  if (!fact) return null
+  const row = db.prepare('SELECT scope FROM facts WHERE id = ?').get(id)
+  return row && (row.scope === projectId || row.scope === GLOBAL_SCOPE) ? fact : null
 }
 
-const server = new McpServer({ name: 'vibeapp-memory', version: '1.0.0' })
+const server = new McpServer({ name: 'vibeapp-memory', version: '2.0.0' })
+
+server.registerTool(
+  'recall',
+  {
+    description:
+      'Search the shared project memory (this project plus the user\'s global preferences). Pass a short query about what you need, e.g. "sprites", "deploy", "how to run tests". Without a query, lists the key facts.',
+    inputSchema: {
+      query: z.string().optional().describe('A few words about what you are looking for.')
+    }
+  },
+  async ({ query }) => {
+    if (!query?.trim()) return text(`Key facts:\n${keyFactsBlock(db, projectId)}`)
+    const found = searchFacts(db, projectId, query, 12)
+    return text(found.length ? `Matches for "${query}":\n${found.map(describe).join('\n')}` : `Nothing remembered matches "${query}".`)
+  }
+)
 
 server.registerTool(
   'remember',
   {
     description:
-      'Save a fact worth remembering for later, either for this project only (default) or across all projects if it is a general preference/habit, not something specific to this codebase.',
+      'Save a lasting fact about this project (or, with global: true, a preference that applies to all the user\'s projects). One standalone sentence. If a very similar fact already exists it is updated instead of duplicated.',
     inputSchema: {
-      fact: z.string().describe('The fact to remember, written as a standalone sentence.'),
-      global: z
+      fact: z.string().describe('The fact, as one standalone sentence.'),
+      category: z
+        .enum(CATEGORIES)
+        .describe('about = what the project is; setup = how to run/build/test/deploy; decision = a choice made and why; preference = how the user likes things; gotcha = a non-obvious pitfall; other.'),
+      key: z
         .boolean()
         .optional()
-        .describe(
-          'Set true only for facts that apply across ALL projects (e.g. a general coding preference), not facts about this specific codebase. Defaults to false (project-scoped).'
-        )
+        .describe('True for facts needed on almost every request (shown up front in future sessions). Defaults to true for about/setup/preference.'),
+      global: z.boolean().optional().describe('True only for preferences that apply to ALL projects. Defaults to false.')
     }
   },
-  async ({ fact, global }) => {
-    addFact(pathForScope(global ? 'global' : 'project'), fact, agentSource)
-    return {
-      content: [
-        { type: 'text', text: `Remembered (${global ? 'global' : 'this project'}): ${fact}` }
-      ]
-    }
+  async ({ fact, category, key, global }) => {
+    const result = rememberFact(db, global ? GLOBAL_SCOPE : projectId, fact, agentSource, { category, key })
+    return text(
+      result.mergedInto
+        ? `Updated an existing, very similar fact (id ${result.fact.id}): ${result.fact.text}`
+        : `Remembered (id ${result.fact.id}${result.fact.key ? ', key fact' : ''}): ${result.fact.text}`
+    )
   }
 )
 
 server.registerTool(
-  'recall',
+  'update',
   {
-    description: 'List remembered facts for this project, global facts, or both (default: both).',
+    description: 'Correct a remembered fact that is wrong or out of date (use its id from recall or the key facts). Prefer this over saving a contradicting new fact.',
     inputSchema: {
-      scope: z.enum(['project', 'global', 'both']).optional().describe('Defaults to "both".')
+      id: z.string(),
+      fact: z.string().optional().describe('The corrected sentence.'),
+      category: z.enum(CATEGORIES).optional(),
+      key: z.boolean().optional()
     }
   },
-  async ({ scope }) => {
-    const effectiveScope = scope ?? 'both'
-    const parts = []
-    if (effectiveScope === 'project' || effectiveScope === 'both') {
-      const facts = listFacts(projectMemoryPath)
-      if (facts.length) {
-        parts.push('Project facts:\n' + facts.map((f) => `- ${f.text}`).join('\n'))
-      }
+  async ({ id, fact, category, key }) => {
+    if (!ownFact(id)) return text(`No remembered fact with id ${id}.`)
+    const updated = updateFact(db, id, { text: fact, category, key })
+    return text(`Updated: ${describe(updated)}`)
+  }
+)
+
+server.registerTool(
+  'forget',
+  {
+    description: 'Retire a remembered fact that is no longer true or useful. The user can still restore it from the Memory screen.',
+    inputSchema: {
+      id: z.string(),
+      reason: z.string().describe('Why, in a few words (e.g. "switched from npm start to Vite").')
     }
-    if (effectiveScope === 'global' || effectiveScope === 'both') {
-      const facts = listFacts(globalMemoryPath)
-      if (facts.length) {
-        parts.push('Global facts:\n' + facts.map((f) => `- ${f.text}`).join('\n'))
-      }
-    }
-    return {
-      content: [{ type: 'text', text: parts.length ? parts.join('\n\n') : '(nothing remembered yet)' }]
-    }
+  },
+  async ({ id, reason }) => {
+    if (!ownFact(id)) return text(`No remembered fact with id ${id}.`)
+    return text(forgetFact(db, id, `${agentSource}: ${reason}`) ? `Forgot ${id}.` : `${id} was already forgotten.`)
   }
 )
 

@@ -17,6 +17,8 @@ function bundleMemoryServerPlugin() {
         bundle: true,
         platform: 'node',
         format: 'cjs',
+        // The memory store uses shared types and Node's built-in SQLite.
+        alias: { '@shared': resolve('shared') },
         logLevel: 'warning'
       })
     }

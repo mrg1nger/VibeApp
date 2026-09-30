@@ -32,10 +32,16 @@ function friendlyToolLabel(name: string, input: unknown): string {
     }
     case 'mcp__vibe_tools__run_codex_subtask':
       return `Delegated to Codex: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
-    case 'mcp__vibe_memory__recall':
-      return 'Checked memory'
+    case 'mcp__vibe_memory__recall': {
+      const q = (input as { query?: string })?.query?.trim()
+      return q ? `Searched memory: ${q}` : 'Checked key facts'
+    }
     case 'mcp__vibe_memory__remember':
       return `Remembered: ${(input as { fact?: string })?.fact ?? 'a fact'}`
+    case 'mcp__vibe_memory__update':
+      return (input as { fact?: string })?.fact ? `Updated memory: ${(input as { fact: string }).fact}` : 'Updated a memory'
+    case 'mcp__vibe_memory__forget':
+      return `Forgot a memory${(input as { reason?: string })?.reason ? `: ${(input as { reason: string }).reason}` : ''}`
     case 'MultiEdit':
       return `Edited ${(input as { file_path?: string })?.file_path ?? 'a file'}`
     case 'NotebookEdit':

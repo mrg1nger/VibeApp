@@ -150,7 +150,7 @@ function App() {
           onError={showError}
         />
       )}
-      {screen === 'memory' && <MemoryView project={activeProject} />}
+      {screen === 'memory' && <MemoryView project={activeProject} onError={showError} />}
       {screen === 'settings' && settings && (
         <SettingsView
           settings={settings}

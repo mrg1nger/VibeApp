@@ -1,12 +1,36 @@
 import { app } from 'electron'
 import { join } from 'path'
+import type { DatabaseSync } from 'node:sqlite'
+import { openMemory, importLegacyMemory } from './store'
 
-export function globalMemoryPath(): string {
+/** The shared memory database (all projects plus global). */
+export function memoryDbPath(): string {
+  return join(app.getPath('userData'), 'memory.db')
+}
+
+/** The old JSON memory files, imported once into the database and kept as a backup. */
+function legacyGlobalPath(): string {
   return join(app.getPath('userData'), 'memory-global.json')
 }
 
-export function projectMemoryPath(projectId: string): string {
-  return join(app.getPath('userData'), 'memory-projects', `${projectId}.json`)
+function legacyProjectsDir(): string {
+  return join(app.getPath('userData'), 'memory-projects')
+}
+
+let imported = false
+
+/** The main process's connection, with the old JSON memory moved in on first use. */
+export function memoryDb(): DatabaseSync {
+  const db = openMemory(memoryDbPath())
+  if (!imported) {
+    imported = true
+    try {
+      importLegacyMemory(db, legacyGlobalPath(), legacyProjectsDir())
+    } catch (err) {
+      console.warn('Importing old memory files failed:', (err as Error).message)
+    }
+  }
+  return db
 }
 
 export function memoryServerScriptPath(): string {

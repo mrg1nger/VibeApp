@@ -1875,3 +1875,92 @@ textarea {
 .settings-subtoggle input:disabled + span {
   opacity: 0.5;
 }
+
+.memory-view {
+  max-width: 900px;
+}
+
+.memory-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.memory-toolbar > input {
+  flex: 1;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.memory-toolbar > button,
+.memory-add-row select,
+.memory-row-actions select {
+  padding: 0.45rem 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.memory-toolbar > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.memory-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.memory-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.4rem;
+}
+
+.memory-group-title {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.memory-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.memory-key {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+
+.memory-key.on {
+  color: var(--warning-text);
+}
+
+.memory-row-forgotten {
+  opacity: 0.6;
+}
+
+.memory-row-actions select {
+  padding: 0.25rem 0.4rem;
+  font-size: 0.75rem;
+}

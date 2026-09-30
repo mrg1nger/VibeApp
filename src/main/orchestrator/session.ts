@@ -10,20 +10,22 @@ import {
 import type { ConfirmationRequest, QuestionAnswers, UserQuestion, VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
-import { globalMemoryPath, projectMemoryPath, memoryServerScriptPath } from '../memory/paths'
+import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
+import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
 import { agentSecretEnv, listSecrets } from '../secrets/vault'
 import type { PreparedImage } from '../attachments/images'
 
-const APP_INSTRUCTIONS = `# Project memory (required)
-This app gives you a persistent memory, shared with Codex, via the mcp__vibe_memory__recall and mcp__vibe_memory__remember tools. Using it is mandatory:
-1. Before starting work on any user request, call mcp__vibe_memory__recall once.
-2. Before your final reply for a request, call mcp__vibe_memory__remember for each new durable fact you learned or decided: the project's purpose, tech stack and structure, how to run/build/test it, key decisions, the user's stated preferences, and non-obvious gotchas. Skip facts already in memory.
-3. One standalone sentence per fact. Never save secrets, credentials, or temporary task state.
-4. Set global: true only for the user's preferences that apply to all their projects.
+const MEMORY_INSTRUCTIONS = `# Project memory
+You share a persistent memory with Codex through the mcp__vibe_memory tools. The key facts are listed below; more facts are stored than shown.
+1. When the request touches something the key facts don't cover (a feature, file, bug, or past decision), call mcp__vibe_memory__recall with a short search first, e.g. "inventory" or "deploy".
+2. Before your final reply, call mcp__vibe_memory__remember for each new lasting fact you learned or decided: what the project is, how to run/build/test/deploy it, decisions and why, the user's stated preferences, and non-obvious gotchas. One standalone sentence each, with a category; mark key: true only for facts needed on almost every request. Skip anything already remembered.
+3. If a remembered fact turns out to be wrong or out of date, fix it with mcp__vibe_memory__update (or mcp__vibe_memory__forget), using its id. Don't save a new fact that contradicts an old one.
+4. Never save secrets, credentials, or temporary task state. Use global: true only for preferences that apply to all the user's projects.
+5. Skip memory entirely for trivial quick edits.`
 
-# Live preview
+const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
 Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview). Use them as context; they're not something the user typed.`
 
@@ -125,8 +127,19 @@ export class ClaudeSession extends EventEmitter {
   private startQuery(resumeSessionId: string | undefined, goNutz: boolean): MessageQueue {
     const memoryPaths = {
       scriptPath: memoryServerScriptPath(),
-      projectMemoryPath: projectMemoryPath(this.projectId),
-      globalMemoryPath: globalMemoryPath()
+      dbPath: memoryDbPath(),
+      projectId: this.projectId
+    }
+    // Key facts go straight into the instructions (cached by Claude Code
+    // across turns) instead of costing a recall on every request. Opening
+    // the database here also moves any old JSON memory in before the memory
+    // server (a separate process) first reads it. A broken database costs
+    // memory, not the chat.
+    let keyFacts = '(Memory is unavailable right now.)'
+    try {
+      keyFacts = keyFactsBlock(memoryDb(), this.projectId)
+    } catch (err) {
+      console.warn('Reading key facts failed:', (err as Error).message)
     }
 
     const codexServer = createCodexDelegationServer(
@@ -147,7 +160,7 @@ export class ClaudeSession extends EventEmitter {
       // full Electron app instead of running the script (see Phase 0 notes
       // on this exact failure mode).
       command: process.execPath,
-      args: [memoryPaths.scriptPath, memoryPaths.projectMemoryPath, memoryPaths.globalMemoryPath, 'claude'],
+      args: [memoryPaths.scriptPath, memoryPaths.dbPath, memoryPaths.projectId, 'claude'],
       // Merged over the inherited environment by the CLI; passing all of
       // process.env here would serialize it onto the command line.
       env: { ELECTRON_RUN_AS_NODE: '1' },
@@ -222,7 +235,7 @@ export class ClaudeSession extends EventEmitter {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: APP_INSTRUCTIONS + secretsInstructions(this.projectId)
+          append: `${MEMORY_INSTRUCTIONS}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}`
         },
         mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
         // Only called when Claude Code itself wants to ask (sensitive files
