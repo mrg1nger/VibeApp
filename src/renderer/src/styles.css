@@ -1867,3 +1867,11 @@ textarea {
   min-width: 0;
   max-width: 100%;
 }
+
+.settings-subtoggle {
+  margin-left: 1.6rem;
+}
+
+.settings-subtoggle input:disabled + span {
+  opacity: 0.5;
+}

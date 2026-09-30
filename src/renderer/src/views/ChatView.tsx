@@ -42,7 +42,7 @@ type ChatItem =
     }
   | { kind: 'error'; message: string }
   | { kind: 'notice'; text: string }
-  | { kind: 'route'; label: string; reason: string }
+  | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | {
       kind: 'review'
@@ -208,7 +208,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             }
             return prev
           case 'route':
-            return [...prev, { kind: 'route', label: event.label, reason: event.reason }]
+            return [...prev, { kind: 'route', label: event.label, reason: event.reason, detail: event.detail }]
           case 'secret_leak':
             if (!isReplay) setLeaks(event.leaks)
             return prev
@@ -590,7 +590,10 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
                 {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
                 {item.kind === 'route' && (
-                  <span className="chat-route" title="Smart model switching (change it in Settings)">
+                  <span
+                    className="chat-route"
+                    title={[item.detail, 'Smart model switching (change it in Settings)'].filter(Boolean).join('\n')}
+                  >
                     ⚡ {item.label} · {item.reason}
                   </span>
                 )}

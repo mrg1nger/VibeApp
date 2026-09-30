@@ -10,6 +10,10 @@ function escapeRegExp(text: string): string {
 export function shortenProjectPaths(label: string, projectPath: string): string {
   const parts = projectPath.split(/[\\/]+/).filter(Boolean).map(escapeRegExp)
   if (parts.length === 0) return label
-  const inside = new RegExp(`${parts.join('[\\\\/]+')}[\\\\/]+([^\\s"'\`]*)`, 'gi')
-  return label.replace(inside, (_match, rest: string) => rest.replace(/\\/g, '/'))
+  const root = parts.join('[\\\\/]+')
+  const inside = new RegExp(`${root}[\\\\/]+([^\\s"'\`]*)`, 'gi')
+  // The project folder itself (e.g. "in the project root (C:\...\MrgRPG)") becomes its name.
+  const folder = new RegExp(`${root}(?![\\w.-])`, 'gi')
+  const name = projectPath.split(/[\\/]+/).filter(Boolean).pop() ?? ''
+  return label.replace(inside, (_match, rest: string) => rest.replace(/\\/g, '/')).replace(folder, name)
 }

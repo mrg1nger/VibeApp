@@ -24,7 +24,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
 - [ ] **No window flashes during Codex reviews and hand-offs.** Fixed for the usage check; not yet tested while Codex runs its own commands.
 - [ ] **Allow/Deny banner queue.** The logic is tested, but nobody has clicked through two stacked requests in the app.
 - [ ] **Claude usage meter depends on an experimental SDK call.** If an SDK update breaks it, the meter shows "—"; switch to the stable API once there is one.
-- [ ] **Quick-edit detection is keyword-based.** Right on 15 of 15 test phrases; watch for odd ones going to Haiku.
+- [x] **Quick-edit detection was keyword-based.** Haiku now judges each request (size, and how much suits Codex); keyword rules remain only as the fallback.
 - [ ] **`npm start` apps restart after every reply.** Plain servers can't reload their own code; a few seconds each time.
 
 ## Ideas considered, not planned
@@ -50,7 +50,7 @@ Dropped:
 - [x] "Something broke" banner with Fix it (#2)
 - [x] Undo and redo for every message (#3)
 - [x] Codex double-checks Claude's changes (#5)
-- [x] Smart model switching (#6)
+- [x] Smart model switching (#6), with Haiku judging each request: Haiku for quick edits, Opus for complex work when a lighter model is chosen, Sonnet when Claude usage is low, and Codex asked to build straightforward work
 - [x] Publish to Vercel (working on the VM) and back up to GitHub (#9)
 - [x] Secrets, with protection against keys in chat, files and publishes (#11)
 - [x] Claude's questions shown as a card you can answer

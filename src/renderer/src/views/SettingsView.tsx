@@ -114,9 +114,25 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Smart model switching
             <small>
-              Uses Haiku for quick edits like colors and wording, switches to Sonnet when your Claude plan
-              usage runs low, and hands more work to Codex (or less, when Codex is running low). Chats show a
-              ⚡ badge when it steps in.
+              Uses Haiku for quick edits, steps up to Opus for complex requests if you picked a lighter model,
+              switches to Sonnet when your Claude plan runs low, and hands suitable work to Codex (less when
+              Codex is running low). Chats show a ⚡ badge when it steps in; hover it to see why.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle settings-subtoggle">
+          <input
+            type="checkbox"
+            checked={settings.aiRouting}
+            disabled={!settings.smartRouting}
+            onChange={(e) => onSettingsChange({ aiRouting: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Let Haiku judge each request
+            <small>
+              Haiku reads each message (about a second, a sliver of Claude usage) to decide how big it is and
+              how much suits Codex. Off: quicker keyword rules, which can misjudge unusual wording.
             </small>
           </span>
         </label>

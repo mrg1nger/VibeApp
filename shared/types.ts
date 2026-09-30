@@ -45,7 +45,7 @@ export type VibeEvent =
   /** The user pressed Stop; the turn ended early on purpose. */
   | { type: 'stopped' }
   /** Smart model switching picked a model for this message. */
-  | { type: 'route'; label: string; reason: string }
+  | { type: 'route'; label: string; reason: string; detail?: string }
   /** Codex started reviewing the changes Claude just made. */
   | { type: 'review_started' }
   | { type: 'review_result'; ok: boolean; summary: string; findings: ReviewFinding[]; fixing: boolean }
@@ -225,6 +225,8 @@ export interface AppSettings {
   themeId: string
   /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
   smartRouting: boolean
+  /** Let Haiku label each request (size, and how much suits Codex) instead of keyword rules. */
+  aiRouting: boolean
   /** Have Codex review Claude's code changes after each request. */
   codexReview: boolean
 }

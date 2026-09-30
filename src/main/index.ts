@@ -3,6 +3,8 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
 import { stopAllPreviews } from './preview/preview'
+import { requestClassifier } from './orchestrator/classifier'
+import { getSettings } from './settings/store'
 
 let currentWindow: BrowserWindow | undefined
 
@@ -77,12 +79,21 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // Get Haiku's request labeller running before the first message needs it.
+  setTimeout(() => {
+    const settings = getSettings()
+    if (settings.smartRouting && settings.aiRouting) requestClassifier.warmUp()
+  }, 3_000)
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
 
-app.on('will-quit', () => stopAllPreviews())
+app.on('will-quit', () => {
+  stopAllPreviews()
+  requestClassifier.dispose()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

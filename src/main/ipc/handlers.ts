@@ -178,15 +178,15 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       const prepared = images?.length ? prepareImages(projectId, images) : []
 
       // Snapshot first so "Undo" can put the files back exactly as they
-      // were before this message. A failure only costs the undo button.
-      let snapshot: string | undefined
-      try {
-        snapshot = await takeSnapshot(projectPath, text)
-      } catch (err) {
-        console.warn('Snapshot failed:', (err as Error).message)
-      }
-
-      const route = routeMessage(text, getSettings(), { hasImages: prepared.length > 0 })
+      // were before this message (a failure only costs the undo button).
+      // Haiku labels the request meanwhile, so the two waits overlap.
+      const [snapshot, route] = await Promise.all([
+        takeSnapshot(projectPath, text).catch((err: Error) => {
+          console.warn('Snapshot failed:', err.message)
+          return undefined
+        }),
+        routeMessage(text, getSettings(), { images: prepared.length, pointedAt: !!picked })
+      ])
       try {
         await session.useModel(route.model)
       } catch (err) {
@@ -194,7 +194,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       }
 
       // Quick edits skip the Codex review: it would take longer than the edit.
-      beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.model === 'haiku' })
+      beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.skipReview })
       const thumbnails = prepared.map((p) => p.thumbnail)
       appendUserMessage(projectId, text, {
         snapshot,
@@ -202,7 +202,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         images: thumbnails.length ? thumbnails : undefined
       })
       if (route.label) {
-        session.emit('event', { type: 'route', label: route.label, reason: route.reason ?? '' } satisfies VibeEvent)
+        session.emit('event', {
+          type: 'route',
+          label: route.label,
+          reason: route.reason ?? '',
+          detail: route.detail
+        } satisfies VibeEvent)
       }
       const message = [
         route.note,
