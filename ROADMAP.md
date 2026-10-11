@@ -55,4 +55,5 @@ Dropped:
 - [x] Publish to Vercel (working on the VM) and back up to GitHub (#9)
 - [x] Secrets, with protection against keys in chat, files and publishes (#11)
 - [x] Claude's questions shown as a card you can answer
+- [x] Replies rendered as Markdown (headings, lists, tables, code blocks with Copy); multi-line chat box (Shift+Enter, auto-grow, resizable)
 - [x] Fixes from VM testing: console window pop-ups, Vercel sign-in and project names, disappearing usage meters, packaging retry

@@ -18,6 +18,7 @@ import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
 import QuestionCard from '../components/QuestionCard'
 import { shortenProjectPaths } from '../lib/labels'
+import Markdown from '../components/Markdown'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 
 interface ChatViewProps {
@@ -129,7 +130,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   busyRef.current = busy
   const dismissedProblems = useRef(new Set<string>())
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     window.vibe.chat.isGoNutzMode(project.id).then(setGoNutz)
@@ -573,7 +574,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     )}
                   </>
                 )}
-                {item.kind === 'assistant_text' && <p>{item.text}</p>}
+                {item.kind === 'assistant_text' && <Markdown text={item.text} />}
                 {item.kind === 'tool' && (
                   <div
                     className={`tool-card tool-card-${item.status} ${item.isDelegation ? 'tool-card-delegation' : ''}`}
@@ -759,8 +760,10 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 e.target.value = ''
               }}
             />
-            <input
+            <textarea
               ref={inputRef}
+              className="chat-input"
+              rows={1}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onPaste={(e) => {
@@ -771,7 +774,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 }
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // Enter sends, Shift+Enter is a new line. Enter that confirms
+                // an IME composition (e.g. Japanese input) does neither.
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   handleSend()
                 }
@@ -781,8 +786,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   ? 'What should change about this?'
                   : pendingImages.length
                     ? 'What should Claude do with this?'
-                    : 'Tell VibeApp what to build… (paste or drop images too)'
+                    : 'Tell VibeApp what to build…'
               }
+              title="Enter to send · Shift+Enter for a new line · paste or drop images · drag the edge to resize"
               disabled={busy}
             />
             {busy ? (
