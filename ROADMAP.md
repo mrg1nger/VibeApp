@@ -65,6 +65,7 @@ Dropped:
 - [x] Token efficiency pass: usage logged per request (new / cached / written tokens, shown under replies and in Settings by kind of work); a background Haiku scribe saves memory so agents don't spend a step on it; hand-off results are short with a capped diff and automatic checks (script syntax, JSON, the project's npm test); several Codex hand-offs in one request continue one Codex session
 - [x] Optional (off by default): fresh Claude session for very long conversations; key facts exported to an AGENTS.md block
 - [x] Claude/Codex balance slider in the top bar (Claude-led .. Codex-led, plus Auto that follows whichever plan has more left); shifts how much goes to Codex, uses a lighter Claude model when Codex is building (never above the chosen model), and skips the Codex review when Codex built the change
+- [x] Live Codex activity feed under each hand-off card: its narration, files it creates or edits, commands with output and pass/fail (wrapper stripped, secrets hidden), a running clock, folded into "Codex's work · N steps" afterwards and kept when the chat is reopened
 - [x] Memory v2 on SQLite: key facts given up front, the rest searchable; Claude and Codex can update and forget facts; duplicates merge; Haiku tidy-up sorts, merges and retires outdated facts (restorable); quick edits skip memory
 - [x] Go Nutz mode, destructive-command confirmations, MCP servers loaded on the fly
 - [x] Model picker, themes (Midnight, Sakura Neon), theme generator and theme files

@@ -4,6 +4,8 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { promisify } from 'util'
+import type { DelegationActivity } from '@shared/types'
+import { describeActivity, progressNote } from './codexActivity'
 
 const execFileAsync = promisify(execFile)
 
@@ -145,6 +147,7 @@ export interface CodexJsonEvent {
 }
 
 export type CodexProgressListener = (note: string) => void
+export type CodexActivityListener = (activity: DelegationActivity) => void
 
 /**
  * Runs `codex exec` non-interactively for one delegated subtask and returns
@@ -154,7 +157,8 @@ export type CodexProgressListener = (note: string) => void
  */
 export async function runCodexExec(
   args: CodexExecArgs,
-  onProgress?: CodexProgressListener
+  onProgress?: CodexProgressListener,
+  onActivity?: CodexActivityListener
 ): Promise<CodexExecResult> {
   const tempDir = mkdtempSync(join(tmpdir(), 'vibeapp-codex-'))
   const outputPath = join(tempDir, `${randomUUID()}.txt`)
@@ -278,8 +282,12 @@ ${args.prompt}`
         try {
           const event = JSON.parse(line) as CodexJsonEvent
           events.push(event)
-          const note = describeCodexEvent(event)
-          if (note) onProgress?.(note)
+          const activity = describeActivity(event)
+          if (activity) {
+            onActivity?.(activity)
+            const note = progressNote(activity)
+            if (note) onProgress?.(note)
+          }
         } catch {
           // Non-JSON line (e.g. "Reading additional input from stdin..."); ignore.
         }
@@ -338,19 +346,4 @@ function isAgentMessageItem(event: CodexJsonEvent | undefined): event is AgentMe
     event.item !== null &&
     (event.item as { type?: string }).type === 'agent_message'
   )
-}
-
-function describeCodexEvent(event: CodexJsonEvent): string | null {
-  const item = event.item as { type?: string; command?: string; changes?: Array<{ path: string }> } | undefined
-  if (event.type === 'item.started' && item?.type === 'command_execution') {
-    return `Running: ${item.command}`
-  }
-  if (event.type === 'item.started' && item?.type === 'file_change') {
-    const paths = item.changes?.map((c) => c.path.split(/[\\/]/).pop()).join(', ')
-    return `Editing: ${paths}`
-  }
-  if (event.type === 'item.completed' && item?.type === 'agent_message') {
-    return null // final text is surfaced via the tool result, not as progress
-  }
-  return null
 }

@@ -197,7 +197,11 @@ export class ClaudeSession extends EventEmitter {
       memoryPaths,
       () => this.delegationAbort.signal,
       () => this.requestContext,
-      { get: () => this.codexThread, set: (thread) => (this.codexThread = thread) }
+      { get: () => this.codexThread, set: (thread) => (this.codexThread = thread) },
+      (activity) => {
+        const event: VibeEvent = { type: 'delegation_activity', activity }
+        this.emit('event', event)
+      }
     )
 
     const memoryServer = {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ConfirmationRequest,
+  DelegationActivity,
   ImageAttachment,
   PickedElement,
   PreviewProblem,
@@ -18,6 +19,7 @@ import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
 import QuestionCard from '../components/QuestionCard'
 import { shortenProjectPaths } from '../lib/labels'
+import CodexFeed from '../components/CodexFeed'
 import Markdown from '../components/Markdown'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 
@@ -40,6 +42,9 @@ type ChatItem =
       summary?: string
       isDelegation: boolean
       progressNote?: string
+      /** Codex's steps during a hand-off. */
+      activity?: DelegationActivity[]
+      startedAt?: number
     }
   | { kind: 'error'; message: string }
   | { kind: 'notice'; text: string }
@@ -186,7 +191,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 toolUseId: event.toolUseId,
                 label: event.friendlyLabel,
                 status: 'running',
-                isDelegation: event.name === DELEGATION_TOOL_NAME
+                isDelegation: event.name === DELEGATION_TOOL_NAME,
+                startedAt: Date.now()
               }
             ]
           case 'tool_result':
@@ -195,6 +201,20 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 ? { ...item, status: event.ok ? 'ok' : 'error', summary: event.summary }
                 : item
             )
+          case 'delegation_activity': {
+            const target = [...prev]
+              .map((item, idx) => ({ item, idx }))
+              .reverse()
+              .find(({ item }) => item.kind === 'tool' && item.isDelegation && item.status === 'running')?.idx
+            if (target === undefined) return prev
+            return prev.map((item, idx) => {
+              if (idx !== target || item.kind !== 'tool') return item
+              const steps = item.activity ?? []
+              const at = steps.findIndex((s) => s.id === event.activity.id)
+              const next = at === -1 ? [...steps, event.activity] : steps.map((s, i) => (i === at ? event.activity : s))
+              return { ...item, activity: next.slice(-150) }
+            })
+          }
           case 'delegation_progress': {
             // Progress events aren't correlated to a toolUseId, so attach to
             // the most recent still-running delegation card.
@@ -617,6 +637,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     )}
                     {item.status === 'error' && <span className="tool-status">failed</span>}
                   </div>
+                )}
+                {item.kind === 'tool' && item.isDelegation && (
+                  <CodexFeed
+                    steps={item.activity ?? []}
+                    running={item.status === 'running'}
+                    startedAt={item.startedAt}
+                    projectPath={project.path}
+                  />
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
                 {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}

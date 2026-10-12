@@ -15,6 +15,24 @@ export interface CliStatus {
   inconclusive?: boolean
 }
 
+/**
+ * One step in a Codex hand-off. A step that takes time is reported twice
+ * with the same id: once when it starts, once when it finishes (done: true).
+ */
+export interface DelegationActivity {
+  id: string
+  step: 'say' | 'edit' | 'run' | 'tool'
+  /** What happened, in plain words ("Created utils.js", "npm test"). */
+  text: string
+  /** The whole command, when `text` shows only its first statement. */
+  full?: string
+  /** Output or extra detail (a command's output, trimmed). */
+  detail?: string
+  done: boolean
+  /** For commands and tools: whether it worked. */
+  ok?: boolean
+}
+
 export interface UsageWindow {
   label: string
   /** Percentage of this plan window already used, 0-100. */
@@ -46,6 +64,8 @@ export type VibeEvent =
   | { type: 'error'; message: string }
   /** The user pressed Stop; the turn ended early on purpose. */
   | { type: 'stopped' }
+  /** One step of what Codex is doing during a hand-off (shown as a live feed under its card). */
+  | { type: 'delegation_activity'; activity: DelegationActivity }
   /** What one request cost (tokens), shown quietly under the reply. */
   | { type: 'usage'; steps: number; fresh: number; cached: number; output: number; model?: string }
   /** The conversation was moved into a fresh Claude session to keep it fast. */

@@ -9,6 +9,7 @@ import { handoffContext } from '../memory/context'
 import { changeStats, diffSnapshots, takeSnapshot, type FileChange } from '../git/snapshots'
 import { verifyChanges } from '../review/checks'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
+import type { DelegationActivity } from '@shared/types'
 
 export type DelegationProgressListener = (note: string) => void
 
@@ -67,7 +68,9 @@ export function createCodexDelegationServer(
   /** Aborted when the user presses Stop. */
   getStopSignal?: () => AbortSignal,
   getRequestContext?: () => RequestContext | undefined,
-  codexThread?: { get: () => CodexThread | undefined; set: (thread: CodexThread | undefined) => void }
+  codexThread?: { get: () => CodexThread | undefined; set: (thread: CodexThread | undefined) => void },
+  /** Each step Codex takes, for the live feed in the chat. */
+  onActivity?: (activity: DelegationActivity) => void
 ): ReturnType<typeof createSdkMcpServer> {
   return createSdkMcpServer({
     name: 'vibe_tools',
@@ -160,7 +163,8 @@ export function createCodexDelegationServer(
                     : undefined,
                   signal
                 },
-                onProgress
+                onProgress,
+                onActivity
               )
 
             // Pick up this request's earlier Codex session, if it's still valid.
