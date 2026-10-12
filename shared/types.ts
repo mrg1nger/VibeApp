@@ -44,6 +44,10 @@ export type VibeEvent =
   | { type: 'error'; message: string }
   /** The user pressed Stop; the turn ended early on purpose. */
   | { type: 'stopped' }
+  /** What one request cost (tokens), shown quietly under the reply. */
+  | { type: 'usage'; steps: number; fresh: number; cached: number; output: number; model?: string }
+  /** The conversation was moved into a fresh Claude session to keep it fast. */
+  | { type: 'session_rotated'; contextTokens: number }
   /** Smart model switching picked a model for this message. */
   | { type: 'route'; label: string; reason: string; detail?: string }
   /** Codex started reviewing the changes Claude just made. */
@@ -176,7 +180,7 @@ export interface MemoryFact {
   category: MemoryCategory
   /** Key facts go into Claude's and Codex's instructions up front; the rest are searched when needed. */
   key: boolean
-  source: 'claude' | 'codex' | 'user' | 'tidy'
+  source: 'claude' | 'codex' | 'user' | 'tidy' | 'scribe'
   createdAt: string
   updatedAt: string
   lastUsedAt: string | null
@@ -247,10 +251,25 @@ export interface AppSettings {
   aiRouting: boolean
   /** Keep a one-line summary of every source file, so agents can find where things live. */
   codeMap: boolean
+  /** A background Haiku pass saves lasting facts after each request, so the agents don't spend a turn on it. */
+  autoMemory: boolean
+  /** Start a fresh Claude session (seeded from memory and a summary) when the conversation gets very long. */
+  freshSessions: boolean
+  /** Write the project's key facts into an AGENTS.md block, for other tools opened in the folder. */
+  exportAgentsFile: boolean
   /** Let smart switching go above the chosen model (to Opus) for complex requests. Off: the chosen model is a ceiling. */
   stepUpForComplex: boolean
   /** Have Codex review Claude's code changes after each request. */
   codexReview: boolean
+}
+
+/** Where tokens went over a period, by kind of work. */
+export interface UsageSummaryRow {
+  kind: string
+  runs: number
+  fresh: number
+  cached: number
+  output: number
 }
 
 export interface ModelOption {

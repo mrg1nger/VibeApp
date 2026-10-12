@@ -16,12 +16,20 @@ import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
 import { agentSecretEnv, listSecrets } from '../secrets/vault'
 import type { PreparedImage } from '../attachments/images'
-import type { RequestContext } from '../delegation/codexTool'
+import type { CodexThread, RequestContext } from '../delegation/codexTool'
+import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 
-const MEMORY_INSTRUCTIONS = `# Project memory
+function memoryInstructions(autoMemory: boolean): string {
+  const saving = autoMemory
+    ? "2. VibeApp saves lasting facts from each request automatically after you reply, so don't spend a step on it: call mcp__vibe_memory__remember only when the user asks you to remember something."
+    : '2. Before your final reply, call mcp__vibe_memory__remember for each new lasting fact you learned or decided: what the project is, how to run/build/test/deploy it, decisions and why, the user\'s stated preferences, and non-obvious gotchas. One standalone sentence each, with a category; mark key: true only for facts needed on almost every request. Skip anything already remembered.'
+  return MEMORY_INSTRUCTIONS_TEMPLATE.replace('{{SAVING}}', saving)
+}
+
+const MEMORY_INSTRUCTIONS_TEMPLATE = `# Project memory
 You share a persistent memory with Codex through the mcp__vibe_memory tools. The key facts are listed below; more facts are stored than shown.
 1. When the request touches something the key facts don't cover (a feature, file, bug, or past decision), call mcp__vibe_memory__recall with a short search first, e.g. "inventory" or "deploy".
-2. Before your final reply, call mcp__vibe_memory__remember for each new lasting fact you learned or decided: what the project is, how to run/build/test/deploy it, decisions and why, the user's stated preferences, and non-obvious gotchas. One standalone sentence each, with a category; mark key: true only for facts needed on almost every request. Skip anything already remembered.
+{{SAVING}}
 3. If a remembered fact turns out to be wrong or out of date, fix it with mcp__vibe_memory__update (or mcp__vibe_memory__forget), using its id. Don't save a new fact that contradicts an old one.
 4. Never save secrets, credentials, or temporary task state. Use global: true only for preferences that apply to all the user's projects.
 5. For trivial quick edits, don't save anything to memory.
@@ -115,8 +123,35 @@ export class ClaudeSession extends EventEmitter {
   /** The user's current request in their own words, passed along with Codex hand-offs. */
   private requestContext: RequestContext | undefined
 
+  /** The Codex session this request's hand-offs share (reset by each new request). */
+  private codexThread: CodexThread | undefined
+  /** Size of the conversation Claude last saw, in tokens (from its latest API call). */
+  private lastContextTokens = 0
+
   setRequestContext(context: RequestContext | undefined): void {
     this.requestContext = context
+    this.codexThread = undefined
+  }
+
+  contextTokens(): number {
+    return this.lastContextTokens
+  }
+
+  /**
+   * Moves the conversation into a brand-new Claude session, so it stops
+   * re-reading a very long history on every step. Only between requests;
+   * the caller carries the earlier conversation over as a summary.
+   */
+  rotate(): boolean {
+    if (this.dead || this.disposed || this.turnsInFlight > 0) return false
+    const before = this.lastContextTokens
+    const old = this.queue
+    this.capturedSessionId = undefined
+    this.lastContextTokens = 0
+    this.queue = this.startQuery(undefined, this.goNutz)
+    old.close()
+    this.emit('event', { type: 'session_rotated', contextTokens: before } satisfies VibeEvent)
+    return true
   }
 
   constructor(
@@ -161,7 +196,8 @@ export class ClaudeSession extends EventEmitter {
       () => this.goNutz,
       memoryPaths,
       () => this.delegationAbort.signal,
-      () => this.requestContext
+      () => this.requestContext,
+      { get: () => this.codexThread, set: (thread) => (this.codexThread = thread) }
     )
 
     const memoryServer = {
@@ -246,7 +282,7 @@ export class ClaudeSession extends EventEmitter {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: `${MEMORY_INSTRUCTIONS}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}`
+          append: `${memoryInstructions(getSettings().autoMemory)}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}`
         },
         mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
         // Only called when Claude Code itself wants to ask (sensitive files
@@ -391,8 +427,30 @@ export class ClaudeSession extends EventEmitter {
           this.capturedSessionId = message.session_id
           this.emit('session_id', message.session_id)
         }
+        if (message.type === 'assistant') {
+          // Each API call reports how much it read: that's the conversation's size now.
+          const u = (
+            message.message as {
+              usage?: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number }
+            }
+          ).usage
+          if (u) {
+            this.lastContextTokens =
+              (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+          }
+        }
         if (message.type === 'result') {
           this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+          const counts = countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0])
+          recordUsage(this.projectId, 'request', 'claude', counts)
+          this.emit('event', {
+            type: 'usage',
+            steps: counts.steps,
+            fresh: counts.fresh,
+            cached: counts.cached,
+            output: counts.output,
+            model: counts.model
+          } satisfies VibeEvent)
         }
         if (message.type === 'result' && this.stopping) {
           this.stopping = false

@@ -2132,3 +2132,32 @@ textarea {
 .md th {
   background: var(--surface-raised);
 }
+
+.chat-usage {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.usage-table th,
+.usage-table td {
+  text-align: right;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child {
+  text-align: left;
+}
+
+.usage-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+}

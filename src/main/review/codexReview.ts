@@ -1,5 +1,6 @@
 import type { ReviewFinding } from '@shared/types'
 import { runCodexExec } from '../cli/codexExec'
+import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import { diffSnapshots } from '../git/snapshots'
 import { getSettings } from '../settings/store'
 
@@ -62,7 +63,8 @@ export async function reviewChanges(
   projectPath: string,
   diff: string,
   request: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  projectId?: string
 ): Promise<ReviewResult> {
   const result = await runCodexExec({
     signal,
@@ -74,6 +76,7 @@ export async function reviewChanges(
     model: getSettings().codexModel ?? undefined,
     timeoutMs: 300_000
   })
+  recordUsage(projectId, 'review', 'codex', countsFromCodexEvents(result.events))
   if (result.exitCode !== 0 && !result.finalMessage) {
     throw new Error(`Codex exited with code ${result.exitCode}`)
   }

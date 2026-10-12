@@ -33,7 +33,10 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Loose ends to check
 
-- [ ] **Measure what the shared context saves.** Pre-fetch removed the memory lookup in a test question, and a code map of 5 files built in under a minute, but token savings across real sessions and the Haiku cost of mapping a large project haven't been measured.
+- [ ] **Keep measuring.** The usage log exists now; compare a week of real use with the scribe, hand-off resume and (if tried) fresh sessions on, and decide the defaults from the numbers. So far only small tests: on a task with durable facts the scribe cut Claude's steps from 4 to 2-3 and its cached reads by 30-55%, at about 1.8k Haiku tokens.
+- [ ] **Scribe quality.** Haiku sometimes over-saves (task-only instructions as preferences) or fills in typical details. Mitigated with stricter rules, a check that numbers must appear in the exchange, and retiring (not overwriting) corrected facts, but watch the "Saved automatically" facts on the Memory screen.
+- [ ] **Fresh-session summaries lose detail.** Off by default; needs real long-project use before it's worth enabling.
+- [ ] **Run the same checks after Claude's own edits.** They only run after Codex hand-offs today.
 - [ ] **Code map accuracy on big projects.** Capped at 600 files, 80 summarised per run, only the first ~1,200 characters of each file are read; large or unusual projects may be mapped partially.
 - [ ] **Real GitHub backup.** Vercel publishing is confirmed working on the VM; the GitHub side (install, sign-in, first push) hasn't had a real run.
 - [ ] **No window flashes during Codex reviews and hand-offs.** Fixed for the usage check; not yet tested while Codex runs its own commands.
@@ -59,6 +62,8 @@ Dropped:
 - [x] Projects with automatic git, checkpoints, history and restore
 - [x] Claude hands tasks to Codex; shared project and global memory
 - [x] Shared context database (conversation history, hand-off log, code map): relevant facts and files pre-fetched into each request; Codex gets the user's own words, pasted images and recent hand-offs automatically; `history`, `handoffs` and `where` tools for both agents
+- [x] Token efficiency pass: usage logged per request (new / cached / written tokens, shown under replies and in Settings by kind of work); a background Haiku scribe saves memory so agents don't spend a step on it; hand-off results are short with a capped diff and automatic checks (script syntax, JSON, the project's npm test); several Codex hand-offs in one request continue one Codex session
+- [x] Optional (off by default): fresh Claude session for very long conversations; key facts exported to an AGENTS.md block
 - [x] Memory v2 on SQLite: key facts given up front, the rest searchable; Claude and Codex can update and forget facts; duplicates merge; Haiku tidy-up sorts, merges and retires outdated facts (restorable); quick edits skip memory
 - [x] Go Nutz mode, destructive-command confirmations, MCP servers loaded on the fly
 - [x] Model picker, themes (Midnight, Sakura Neon), theme generator and theme files

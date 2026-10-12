@@ -3,6 +3,7 @@ import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
+import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 
 export interface Classification {
   size: 'quick' | 'normal' | 'complex'
@@ -99,14 +100,20 @@ class RequestClassifier {
   }
 
   /** Labels a request, or returns null (slow, failed, or unreadable) so the caller can fall back. */
-  classify(text: string, context: { images?: number; pointedAt?: boolean } = {}): Promise<Classification | null> {
+  classify(
+    text: string,
+    context: { images?: number; pointedAt?: boolean; projectId?: string } = {}
+  ): Promise<Classification | null> {
     // One session answers one request at a time.
     const run = this.chain.then(() => this.ask(text, context))
     this.chain = run.catch(() => undefined)
     return run
   }
 
-  private async ask(text: string, context: { images?: number; pointedAt?: boolean }): Promise<Classification | null> {
+  private async ask(
+    text: string,
+    context: { images?: number; pointedAt?: boolean; projectId?: string }
+  ): Promise<Classification | null> {
     if (!this.inbox || this.requests >= MAX_REQUESTS_PER_SESSION) {
       this.dispose()
       this.start()
@@ -126,7 +133,10 @@ class RequestClassifier {
         const { value, done } = await results.next()
         if (done) return null
         const message = value as { type: string; subtype?: string; result?: string }
-        if (message.type === 'result') return message.subtype === 'success' ? (message.result ?? '') : null
+        if (message.type === 'result') {
+          recordUsage(context.projectId, 'route', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
+          return message.subtype === 'success' ? (message.result ?? '') : null
+        }
       }
     })()
     let timer: NodeJS.Timeout | undefined

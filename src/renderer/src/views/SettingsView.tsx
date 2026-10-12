@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AppSettings, ModelOption, ThemeDefinition } from '@shared/types'
+import type { AppSettings, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
 
 interface SettingsViewProps {
   settings: AppSettings
@@ -17,6 +17,14 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
   const [codexModel, setCodexModel] = useState(settings.codexModel ?? '')
   const [themePrompt, setThemePrompt] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [usageRows, setUsageRows] = useState<UsageSummaryRow[] | null>(null)
+
+  useEffect(() => {
+    window.vibe.usage
+      .summary(7)
+      .then(setUsageRows)
+      .catch(() => setUsageRows([]))
+  }, [])
 
   useEffect(() => {
     window.vibe.models
@@ -156,6 +164,54 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.autoMemory}
+            onChange={(e) => onSettingsChange({ autoMemory: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Save memory automatically
+            <small>
+              After each request a quick Haiku pass decides what's worth remembering, so Claude and Codex don't
+              each spend a step on it. Applies to new chats. Saved facts are labelled "Saved automatically" on
+              the Memory screen.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.freshSessions}
+            onChange={(e) => onSettingsChange({ freshSessions: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Start a fresh session when a conversation gets very long
+            <small>
+              Experimental, off by default. A long conversation is re-read on every step; this moves it into a
+              new session (seeded with memory and a short summary) once it grows past a point. Details can be
+              lost in the summary, so watch the usage numbers below before relying on it.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.exportAgentsFile}
+            onChange={(e) => onSettingsChange({ exportAgentsFile: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Share key facts with other tools (AGENTS.md)
+            <small>
+              Off by default. Keeps a block of this project's key facts in an AGENTS.md file in the project
+              folder, so other AI tools opened there see them too. If VibeApp creates the file it's added to
+              .gitignore, so it isn't published with your code. Facts that look like secrets are left out.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.codeMap}
             onChange={(e) => onSettingsChange({ codeMap: e.target.checked }).catch(() => undefined)}
           />
@@ -184,6 +240,42 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
             </small>
           </span>
         </label>
+      </section>
+
+      <section className="settings-section">
+        <h3>Where your usage goes (last 7 days)</h3>
+        {usageRows === null ? (
+          <p className="memory-hint">Loading…</p>
+        ) : usageRows.length === 0 ? (
+          <p className="memory-hint">Nothing recorded yet. Usage is logged as you work.</p>
+        ) : (
+          <table className="usage-table">
+            <thead>
+              <tr>
+                <th>What</th>
+                <th>Runs</th>
+                <th title="Input processed fresh (not served from cache)">New</th>
+                <th title="Input reused from the prompt cache (cheap)">Cached</th>
+                <th>Written</th>
+              </tr>
+            </thead>
+            <tbody>
+              {usageRows.map((r) => (
+                <tr key={r.kind}>
+                  <td>{r.kind}</td>
+                  <td>{r.runs}</td>
+                  <td>{r.fresh.toLocaleString()}</td>
+                  <td>{r.cached.toLocaleString()}</td>
+                  <td>{r.output.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <small className="memory-hint">
+          Token counts from VibeApp's own log. "request" is Claude working on what you asked; "route", "scribe",
+          "tidy", "codemap" and "summary" are the small Haiku helpers; "handoff" and "review" are Codex.
+        </small>
       </section>
 
       <section className="settings-section">

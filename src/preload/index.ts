@@ -21,6 +21,7 @@ import type {
   ThemeDefinition,
   TranscriptEntry,
   UsageSnapshot,
+  UsageSummaryRow,
   VibeEvent
 } from '@shared/types'
 
@@ -243,7 +244,9 @@ const vibeApi = {
 
   usage: {
     get: (cli: CliName, force?: boolean): Promise<UsageSnapshot> =>
-      ipcRenderer.invoke('vibe:usage:get', cli, force)
+      ipcRenderer.invoke('vibe:usage:get', cli, force),
+    /** Tokens by kind of work over the last N days (from VibeApp's own log). */
+    summary: (days: number): Promise<UsageSummaryRow[]> => ipcRenderer.invoke('vibe:usage:summary', days)
   }
 }
 

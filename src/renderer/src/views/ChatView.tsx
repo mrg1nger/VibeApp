@@ -45,6 +45,7 @@ type ChatItem =
   | { kind: 'notice'; text: string }
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
+  | { kind: 'usage'; text: string }
   | {
       kind: 'review'
       status: 'running' | 'done' | 'error'
@@ -86,6 +87,14 @@ function readImageFile(file: File): Promise<PendingImage> {
 
 function toAttachment(image: PendingImage): ImageAttachment {
   return { name: image.name, mediaType: image.mediaType, data: image.dataUrl.slice(image.dataUrl.indexOf(',') + 1) }
+}
+
+/** 12345 -> "12.3k", 1234567 -> "1.2M" */
+function compactCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`
+  if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`
+  return String(n)
 }
 
 function readPreviewPref(): boolean {
@@ -228,6 +237,27 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               ? [...prev, result]
               : prev.map((item, i) => (i === runningIndex ? result : item))
           }
+          case 'usage':
+            return [
+              ...prev,
+              {
+                kind: 'usage',
+                text: [
+                  `${event.steps} step${event.steps === 1 ? '' : 's'}`,
+                  `${compactCount(event.fresh)} new`,
+                  `${compactCount(event.cached)} cached`,
+                  `${compactCount(event.output)} written`
+                ].join(' · ')
+              }
+            ]
+          case 'session_rotated':
+            return [
+              ...prev,
+              {
+                kind: 'notice',
+                text: `Started a fresh Claude session to keep things fast (the last one had grown to about ${compactCount(event.contextTokens)} tokens). Memory and a summary of the conversation carried over.`
+              }
+            ]
           case 'stopped':
             // Stop also cancelled any open prompts or questions.
             if (!isReplay) setConfirmations([])
@@ -590,6 +620,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
                 {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
+                {item.kind === 'usage' && (
+                  <span
+                    className="chat-usage"
+                    title="What this step of the request used. New = text Claude had to process fresh; cached = reused from earlier steps (cheap); written = what Claude wrote."
+                  >
+                    {item.text}
+                  </span>
+                )}
                 {item.kind === 'route' && (
                   <span
                     className="chat-route"

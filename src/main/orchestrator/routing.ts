@@ -49,11 +49,13 @@ const CODEX_NOTES = {
 export async function routeMessage(
   text: string,
   settings: AppSettings,
-  context: { images?: number; pointedAt?: boolean } = {}
+  context: { images?: number; pointedAt?: boolean; projectId?: string } = {}
 ): Promise<RouteDecision> {
   if (!settings.smartRouting) return { model: null, skipReview: false, size: 'normal' }
   const images = context.images ?? 0
-  const labelled = settings.aiRouting ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt }) : null
+  const labelled = settings.aiRouting
+    ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt, projectId: context.projectId })
+    : null
   const request = labelled ?? keywordClassification(text, images)
 
   const baseline = settings.claudeModel

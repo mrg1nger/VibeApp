@@ -6,6 +6,7 @@ import { promisify } from 'util'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
+import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { memoryDb } from './paths'
 import { codeHashes, countCodeFiles, hashFile, removeCodeFiles, saveCodeSummaries, type CodeFile } from './store'
 
@@ -21,7 +22,7 @@ const SOURCE_EXTENSIONS = new Set([
   '.sh', '.ps1', '.bat', '.sql', '.md', '.yml', '.yaml', '.toml', '.json'
 ])
 const SKIP = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb|node_modules|dist|build|out|\.git)\//i
-const SKIP_NAMES = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|\.min\.(js|css)$|\.map$/i
+const SKIP_NAMES = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|AGENTS\.md)$|\.min\.(js|css)$|\.map$/i
 /** Plain data files are listed only when small; big ones are data, not code. */
 const DATA_EXTENSIONS = new Set(['.json', '.md', '.yml', '.yaml', '.toml', '.sql'])
 
@@ -70,7 +71,7 @@ async function listFiles(projectPath: string): Promise<string[]> {
   return files.sort().slice(0, MAX_FILES)
 }
 
-async function summarize(entries: { path: string; head: string }[]): Promise<Map<string, string>> {
+async function summarize(projectId: string, entries: { path: string; head: string }[]): Promise<Map<string, string>> {
   const prompt = `Below are source files from a software project (the start of each). For every file, write one plain sentence of at most 14 words saying what it is for or contains, concrete enough that someone searching for a feature would find it ("Player movement, collision with walls and enemies", not "Game logic"). Return every path exactly as given.
 
 ${entries.map((e) => `### ${e.path}\n${e.head}`).join('\n\n')}`
@@ -92,6 +93,7 @@ ${entries.map((e) => `### ${e.path}\n${e.head}`).join('\n\n')}`
   })
   for await (const message of session) {
     if (message.type !== 'result') continue
+    recordUsage(projectId, 'codemap', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
     if (message.subtype !== 'success' || !message.structured_output) {
       throw new Error(`Code map summary failed (${message.subtype}).`)
     }
@@ -149,7 +151,7 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
         }
         return { path, head }
       })
-      const summaries = await summarize(entries)
+      const summaries = await summarize(projectId, entries)
       const saved: CodeFile[] = group.map((path) => ({
         path,
         // A file Haiku skipped still gets an entry, so it isn't retried every run.

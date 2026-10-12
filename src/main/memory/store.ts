@@ -102,6 +102,22 @@ CREATE TRIGGER IF NOT EXISTS code_au AFTER UPDATE OF summary, path ON code_files
   INSERT INTO code_fts(code_fts, rowid, path, summary) VALUES ('delete', old.id, old.path, old.summary);
   INSERT INTO code_fts(rowid, path, summary) VALUES (new.id, new.path, new.summary);
 END;
+
+-- What each piece of work cost, so savings can be measured instead of guessed.
+CREATE TABLE IF NOT EXISTS usage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  project_id TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  model TEXT,
+  fresh INTEGER NOT NULL DEFAULT 0,
+  cached INTEGER NOT NULL DEFAULT 0,
+  output INTEGER NOT NULL DEFAULT 0,
+  steps INTEGER NOT NULL DEFAULT 1,
+  cost_usd REAL
+);
+CREATE INDEX IF NOT EXISTS usage_at ON usage_log(at);
 `
 
 const databases = new Map<string, DatabaseSync>()
@@ -669,6 +685,13 @@ export function recentHandoffs(db: DatabaseSync, projectId: string, limit = 3): 
   return rows.map(toHandoff).reverse()
 }
 
+export function getHandoff(db: DatabaseSync, projectId: string, id: number): Handoff | null {
+  const row = db.prepare('SELECT * FROM handoffs WHERE id = ? AND project_id = ?').get(id, projectId) as
+    | HandoffRow
+    | undefined
+  return row ? toHandoff(row) : null
+}
+
 /** A run left "running" by a crash or quit is closed off at startup. */
 export function closeStaleHandoffs(db: DatabaseSync): void {
   db.prepare(
@@ -748,6 +771,72 @@ export function relevantCode(db: DatabaseSync, projectId: string, text: string, 
   return candidates
     .filter((f) => strongMatch(asked, stems(describe(f)), df, everything.length))
     .slice(0, limit)
+}
+
+// ---- usage log ---------------------------------------------------------------
+
+export type UsageKind =
+  | 'request' // Claude working on the user's request
+  | 'handoff' // Codex doing a hand-off
+  | 'review' // Codex reviewing Claude's change
+  | 'route' // Haiku judging the request
+  | 'scribe' // Haiku saving memory
+  | 'tidy' // Haiku tidying memory
+  | 'codemap' // Haiku summarising files
+  | 'summary' // Haiku summarising a conversation for a fresh session
+
+export interface UsageRecord {
+  projectId?: string
+  kind: UsageKind
+  agent: 'claude' | 'codex'
+  model?: string
+  /** Tokens that were newly processed (not served from the cache), input side. */
+  fresh: number
+  /** Input tokens served from the prompt cache. */
+  cached: number
+  output: number
+  steps?: number
+  costUsd?: number
+}
+
+export function logUsage(db: DatabaseSync, record: UsageRecord): void {
+  db.prepare(
+    `INSERT INTO usage_log (at, project_id, kind, agent, model, fresh, cached, output, steps, cost_usd)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    now(),
+    record.projectId ?? '',
+    record.kind,
+    record.agent,
+    record.model ?? null,
+    Math.round(record.fresh),
+    Math.round(record.cached),
+    Math.round(record.output),
+    record.steps ?? 1,
+    record.costUsd ?? null
+  )
+}
+
+/** Totals by kind of work since a time, for the Settings screen. */
+export function usageSummary(
+  db: DatabaseSync,
+  sinceIso: string,
+  projectId?: string
+): { kind: string; runs: number; fresh: number; cached: number; output: number }[] {
+  return db
+    .prepare(
+      `SELECT kind || ' (' || agent || ')' AS kind, COUNT(*) AS runs, SUM(fresh) AS fresh,
+              SUM(cached) AS cached, SUM(output) AS output
+       FROM usage_log WHERE at >= ? ${projectId ? 'AND project_id = ?' : ''}
+       GROUP BY kind, agent ORDER BY fresh + output DESC`
+    )
+    .all(...(projectId ? [sinceIso, projectId] : [sinceIso])) as {
+    kind: string
+    runs: number
+    fresh: number
+    cached: number
+    output: number
+  }[]
 }
 
 // ---- deciding what counts as relevant -------------------------------------------

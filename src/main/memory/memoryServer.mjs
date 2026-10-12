@@ -23,6 +23,7 @@ import {
   searchMessages,
   recentMessages,
   recentHandoffs,
+  getHandoff,
   searchCode,
   countCodeFiles,
   hashFile
@@ -162,12 +163,20 @@ server.registerTool(
   'handoffs',
   {
     description:
-      'See what earlier hand-offs from Claude to Codex did in this project: the task, the result, and which files changed.',
+      'See what earlier hand-offs from Claude to Codex did in this project: the task, the result, and which files changed. Pass an id (shown in a hand-off result as "#12") to get that hand-off\'s full saved report.',
     inputSchema: {
-      limit: z.number().int().min(1).max(15).optional().describe('How many (default 5), newest last.')
+      limit: z.number().int().min(1).max(15).optional().describe('How many (default 5), newest last.'),
+      id: z.number().int().optional().describe('A hand-off number, for its full report.')
     }
   },
-  async ({ limit }) => {
+  async ({ limit, id }) => {
+    if (id !== undefined) {
+      const h = getHandoff(db, projectId, id)
+      if (!h) return text(`No hand-off #${id} in this project.`)
+      return text(
+        `#${h.id} [${h.status}] ${h.startedAt.slice(0, 16).replace('T', ' ')}\nTask:\n${h.brief}\n\nFull report:\n${h.report ?? '(none)'}${h.files?.length ? `\n\nFiles changed: ${h.files.join(', ')}` : ''}`
+      )
+    }
     const items = recentHandoffs(db, projectId, limit ?? 5)
     if (!items.length) return text('No hand-offs yet in this project.')
     return text(

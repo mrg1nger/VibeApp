@@ -80,6 +80,32 @@ export async function changedFiles(projectPath: string, from: string, to: string
   return out ? out.split('\n').filter(Boolean) : []
 }
 
+export interface FileChange {
+  path: string
+  added: number
+  removed: number
+}
+
+/** Files that differ between two snapshots, with lines added and removed (binary files count as 0). */
+export async function changeStats(projectPath: string, from: string, to: string): Promise<FileChange[]> {
+  const out = await git(projectPath, [
+    'diff',
+    '--numstat',
+    from,
+    to,
+    '--',
+    '.',
+    ...NOISY_FILES.flatMap((f) => [`:(exclude)${f}`, `:(exclude)**/${f}`])
+  ])
+  return out
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [added, removed, ...rest] = line.split('\t')
+      return { path: rest.join('\t'), added: Number(added) || 0, removed: Number(removed) || 0 }
+    })
+}
+
 /** The code change between two snapshots, as a unified diff (lockfiles left out). */
 export async function diffSnapshots(projectPath: string, from: string, to: string): Promise<string> {
   return git(projectPath, [

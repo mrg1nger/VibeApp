@@ -98,7 +98,7 @@ export function handleSessionEvent(
 
       reviewStarted = true
       forward({ type: 'review_started' })
-      const review = await reviewChanges(turn.projectPath, diff, turn.request, abort.signal)
+      const review = await reviewChanges(turn.projectPath, diff, turn.request, abort.signal, projectId)
       if (finished || abort.signal.aborted) return
 
       const serious = review.findings.filter((f) => f.severity !== 'low')

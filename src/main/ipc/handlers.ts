@@ -62,7 +62,15 @@ import {
 import { memoryDb } from '../memory/paths'
 import { tidyMemory, maybeTidy } from '../memory/tidy'
 import { maybeRefreshCodeMap } from '../memory/codeMap'
-import { prefetchBlock, recordAssistantMessage, recordUserMessage } from '../memory/context'
+import {
+  ensureHistoryImported,
+  prefetchBlock,
+  recordAssistantMessage,
+  recordUserMessage
+} from '../memory/context'
+import { runScribe, summarizeConversation, type TurnRecord } from '../memory/scribe'
+import { syncAgentsFile } from '../memory/agentsFile'
+import { usageSummary } from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
@@ -197,8 +205,25 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
           console.warn('Snapshot failed:', err.message)
           return undefined
         }),
-        routeMessage(text, getSettings(), { images: prepared.length, pointedAt: !!picked })
+        routeMessage(text, getSettings(), { images: prepared.length, pointedAt: !!picked, projectId })
       ])
+
+      // A very long conversation is re-read on every step. When enabled,
+      // continue it in a fresh session seeded with a summary instead (the
+      // key facts, history and code map are all in the database anyway).
+      let carried: string | undefined
+      if (getSettings().freshSessions && session.contextTokens() > rotateThreshold()) {
+        try {
+          ensureHistoryImported(projectId)
+          const summary = await summarizeConversation(projectId)
+          if (summary && session.rotate()) {
+            carried = `[VibeApp note: this is a fresh session continuing earlier work, started to keep things fast. Summary of the conversation so far:\n${summary}\nThe history tool (mcp__vibe_memory__history) has the details.]`
+          }
+        } catch (err) {
+          console.warn('Starting a fresh session failed; continuing in the current one:', (err as Error).message)
+        }
+      }
+
       try {
         await session.useModel(route.model)
       } catch (err) {
@@ -238,7 +263,9 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       const relevant = prefetchBlock(projectId, text)
       // First request in a project: start mapping the code now, in the background.
       maybeRefreshCodeMap(projectId, projectPath)
+      turnRecords.set(projectId, { request: text, replies: [], actions: [], stopped: false, hadError: false })
       const message = [
+        carried,
         route.note,
         relevant,
         picked ? pickedNote(picked) : undefined,
@@ -366,7 +393,11 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
   ipcMain.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
 
-  ipcMain.handle('vibe:usage:get', (_event, cli: CliName, force?: boolean) => getUsage(cli, force))
+  ipcMain.handle('vibe:usage:summary', (_event, days: number) =>
+    usageSummary(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString())
+  )
+
+  ipcMain.handle('vibe:usage:get',(_event, cli: CliName, force?: boolean) => getUsage(cli, force))
 
   previewEvents.on('state', (projectId: string, state: PreviewState) => {
     getSender()?.send('vibe:preview:state', projectId, state)
@@ -471,6 +502,15 @@ function pickedNote(picked: PickedElement): string {
   ].join('\n')
 }
 
+/** Context size (tokens) past which a long conversation moves to a fresh session, if that's enabled. */
+function rotateThreshold(): number {
+  // The override is for testing; Claude Code's own prompt is ~40k of this.
+  return Number(process.env.VIBEAPP_ROTATE_TOKENS) || 120_000
+}
+
+/** Per project: what's happened so far this request, kept for the memory scribe. */
+const turnRecords = new Map<string, TurnRecord>()
+
 const wiredSessions = new WeakSet<object>()
 
 function wireSessionEvents(
@@ -486,12 +526,35 @@ function wireSessionEvents(
       appendEvent(projectId, forwarded)
       getSender()?.send('vibe:chat:event', projectId, forwarded)
       if (forwarded.type === 'assistant_text') recordAssistantMessage(projectId, forwarded.text)
-      // Between requests is a good moment to tidy memory and refresh the
-      // code map, if they need it.
+
+      // What happened this request, for the scribe.
+      const record = turnRecords.get(projectId)
+      if (record) {
+        if (forwarded.type === 'assistant_text') record.replies.push(forwarded.text)
+        else if (forwarded.type === 'tool_call') record.actions.push(forwarded.friendlyLabel.slice(0, 160))
+        else if (forwarded.type === 'error') record.hadError = true
+        else if (forwarded.type === 'stopped') record.stopped = true
+      }
+
+      // Between requests is a good moment to save what was learned, tidy
+      // memory and refresh the code map, if they need it.
       if (forwarded.type === 'turn_complete') {
-        maybeTidy(projectId)
-        maybeTidy(GLOBAL_SCOPE)
         const path = getProject(projectId)?.path
+        const finished = turnRecords.get(projectId)
+        turnRecords.delete(projectId)
+        if (finished && getSettings().autoMemory) {
+          runScribe(projectId, finished)
+            .catch((err: Error) => console.warn('Saving memory failed:', err.message))
+            .finally(() => {
+              if (path) syncAgentsFile(projectId, path)
+              maybeTidy(projectId)
+              maybeTidy(GLOBAL_SCOPE)
+            })
+        } else {
+          if (path) syncAgentsFile(projectId, path)
+          maybeTidy(projectId)
+          maybeTidy(GLOBAL_SCOPE)
+        }
         if (path) maybeRefreshCodeMap(projectId, path)
       }
     })

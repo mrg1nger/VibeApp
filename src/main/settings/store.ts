@@ -10,6 +10,9 @@ const DEFAULTS: AppSettings = {
   smartRouting: true,
   aiRouting: true,
   codeMap: true,
+  autoMemory: true,
+  freshSessions: false,
+  exportAgentsFile: false,
   stepUpForComplex: false,
   codexReview: true
 }

@@ -7,7 +7,10 @@ import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
 
-const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Use where to find which file holds something (a map of every file with a one-line summary) before searching the code yourself, history to look up what the user said earlier, and handoffs to see what earlier hand-offs did. Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category. If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
+const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Use where to find which file holds something (a map of every file with a one-line summary) before searching the code yourself, history to look up what the user said earlier, and handoffs to see what earlier hand-offs did. {{SAVING}} If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
+
+const SAVE_MANUALLY = 'Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category.'
+const SAVE_AUTOMATICALLY = "VibeApp saves lasting facts from each request automatically, so don't call remember unless you were asked to remember something."
 
 export interface CodexLaunch {
   file: string
@@ -105,6 +108,8 @@ export interface CodexExecArgs {
   ephemeral?: boolean
   /** Image files to attach to the prompt (the user's pasted screenshots). */
   images?: string[]
+  /** Continue an earlier Codex session (its thread id) instead of starting cold. */
+  resumeThreadId?: string
   /** JSON Schema the final message must follow (it's then a JSON string). */
   outputSchema?: object
   /** Aborting kills the Codex process and rejects. */
@@ -121,6 +126,8 @@ export interface CodexExecArgs {
     projectPath: string
     /** Relevant memories, recent hand-offs and the user's own words, ahead of the task. */
     context?: string
+    /** VibeApp saves facts after each request, so Codex needn't. */
+    autoMemory?: boolean
   }
 }
 
@@ -128,6 +135,8 @@ export interface CodexExecResult {
   finalMessage: string
   exitCode: number
   events: CodexJsonEvent[]
+  /** This run's thread id, for resuming it later. */
+  threadId?: string
 }
 
 export interface CodexJsonEvent {
@@ -158,9 +167,16 @@ export async function runCodexExec(
   // still enforces an equivalent workspace-only write boundary (a write
   // outside the project folder was denied), regardless of this machine's
   // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
-  const prompt = args.memory
+  const instructions = CODEX_MEMORY_INSTRUCTIONS.replace(
+    '{{SAVING}}',
+    args.memory?.autoMemory ? SAVE_AUTOMATICALLY : SAVE_MANUALLY
+  )
+  const prompt = args.resumeThreadId
+    ? `Follow-up task from Claude, in the same overall request (you already have the context from earlier in this session; what you changed since then is in the project files):
+${args.prompt}`
+    : args.memory
     ? [
-        CODEX_MEMORY_INSTRUCTIONS,
+        instructions,
         `Key facts:\n${args.memory.keyFacts ?? '(none yet)'}`,
         args.memory.context,
         args.memory.context ? `Task from Claude:\n${args.prompt}` : args.prompt
@@ -171,7 +187,7 @@ export async function runCodexExec(
 
   const cliArgs = [
     'exec',
-    '-', // read the prompt from stdin; see resolveCodexLaunch
+    ...(args.resumeThreadId ? [] : ['-']), // read the prompt from stdin; see resolveCodexLaunch
     '--json',
     ...(args.readOnly
       ? ['--sandbox', 'read-only']
@@ -221,6 +237,9 @@ export async function runCodexExec(
       'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}'
     )
   }
+
+  // Resuming: the shared flags go before the subcommand (verified against the CLI).
+  if (args.resumeThreadId) cliArgs.push('resume', args.resumeThreadId, '-')
 
   const launch = await resolveCodexLaunch()
 
@@ -304,7 +323,8 @@ export async function runCodexExec(
     finalMessage = isAgentMessageItem(lastAgentMessage) ? lastAgentMessage.item.text : ''
   }
 
-  return { finalMessage, exitCode, events }
+  const threadId = events.find((e) => e.type === 'thread.started')?.thread_id
+  return { finalMessage, exitCode, events, threadId: typeof threadId === 'string' ? threadId : undefined }
 }
 
 interface AgentMessageEvent extends CodexJsonEvent {

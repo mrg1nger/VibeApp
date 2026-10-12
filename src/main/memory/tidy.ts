@@ -4,9 +4,11 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryFact, type MemoryTidyResult } from '@shared/types'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
+import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { memoryDb } from './paths'
 import {
   countFacts,
+  GLOBAL_SCOPE,
   defaultKey,
   forgetFact,
   getMeta,
@@ -94,7 +96,7 @@ Never invent facts. Use only the ids given. Facts:
 ${lines.join('\n')}`
 }
 
-async function planBatch(facts: MemoryFact[], unclassified: Set<string>): Promise<TidyPlan> {
+async function planBatch(scope: string, facts: MemoryFact[], unclassified: Set<string>): Promise<TidyPlan> {
   const session = query({
     prompt: prompt(facts, unclassified),
     options: {
@@ -112,6 +114,12 @@ async function planBatch(facts: MemoryFact[], unclassified: Set<string>): Promis
   })
   for await (const message of session) {
     if (message.type !== 'result') continue
+    recordUsage(
+      scope === GLOBAL_SCOPE ? undefined : scope,
+      'tidy',
+      'claude',
+      countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0])
+    )
     if (message.subtype !== 'success' || !message.structured_output) {
       throw new Error(`Memory tidy-up failed (${message.subtype}).`)
     }
@@ -136,7 +144,7 @@ export async function tidyMemory(scope: string): Promise<MemoryTidyResult> {
         .prepare(`SELECT id FROM facts WHERE scope = ? AND classified = 0 AND forgotten_at IS NULL`)
         .all(scope) as { id: string }[]
       const unclassified = new Set(unclassifiedRows.map((r) => r.id).filter((id) => batch.some((f) => f.id === id)))
-      const plan = await planBatch(batch, unclassified)
+      const plan = await planBatch(scope, batch, unclassified)
       const inBatch = new Set(batch.map((f) => f.id))
       transaction(db, () => {
         const classify = db.prepare('UPDATE facts SET category = ?, key = ?, classified = 1 WHERE id = ? AND classified = 0')

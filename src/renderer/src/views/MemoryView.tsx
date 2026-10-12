@@ -10,7 +10,8 @@ const SOURCE_LABELS: Record<MemoryFact['source'], string> = {
   claude: 'Claude',
   codex: 'Codex',
   user: 'You',
-  tidy: 'Tidy-up'
+  tidy: 'Tidy-up',
+  scribe: 'Saved automatically'
 }
 
 const CATEGORY_LABELS: Record<MemoryCategory, string> = {
