@@ -16,6 +16,7 @@ import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
 import { agentSecretEnv, listSecrets } from '../secrets/vault'
 import type { PreparedImage } from '../attachments/images'
+import type { RequestContext } from '../delegation/codexTool'
 
 const MEMORY_INSTRUCTIONS = `# Project memory
 You share a persistent memory with Codex through the mcp__vibe_memory tools. The key facts are listed below; more facts are stored than shown.
@@ -23,11 +24,13 @@ You share a persistent memory with Codex through the mcp__vibe_memory tools. The
 2. Before your final reply, call mcp__vibe_memory__remember for each new lasting fact you learned or decided: what the project is, how to run/build/test/deploy it, decisions and why, the user's stated preferences, and non-obvious gotchas. One standalone sentence each, with a category; mark key: true only for facts needed on almost every request. Skip anything already remembered.
 3. If a remembered fact turns out to be wrong or out of date, fix it with mcp__vibe_memory__update (or mcp__vibe_memory__forget), using its id. Don't save a new fact that contradicts an old one.
 4. Never save secrets, credentials, or temporary task state. Use global: true only for preferences that apply to all the user's projects.
-5. Skip memory entirely for trivial quick edits.`
+5. For trivial quick edits, don't save anything to memory.
+6. To find where something lives in the code, call mcp__vibe_memory__where first (a map of the source files, each with a one-line summary) instead of searching files yourself. To look up what the user said earlier, use mcp__vibe_memory__history; to see what Codex did in earlier hand-offs, use mcp__vibe_memory__handoffs.`
 
 const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
-Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview). Use them as context; they're not something the user typed.`
+Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview, or remembered facts and files that look relevant to the request). Use them as context; they're not something the user typed. Notes from a search are hints: check them against the code before relying on them.
+Codex is automatically given the user's original request, the key facts and recent hand-offs when you hand it a task, so a task only needs to say what to do, which files are involved, and what done looks like.`
 
 function secretsInstructions(projectId: string): string {
   let names: string[] = []
@@ -109,6 +112,12 @@ export class ClaudeSession extends EventEmitter {
   private mcpWatcher: FSWatcher | undefined
   private reloadTimer: NodeJS.Timeout | undefined
   private activeModel: string | null = null
+  /** The user's current request in their own words, passed along with Codex hand-offs. */
+  private requestContext: RequestContext | undefined
+
+  setRequestContext(context: RequestContext | undefined): void {
+    this.requestContext = context
+  }
 
   constructor(
     private readonly projectId: string,
@@ -128,7 +137,8 @@ export class ClaudeSession extends EventEmitter {
     const memoryPaths = {
       scriptPath: memoryServerScriptPath(),
       dbPath: memoryDbPath(),
-      projectId: this.projectId
+      projectId: this.projectId,
+      projectPath: this.projectPath
     }
     // Key facts go straight into the instructions (cached by Claude Code
     // across turns) instead of costing a recall on every request. Opening
@@ -150,7 +160,8 @@ export class ClaudeSession extends EventEmitter {
       },
       () => this.goNutz,
       memoryPaths,
-      () => this.delegationAbort.signal
+      () => this.delegationAbort.signal,
+      () => this.requestContext
     )
 
     const memoryServer = {
@@ -160,7 +171,7 @@ export class ClaudeSession extends EventEmitter {
       // full Electron app instead of running the script (see Phase 0 notes
       // on this exact failure mode).
       command: process.execPath,
-      args: [memoryPaths.scriptPath, memoryPaths.dbPath, memoryPaths.projectId, 'claude'],
+      args: [memoryPaths.scriptPath, memoryPaths.dbPath, memoryPaths.projectId, 'claude', memoryPaths.projectPath],
       // Merged over the inherited environment by the CLI; passing all of
       // process.env here would serialize it onto the command line.
       env: { ELECTRON_RUN_AS_NODE: '1' },

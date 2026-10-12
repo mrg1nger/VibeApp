@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import type { DatabaseSync } from 'node:sqlite'
-import { openMemory, importLegacyMemory } from './store'
+import { openMemory, importLegacyMemory, closeStaleHandoffs } from './store'
 
 /** The shared memory database (all projects plus global). */
 export function memoryDbPath(): string {
@@ -26,6 +26,7 @@ export function memoryDb(): DatabaseSync {
     imported = true
     try {
       importLegacyMemory(db, legacyGlobalPath(), legacyProjectsDir())
+      closeStaleHandoffs(db)
     } catch (err) {
       console.warn('Importing old memory files failed:', (err as Error).message)
     }

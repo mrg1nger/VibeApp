@@ -7,7 +7,7 @@ import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
 
-const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category. If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
+const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Use where to find which file holds something (a map of every file with a one-line summary) before searching the code yourself, history to look up what the user said earlier, and handoffs to see what earlier hand-offs did. Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category. If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
 
 export interface CodexLaunch {
   file: string
@@ -103,6 +103,8 @@ export interface CodexExecArgs {
   readOnly?: boolean
   /** Don't keep a Codex session file for this run. */
   ephemeral?: boolean
+  /** Image files to attach to the prompt (the user's pasted screenshots). */
+  images?: string[]
   /** JSON Schema the final message must follow (it's then a JSON string). */
   outputSchema?: object
   /** Aborting kills the Codex process and rejects. */
@@ -115,6 +117,10 @@ export interface CodexExecArgs {
     projectId: string
     /** The project's key facts, given to Codex up front. */
     keyFacts?: string
+    /** The project folder, so the memory tool can tell when a file summary is out of date. */
+    projectPath: string
+    /** Relevant memories, recent hand-offs and the user's own words, ahead of the task. */
+    context?: string
   }
 }
 
@@ -153,7 +159,14 @@ export async function runCodexExec(
   // outside the project folder was denied), regardless of this machine's
   // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
   const prompt = args.memory
-    ? `${CODEX_MEMORY_INSTRUCTIONS}\n\nKey facts:\n${args.memory.keyFacts ?? '(none yet)'}\n\n${args.prompt}`
+    ? [
+        CODEX_MEMORY_INSTRUCTIONS,
+        `Key facts:\n${args.memory.keyFacts ?? '(none yet)'}`,
+        args.memory.context,
+        args.memory.context ? `Task from Claude:\n${args.prompt}` : args.prompt
+      ]
+        .filter(Boolean)
+        .join('\n\n')
     : args.prompt
 
   const cliArgs = [
@@ -180,6 +193,10 @@ export async function runCodexExec(
   if (args.ephemeral) {
     cliArgs.push('--ephemeral')
   }
+  for (const image of args.images ?? []) {
+    // --image=<file> takes exactly one value, so it can't swallow the prompt placeholder.
+    cliArgs.push(`--image=${image}`)
+  }
   if (args.outputSchema) {
     const schemaPath = join(tempDir, 'schema.json')
     writeFileSync(schemaPath, JSON.stringify(args.outputSchema), 'utf-8')
@@ -199,7 +216,7 @@ export async function runCodexExec(
       '-c',
       `mcp_servers.vibe_memory.args=["${toForwardSlash(args.memory.scriptPath)}","${toForwardSlash(
         args.memory.dbPath
-      )}","${args.memory.projectId}","codex"]`,
+      )}","${args.memory.projectId}","codex","${toForwardSlash(args.memory.projectPath)}"]`,
       '-c',
       'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}'
     )

@@ -156,6 +156,22 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.codeMap}
+            onChange={(e) => onSettingsChange({ codeMap: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Keep a map of your code
+            <small>
+              Haiku writes a one-line summary of each source file (only for files that changed), so Claude and
+              Codex can find where things live with one search instead of exploring the project. Uses a little
+              Claude usage in the background after requests.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.codexReview}
             onChange={(e) => onSettingsChange({ codexReview: e.target.checked }).catch(() => undefined)}
           />

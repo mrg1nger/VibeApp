@@ -10,6 +10,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
+import { join } from 'path'
 import {
   GLOBAL_SCOPE,
   openMemory,
@@ -18,16 +19,29 @@ import {
   rememberFact,
   updateFact,
   forgetFact,
-  getFact
+  getFact,
+  searchMessages,
+  recentMessages,
+  recentHandoffs,
+  searchCode,
+  countCodeFiles,
+  hashFile
 } from './store'
 
 const dbPath = process.argv[2]
 const projectId = process.argv[3]
 const agentSource = process.argv[4] ?? 'claude'
+// Used to tell whether a file summary is out of date.
+const projectPath = process.argv[5] ?? ''
 
 if (!dbPath || !projectId) {
-  process.stderr.write('Usage: memoryServer <dbPath> <projectId> <agentSource>\n')
+  process.stderr.write('Usage: memoryServer <dbPath> <projectId> <agentSource> [projectPath]\n')
   process.exit(1)
+}
+
+const oneLine = (value, max) => {
+  const flat = String(value ?? '').replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
 }
 
 const db = openMemory(dbPath)
@@ -118,6 +132,75 @@ server.registerTool(
   async ({ id, reason }) => {
     if (!ownFact(id)) return text(`No remembered fact with id ${id}.`)
     return text(forgetFact(db, id, `${agentSource}: ${reason}`) ? `Forgot ${id}.` : `${id} was already forgotten.`)
+  }
+)
+
+server.registerTool(
+  'history',
+  {
+    description:
+      'Look back at this project\'s conversation: what the user asked for and what was answered. Pass a few words to search ("shop screen", "login"), or nothing for the most recent messages. Useful for the user\'s exact wording, earlier decisions, and details that fell out of your working context.',
+    inputSchema: {
+      query: z.string().optional().describe('A few words about what you want to find.'),
+      limit: z.number().int().min(1).max(20).optional().describe('How many messages (default 8).')
+    }
+  },
+  async ({ query, limit }) => {
+    const max = limit ?? 8
+    const found = query?.trim() ? searchMessages(db, projectId, query, max) : recentMessages(db, projectId, max)
+    if (!found.length) return text(query?.trim() ? `No past messages match "${query}".` : 'No conversation history yet.')
+    const lines = found.map((m) => {
+      const when = m.createdAt ? ` ${m.createdAt.slice(0, 10)}` : ''
+      const note = m.note ? ` {${oneLine(m.note, 120)}}` : ''
+      return `[${m.role}${when}]${note} ${oneLine(m.text, query?.trim() ? 700 : 500)}`
+    })
+    return text(`${query?.trim() ? `Messages matching "${query}"` : 'Most recent messages'} (oldest first):\n${lines.join('\n')}`)
+  }
+)
+
+server.registerTool(
+  'handoffs',
+  {
+    description:
+      'See what earlier hand-offs from Claude to Codex did in this project: the task, the result, and which files changed.',
+    inputSchema: {
+      limit: z.number().int().min(1).max(15).optional().describe('How many (default 5), newest last.')
+    }
+  },
+  async ({ limit }) => {
+    const items = recentHandoffs(db, projectId, limit ?? 5)
+    if (!items.length) return text('No hand-offs yet in this project.')
+    return text(
+      items
+        .map((h) => {
+          const files = h.files?.length ? `\n  files: ${h.files.slice(0, 12).join(', ')}${h.files.length > 12 ? '…' : ''}` : ''
+          return `#${h.id} [${h.status}] ${h.startedAt.slice(0, 16).replace('T', ' ')} - task: ${oneLine(h.brief, 300)}\n  result: ${oneLine(h.report ?? '(none)', 900)}${files}`
+        })
+        .join('\n')
+    )
+  }
+)
+
+server.registerTool(
+  'where',
+  {
+    description:
+      'Find which files in this project hold something. Searches a map of the source files, each with a one-line summary. Use it before grepping the code: e.g. "collision", "login form", "enemy sprites". Summaries can lag behind recent edits; entries marked changed need a quick look at the file.',
+    inputSchema: {
+      query: z.string().describe('A few words about what you are looking for.')
+    }
+  },
+  async ({ query }) => {
+    const total = countCodeFiles(db, projectId)
+    if (!total) return text('The code map is not built yet (it is built in the background after the first request). Search the files directly.')
+    const found = searchCode(db, projectId, query, 10)
+    if (!found.length) return text(`No file summaries match "${query}" (${total} files mapped). Try other words, or search the files directly.`)
+    const lines = found.map((f) => {
+      const current = projectPath ? hashFile(join(projectPath, f.path)) : f.hash
+      const stale = current !== null && current !== f.hash ? ' (changed since this summary was written)' : ''
+      return `- ${f.path}: ${f.summary}${stale}`
+    })
+    return text(`Files matching "${query}":\n${lines.join('\n')}`)
   }
 )
 

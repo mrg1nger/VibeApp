@@ -38,6 +38,16 @@ function friendlyToolLabel(name: string, input: unknown): string {
     }
     case 'mcp__vibe_memory__remember':
       return `Remembered: ${(input as { fact?: string })?.fact ?? 'a fact'}`
+    case 'mcp__vibe_memory__where': {
+      const q = (input as { query?: string })?.query?.trim()
+      return q ? `Looked up where: ${q}` : 'Looked up the code map'
+    }
+    case 'mcp__vibe_memory__history': {
+      const q = (input as { query?: string })?.query?.trim()
+      return q ? `Searched the conversation: ${q}` : 'Looked back at the conversation'
+    }
+    case 'mcp__vibe_memory__handoffs':
+      return 'Checked earlier hand-offs'
     case 'mcp__vibe_memory__update':
       return (input as { fact?: string })?.fact ? `Updated memory: ${(input as { fact: string }).fact}` : 'Updated a memory'
     case 'mcp__vibe_memory__forget':

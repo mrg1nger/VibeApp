@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdirSync, readFileSync, readdirSync } from 'fs'
+import { createHash } from 'crypto'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact } from '@shared/types'
 
@@ -12,7 +13,7 @@ import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact } from '@shared
 /** Facts in the global scope apply to every project. */
 export const GLOBAL_SCOPE = 'global'
 
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -45,6 +46,62 @@ CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE OF text ON facts BEGIN
   INSERT INTO facts_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- The conversation: what the user asked and what the agents answered.
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_project ON messages(project_id, id);
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  text, note, content='messages', content_rowid='id', tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, text, note) VALUES (new.id, new.text, new.note);
+END;
+
+-- Work handed from Claude to another agent, and what came back.
+CREATE TABLE IF NOT EXISTS handoffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  agent TEXT NOT NULL DEFAULT 'codex',
+  brief TEXT NOT NULL,
+  request TEXT,
+  report TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  files TEXT,
+  started_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS handoffs_project ON handoffs(project_id, id);
+
+-- A one-line summary of each source file, so agents can find where things live.
+CREATE TABLE IF NOT EXISTS code_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(project_id, path)
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS code_fts USING fts5(
+  path, summary, content='code_files', content_rowid='id', tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS code_ai AFTER INSERT ON code_files BEGIN
+  INSERT INTO code_fts(rowid, path, summary) VALUES (new.id, new.path, new.summary);
+END;
+CREATE TRIGGER IF NOT EXISTS code_ad AFTER DELETE ON code_files BEGIN
+  INSERT INTO code_fts(code_fts, rowid, path, summary) VALUES ('delete', old.id, old.path, old.summary);
+END;
+CREATE TRIGGER IF NOT EXISTS code_au AFTER UPDATE OF summary, path ON code_files BEGIN
+  INSERT INTO code_fts(code_fts, rowid, path, summary) VALUES ('delete', old.id, old.path, old.summary);
+  INSERT INTO code_fts(rowid, path, summary) VALUES (new.id, new.path, new.summary);
+END;
 `
 
 const databases = new Map<string, DatabaseSync>()
@@ -420,4 +477,310 @@ export function importLegacyMemory(db: DatabaseSync, globalJson: string, project
     setMeta(db, 'legacy_imported', now())
   })
   return imported
+}
+
+// ---- relevant facts, pre-fetched ---------------------------------------------
+
+/**
+ * Facts that look relevant to a request, for putting in front of an agent
+ * so it doesn't have to spend a tool call searching. Key facts are left out
+ * (they're already in the agent's instructions). A match must share at
+ * least two meaningful words with the request (one, for very short ones):
+ * a single common word shouldn't pull in unrelated facts.
+ */
+export function relevantFacts(db: DatabaseSync, projectId: string, text: string, limit = 5): MemoryFact[] {
+  const match = ftsQuery(text)
+  if (!match) return []
+  const asked = new Set(stems(text))
+  const rows = db
+    .prepare(
+      `SELECT facts.* FROM facts_fts JOIN facts ON facts.rowid = facts_fts.rowid
+       WHERE facts_fts MATCH ? AND facts.forgotten_at IS NULL AND facts.key = 0 AND facts.scope IN (?, ?)
+       ORDER BY bm25(facts_fts) LIMIT 20`
+    )
+    .all(match, projectId, GLOBAL_SCOPE) as unknown as FactRow[]
+  if (!rows.length) return []
+  const everything = db
+    .prepare('SELECT text FROM facts WHERE forgotten_at IS NULL AND scope IN (?, ?)')
+    .all(projectId, GLOBAL_SCOPE) as { text: string }[]
+  const df = docFrequency(everything.map((r) => r.text))
+  const picked = rows
+    .filter((row) => strongMatch(asked, stems(row.text), df, everything.length))
+    .slice(0, limit)
+  markUsed(
+    db,
+    picked.map((r) => r.id)
+  )
+  return picked.map(toFact)
+}
+
+// ---- the conversation --------------------------------------------------------
+
+export interface StoredMessage {
+  id: number
+  role: 'user' | 'assistant'
+  text: string
+  note: string | null
+  /** ISO time, or '' for messages moved over from older chat logs. */
+  createdAt: string
+}
+
+interface MessageRow {
+  id: number
+  role: string
+  text: string
+  note: string | null
+  created_at: string
+}
+
+function toMessage(row: MessageRow): StoredMessage {
+  return {
+    id: row.id,
+    role: row.role as StoredMessage['role'],
+    text: row.text,
+    note: row.note,
+    createdAt: row.created_at
+  }
+}
+
+const MESSAGE_CHARS = 8000
+
+export function addMessage(
+  db: DatabaseSync,
+  projectId: string,
+  role: StoredMessage['role'],
+  text: string,
+  note?: string | null,
+  createdAt: string = now()
+): void {
+  const clean = text.trim()
+  if (!clean) return
+  db.prepare('INSERT INTO messages (project_id, role, text, note, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    projectId,
+    role,
+    clean.slice(0, MESSAGE_CHARS),
+    note?.slice(0, 1000) ?? null,
+    createdAt
+  )
+}
+
+export function searchMessages(db: DatabaseSync, projectId: string, text: string, limit = 8): StoredMessage[] {
+  const match = ftsQuery(text)
+  if (!match) return []
+  const rows = db
+    .prepare(
+      `SELECT messages.* FROM messages_fts JOIN messages ON messages.id = messages_fts.rowid
+       WHERE messages_fts MATCH ? AND messages.project_id = ?
+       ORDER BY bm25(messages_fts) LIMIT ?`
+    )
+    .all(match, projectId, limit) as unknown as MessageRow[]
+  // Newest last, as in a conversation.
+  return rows.map(toMessage).sort((a, b) => a.id - b.id)
+}
+
+export function recentMessages(db: DatabaseSync, projectId: string, limit = 8): StoredMessage[] {
+  const rows = db
+    .prepare('SELECT * FROM messages WHERE project_id = ? ORDER BY id DESC LIMIT ?')
+    .all(projectId, limit) as unknown as MessageRow[]
+  return rows.map(toMessage).reverse()
+}
+
+export function countMessages(db: DatabaseSync, projectId: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM messages WHERE project_id = ?').get(projectId) as { n: number }).n
+}
+
+// ---- hand-offs ---------------------------------------------------------------
+
+export interface Handoff {
+  id: number
+  agent: string
+  brief: string
+  request: string | null
+  report: string | null
+  status: 'running' | 'done' | 'error' | 'stopped'
+  files: string[] | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+interface HandoffRow {
+  id: number
+  agent: string
+  brief: string
+  request: string | null
+  report: string | null
+  status: string
+  files: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+function toHandoff(row: HandoffRow): Handoff {
+  let files: string[] | null = null
+  try {
+    files = row.files ? (JSON.parse(row.files) as string[]) : null
+  } catch {
+    files = null
+  }
+  return {
+    id: row.id,
+    agent: row.agent,
+    brief: row.brief,
+    request: row.request,
+    report: row.report,
+    status: row.status as Handoff['status'],
+    files,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at
+  }
+}
+
+export function startHandoff(
+  db: DatabaseSync,
+  projectId: string,
+  agent: string,
+  brief: string,
+  request: string | null
+): number {
+  const result = db
+    .prepare('INSERT INTO handoffs (project_id, agent, brief, request, started_at) VALUES (?, ?, ?, ?, ?)')
+    .run(projectId, agent, brief.slice(0, 6000), request?.slice(0, 2000) ?? null, now())
+  return Number(result.lastInsertRowid)
+}
+
+export function finishHandoff(
+  db: DatabaseSync,
+  id: number,
+  result: { status: Handoff['status']; report: string; files: string[] | null }
+): void {
+  db.prepare('UPDATE handoffs SET status = ?, report = ?, files = ?, finished_at = ? WHERE id = ?').run(
+    result.status,
+    result.report.slice(0, 12000),
+    result.files ? JSON.stringify(result.files.slice(0, 200)) : null,
+    now(),
+    id
+  )
+}
+
+export function recentHandoffs(db: DatabaseSync, projectId: string, limit = 3): Handoff[] {
+  const rows = db
+    .prepare("SELECT * FROM handoffs WHERE project_id = ? AND status != 'running' ORDER BY id DESC LIMIT ?")
+    .all(projectId, limit) as unknown as HandoffRow[]
+  return rows.map(toHandoff).reverse()
+}
+
+/** A run left "running" by a crash or quit is closed off at startup. */
+export function closeStaleHandoffs(db: DatabaseSync): void {
+  db.prepare(
+    "UPDATE handoffs SET status = 'stopped', report = 'Interrupted before it finished.', finished_at = ? WHERE status = 'running'"
+  ).run(now())
+}
+
+// ---- code map -----------------------------------------------------------------
+
+export interface CodeFile {
+  path: string
+  summary: string
+  hash: string
+}
+
+export function hashFile(fullPath: string): string | null {
+  try {
+    if (statSync(fullPath).size > 400_000) return null
+    return createHash('sha1').update(readFileSync(fullPath)).digest('hex')
+  } catch {
+    return null
+  }
+}
+
+export function codeHashes(db: DatabaseSync, projectId: string): Map<string, string> {
+  const rows = db.prepare('SELECT path, hash FROM code_files WHERE project_id = ?').all(projectId) as {
+    path: string
+    hash: string
+  }[]
+  return new Map(rows.map((r) => [r.path, r.hash]))
+}
+
+export function saveCodeSummaries(db: DatabaseSync, projectId: string, files: CodeFile[]): void {
+  const stmt = db.prepare(
+    `INSERT INTO code_files (project_id, path, summary, hash, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, path) DO UPDATE SET summary = excluded.summary, hash = excluded.hash, updated_at = excluded.updated_at`
+  )
+  const at = now()
+  transaction(db, () => {
+    for (const f of files) stmt.run(projectId, f.path, f.summary.slice(0, 240), f.hash, at)
+  })
+}
+
+export function removeCodeFiles(db: DatabaseSync, projectId: string, paths: string[]): void {
+  const stmt = db.prepare('DELETE FROM code_files WHERE project_id = ? AND path = ?')
+  transaction(db, () => {
+    for (const p of paths) stmt.run(projectId, p)
+  })
+}
+
+export function countCodeFiles(db: DatabaseSync, projectId: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM code_files WHERE project_id = ?').get(projectId) as { n: number }).n
+}
+
+export function searchCode(db: DatabaseSync, projectId: string, text: string, limit = 8): CodeFile[] {
+  const match = ftsQuery(text)
+  if (!match) return []
+  return db
+    .prepare(
+      `SELECT code_files.path, code_files.summary, code_files.hash FROM code_fts
+       JOIN code_files ON code_files.id = code_fts.rowid
+       WHERE code_fts MATCH ? AND code_files.project_id = ? ORDER BY bm25(code_fts) LIMIT ?`
+    )
+    .all(match, projectId, limit) as unknown as CodeFile[]
+}
+
+/** Files from a search that really relate to the request (same bar as relevantFacts). */
+export function relevantCode(db: DatabaseSync, projectId: string, text: string, limit = 5): CodeFile[] {
+  const asked = new Set(stems(text))
+  const candidates = searchCode(db, projectId, text, 15)
+  if (!candidates.length) return []
+  const describe = (f: { path: string; summary: string }): string => `${f.path.replace(/[\\/._-]+/g, ' ')} ${f.summary}`
+  const everything = db
+    .prepare('SELECT path, summary FROM code_files WHERE project_id = ?')
+    .all(projectId) as { path: string; summary: string }[]
+  const df = docFrequency(everything.map(describe))
+  return candidates
+    .filter((f) => strongMatch(asked, stems(describe(f)), df, everything.length))
+    .slice(0, limit)
+}
+
+// ---- deciding what counts as relevant -------------------------------------------
+
+/** Crude plural/verb folding, for comparing words ("enemies" ~ "enemy", "sprites" ~ "sprite"). */
+function stem(word: string): string {
+  if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`
+  if (word.length > 4 && /(sses|xes|ches|shes)$/.test(word)) return word.slice(0, -2)
+  if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1)
+  return word
+}
+
+function stems(text: string): string[] {
+  return words(text).map(stem)
+}
+
+/** In how many of these texts each word appears. */
+function docFrequency(texts: string[]): Map<string, number> {
+  const df = new Map<string, number>()
+  for (const t of texts) for (const w of new Set(stems(t))) df.set(w, (df.get(w) ?? 0) + 1)
+  return df
+}
+
+/**
+ * Whether an item really relates to the request: it shares two meaningful
+ * words, or one that's distinctive here (rare among this project's own
+ * facts or files) -- "slime" counts, "game" doesn't. A one- or two-word
+ * request is taken at its word.
+ */
+function strongMatch(asked: Set<string>, item: string[], df: Map<string, number>, total: number): boolean {
+  const shared = [...new Set(item)].filter((w) => asked.has(w))
+  if (shared.length >= 2) return true
+  if (shared.length === 1 && asked.size <= 2) return true
+  const rareLimit = Math.max(2, Math.floor(total * 0.15))
+  return shared.some((w) => w.length >= 4 && (df.get(w) ?? 0) <= rareLimit)
 }

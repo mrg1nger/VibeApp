@@ -61,6 +61,8 @@ import {
 } from '../memory/store'
 import { memoryDb } from '../memory/paths'
 import { tidyMemory, maybeTidy } from '../memory/tidy'
+import { maybeRefreshCodeMap } from '../memory/codeMap'
+import { prefetchBlock, recordAssistantMessage, recordUserMessage } from '../memory/context'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
@@ -219,8 +221,26 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
           detail: route.detail
         } satisfies VibeEvent)
       }
+      // The user's own words, for Codex hand-offs and for searching later.
+      const element = picked ? pickedNote(picked) : undefined
+      session.setRequestContext({ text, element, images: prepared.map((p) => p.savedPath) })
+      recordUserMessage(
+        projectId,
+        text,
+        [picked ? describePicked(picked) : '', ...prepared.map((p) => `image: ${p.savedPath}`)]
+          .filter(Boolean)
+          .join('; ')
+      )
+      // Remembered facts and files that look related, found by a local
+      // search (free), so Claude doesn't need a tool call to look them up.
+      // Quick requests get it too: "which size are the slimes?" is quick,
+      // and exactly where memory helps.
+      const relevant = prefetchBlock(projectId, text)
+      // First request in a project: start mapping the code now, in the background.
+      maybeRefreshCodeMap(projectId, projectPath)
       const message = [
         route.note,
+        relevant,
         picked ? pickedNote(picked) : undefined,
         prepared.length ? imagesNote(prepared) : undefined,
         text
@@ -465,10 +485,14 @@ function wireSessionEvents(
     handleSessionEvent(projectId, session, event, (forwarded) => {
       appendEvent(projectId, forwarded)
       getSender()?.send('vibe:chat:event', projectId, forwarded)
-      // Between requests is a good moment to tidy memory, if it needs it.
+      if (forwarded.type === 'assistant_text') recordAssistantMessage(projectId, forwarded.text)
+      // Between requests is a good moment to tidy memory and refresh the
+      // code map, if they need it.
       if (forwarded.type === 'turn_complete') {
         maybeTidy(projectId)
         maybeTidy(GLOBAL_SCOPE)
+        const path = getProject(projectId)?.path
+        if (path) maybeRefreshCodeMap(projectId, path)
       }
     })
   })

@@ -14,6 +14,8 @@ export interface RouteDecision {
   note?: string
   /** Too small to be worth a Codex review. */
   skipReview: boolean
+  /** How big Haiku (or the keyword rules) judged the request to be. */
+  size: 'quick' | 'normal' | 'complex'
 }
 
 /** Below this share of a plan window left, start saving Claude usage. */
@@ -49,7 +51,7 @@ export async function routeMessage(
   settings: AppSettings,
   context: { images?: number; pointedAt?: boolean } = {}
 ): Promise<RouteDecision> {
-  if (!settings.smartRouting) return { model: null, skipReview: false }
+  if (!settings.smartRouting) return { model: null, skipReview: false, size: 'normal' }
   const images = context.images ?? 0
   const labelled = settings.aiRouting ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt }) : null
   const request = labelled ?? keywordClassification(text, images)
@@ -75,7 +77,11 @@ export async function routeMessage(
     notes.push(`Claude plan usage is low (${Math.round(claudeLeft)}% left). Delegate implementation work to Codex with run_codex_subtask wherever it's reasonable, and keep your own work to planning, coordination and review.`)
   }
   // Checking and saving memory would cost more than a quick edit itself.
-  if (request.size === 'quick') notes.push('This is a quick edit: skip the memory tools.')
+  if (request.size === 'quick') {
+    notes.push(
+      "This looks like a quick request: don't save anything to memory, and only search memory if the answer depends on something remembered."
+    )
+  }
   const note = notes.length ? `[VibeApp note: ${notes.join(' ')}]` : undefined
 
   // Which Claude model.
@@ -120,6 +126,7 @@ export async function routeMessage(
         ? 'Keyword rules (Haiku was unavailable)'
         : 'Keyword rules',
     note,
-    skipReview: request.size === 'quick'
+    skipReview: request.size === 'quick',
+    size: request.size
   }
 }

@@ -33,6 +33,8 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Loose ends to check
 
+- [ ] **Measure what the shared context saves.** Pre-fetch removed the memory lookup in a test question, and a code map of 5 files built in under a minute, but token savings across real sessions and the Haiku cost of mapping a large project haven't been measured.
+- [ ] **Code map accuracy on big projects.** Capped at 600 files, 80 summarised per run, only the first ~1,200 characters of each file are read; large or unusual projects may be mapped partially.
 - [ ] **Real GitHub backup.** Vercel publishing is confirmed working on the VM; the GitHub side (install, sign-in, first push) hasn't had a real run.
 - [ ] **No window flashes during Codex reviews and hand-offs.** Fixed for the usage check; not yet tested while Codex runs its own commands.
 - [ ] **Allow/Deny banner queue.** The logic is tested, but nobody has clicked through two stacked requests in the app.
@@ -56,6 +58,7 @@ Dropped:
 - [x] Accounts: install and sign in to Claude Code, Codex, Node and Git from inside the app
 - [x] Projects with automatic git, checkpoints, history and restore
 - [x] Claude hands tasks to Codex; shared project and global memory
+- [x] Shared context database (conversation history, hand-off log, code map): relevant facts and files pre-fetched into each request; Codex gets the user's own words, pasted images and recent hand-offs automatically; `history`, `handoffs` and `where` tools for both agents
 - [x] Memory v2 on SQLite: key facts given up front, the rest searchable; Claude and Codex can update and forget facts; duplicates merge; Haiku tidy-up sorts, merges and retires outdated facts (restorable); quick edits skip memory
 - [x] Go Nutz mode, destructive-command confirmations, MCP servers loaded on the fly
 - [x] Model picker, themes (Midnight, Sakura Neon), theme generator and theme files

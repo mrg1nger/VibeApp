@@ -245,6 +245,8 @@ export interface AppSettings {
   smartRouting: boolean
   /** Let Haiku label each request (size, and how much suits Codex) instead of keyword rules. */
   aiRouting: boolean
+  /** Keep a one-line summary of every source file, so agents can find where things live. */
+  codeMap: boolean
   /** Let smart switching go above the chosen model (to Opus) for complex requests. Off: the chosen model is a ceiling. */
   stepUpForComplex: boolean
   /** Have Codex review Claude's code changes after each request. */
