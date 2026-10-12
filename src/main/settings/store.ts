@@ -9,6 +9,7 @@ const DEFAULTS: AppSettings = {
   themeId: 'midnight',
   smartRouting: true,
   aiRouting: true,
+  stepUpForComplex: false,
   codexReview: true
 }
 

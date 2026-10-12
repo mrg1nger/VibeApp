@@ -114,9 +114,25 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Smart model switching
             <small>
-              Uses Haiku for quick edits, steps up to Opus for complex requests if you picked a lighter model,
-              switches to Sonnet when your Claude plan runs low, and hands suitable work to Codex (less when
-              Codex is running low). Chats show a ⚡ badge when it steps in; hover it to see why.
+              Never goes above the model you chose. Uses Haiku for quick edits, switches to Sonnet when your
+              Claude plan runs low, and hands suitable work to Codex (less when Codex is running low). Chats
+              show a ⚡ badge when it steps in; hover it to see why.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle settings-subtoggle">
+          <input
+            type="checkbox"
+            checked={settings.stepUpForComplex}
+            disabled={!settings.smartRouting}
+            onChange={(e) => onSettingsChange({ stepUpForComplex: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Step up to Opus for complex requests
+            <small>
+              Only matters if you chose a lighter model (Sonnet or Haiku-class): complex requests use Opus
+              instead. Uses more of your Claude plan. Off: your chosen model is the most that's ever used.
             </small>
           </span>
         </label>

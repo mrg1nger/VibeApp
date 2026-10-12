@@ -88,7 +88,8 @@ export async function routeMessage(
       model = 'haiku'
       modelLabel = 'Haiku'
       modelReason = 'quick edit'
-    } else if (request.size === 'complex' && baseline && CHEAP_MODELS.test(baseline)) {
+    } else if (request.size === 'complex' && settings.stepUpForComplex && baseline && CHEAP_MODELS.test(baseline)) {
+      // Opt-in only: the model the user picked is otherwise a ceiling.
       model = 'opus'
       modelLabel = 'Opus'
       modelReason = 'complex request'
