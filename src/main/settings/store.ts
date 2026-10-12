@@ -4,6 +4,7 @@ import { join } from 'path'
 import type { AppSettings } from '@shared/types'
 
 const DEFAULTS: AppSettings = {
+  agentBalance: 'auto',
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',

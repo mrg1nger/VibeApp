@@ -1,6 +1,7 @@
 import type { AppSettings } from '@shared/types'
 import { peekUsage, percentLeft } from '../usage/usage'
 import { requestClassifier, type Classification } from './classifier'
+import { BALANCE_LABELS, applyBalance, leanFor, stepOfLean } from '@shared/balance'
 
 export interface RouteDecision {
   /** Model to use for this message; null = the user's chosen model (or account default). */
@@ -41,6 +42,9 @@ function keywordClassification(text: string, images: number): Classification {
 
 const CHEAP_MODELS = /haiku|sonnet/i
 
+const CODEX_LED_NOTE =
+  "The user has set VibeApp to Codex-led: you plan and review, Codex builds. Work out what's needed, then call run_codex_subtask with a clear spec and acceptance criteria and let Codex write the code; don't write it yourself except small fixes after you've reviewed Codex's result."
+
 const CODEX_NOTES = {
   most: 'This request is mostly straightforward implementation, so Codex should build it: plan the work, then call run_codex_subtask with a clear spec and acceptance criteria before writing the code yourself. Afterwards, review what Codex did and fix anything off.',
   some: 'Part of this request is independent and well-scoped. Consider handing that part to Codex with run_codex_subtask while you do the rest; skip it if doing it yourself is clearly quicker.'
@@ -64,17 +68,26 @@ export async function routeMessage(
   const claudeLow = claudeLeft !== undefined && claudeLeft < CLAUDE_LOW
   const codexLow = codexLeft !== undefined && codexLeft < CODEX_LOW
 
-  // How much goes to Codex: Haiku's call, adjusted for what each plan has left.
-  let codex = request.codex
+  // How much goes to Codex: Haiku's call, shifted by the user's slider (or,
+  // on Auto, by which plan has more left), then adjusted for plans that are
+  // nearly used up.
+  const balance = settings.agentBalance ?? 'auto'
+  const lean = leanFor(balance, claudeLeft, codexLeft)
+  let codex = applyBalance(request.codex, request.size, lean)
   if (codexLow) codex = 'none'
   else if (claudeLow && codex === 'some') codex = 'most'
 
   const notes: string[] = []
   if (codexLow) {
     notes.push(`Codex plan usage is nearly used up (${Math.round(codexLeft)}% left). Don't delegate to Codex for this request; do the work yourself.`)
+  } else if (codex === 'most' && lean >= 2) {
+    notes.push(CODEX_LED_NOTE)
   } else if (codex !== 'none') {
     notes.push(CODEX_NOTES[codex])
+    if (lean >= 1 && codex === 'some') notes.push('The user prefers that you lean on Codex, so hand that part over.')
     if (claudeLow) notes.push(`Claude plan usage is also low (${Math.round(claudeLeft)}% left), so lean on Codex.`)
+  } else if (lean <= -1 && request.size !== 'quick') {
+    notes.push('The user prefers that you do the work yourself rather than hand it to Codex.')
   } else if (claudeLow && codexLeft !== undefined && request.size !== 'quick') {
     notes.push(`Claude plan usage is low (${Math.round(claudeLeft)}% left). Delegate implementation work to Codex with run_codex_subtask wherever it's reasonable, and keep your own work to planning, coordination and review.`)
   }
@@ -101,6 +114,17 @@ export async function routeMessage(
       model = 'opus'
       modelLabel = 'Opus'
       modelReason = 'complex request'
+    } else if (
+      // Codex is doing the building, so Claude only plans and reviews: a
+      // lighter model is enough. Only ever downward from the user's choice.
+      lean >= 1 &&
+      codex === 'most' &&
+      request.size === 'normal' &&
+      !(baseline && CHEAP_MODELS.test(baseline))
+    ) {
+      model = 'sonnet'
+      modelLabel = 'Sonnet'
+      modelReason = 'Codex is building it'
     } else if (request.size === 'normal' && claudeLow && !(baseline && CHEAP_MODELS.test(baseline))) {
       model = 'sonnet'
       modelLabel = 'Sonnet'
@@ -122,11 +146,13 @@ export async function routeMessage(
         : codex === 'some'
           ? 'suggested for a part'
           : undefined,
-    detail: labelled
-      ? `Haiku: ${request.size}${request.reason ? ` (${request.reason})` : ''}`
-      : settings.aiRouting
-        ? 'Keyword rules (Haiku was unavailable)'
-        : 'Keyword rules',
+    detail: `${
+      labelled
+        ? `Haiku: ${request.size}${request.reason ? ` (${request.reason})` : ''}`
+        : settings.aiRouting
+          ? 'Keyword rules (Haiku was unavailable)'
+          : 'Keyword rules'
+    }${lean !== 0 ? ` · balance: ${BALANCE_LABELS[stepOfLean(lean)]}${balance === 'auto' ? ' (auto)' : ''}` : ''}`,
     note,
     skipReview: request.size === 'quick',
     size: request.size

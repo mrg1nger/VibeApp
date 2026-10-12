@@ -108,7 +108,11 @@ function App() {
             Settings
           </button>
         </div>
-        <UsageMeters statuses={statuses} />
+        <UsageMeters
+          statuses={statuses}
+          balance={settings?.agentBalance ?? 'auto'}
+          onBalanceChange={(agentBalance) => changeSettings({ agentBalance }).catch(() => undefined)}
+        />
       </div>
 
       {screen === 'accounts' && <AccountsView statuses={statuses} onRefresh={refreshStatus} />}

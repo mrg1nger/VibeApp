@@ -18,6 +18,10 @@ interface TurnContext {
   skipReview: boolean
   phase: 'main' | 'reviewing' | 'fixing'
   hadError: boolean
+  /** Claude handed work to Codex during this request. */
+  delegated: boolean
+  /** Claude edited files itself (not just via Codex). */
+  claudeEdited: boolean
   abort?: AbortController
   /** Emits the held-back turn_complete (used by "Skip review"). */
   finishNow?: () => void
@@ -25,12 +29,15 @@ interface TurnContext {
 
 const turns = new Map<string, TurnContext>()
 
+/** Claude's own file-editing tools (as opposed to work done through a Codex hand-off). */
+const EDIT_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+
 export function beginTurn(
   projectId: string,
   context: Pick<TurnContext, 'projectPath' | 'request' | 'snapshot' | 'skipReview'>
 ): void {
   turns.get(projectId)?.abort?.abort()
-  turns.set(projectId, { ...context, phase: 'main', hadError: false })
+  turns.set(projectId, { ...context, phase: 'main', hadError: false, delegated: false, claudeEdited: false })
 }
 
 function reviewAllowed(): boolean {
@@ -56,6 +63,10 @@ export function handleSessionEvent(
   const turn = turns.get(projectId)
   // An error or a Stop leaves a half-finished change: not worth reviewing.
   if (turn && (event.type === 'error' || event.type === 'stopped')) turn.hadError = true
+  if (turn && event.type === 'tool_call') {
+    if (event.name === 'mcp__vibe_tools__run_codex_subtask') turn.delegated = true
+    else if (EDIT_TOOLS.has(event.name)) turn.claudeEdited = true
+  }
 
   if (event.type !== 'turn_complete' || !turn || turn.phase === 'reviewing') {
     forward(event)
@@ -66,8 +77,17 @@ export function handleSessionEvent(
     forward(event)
     return
   }
+  // Codex built it (and Claude changed nothing itself): Codex reviewing its
+  // own work wouldn't be independent. Claude has already reviewed the diff
+  // and the automatic checks have run, so save the Codex plan.
+  const codexBuiltIt = turn.delegated && !turn.claudeEdited
   const wantReview =
-    turn.phase === 'main' && !turn.skipReview && !turn.hadError && !session.isDead() && reviewAllowed()
+    turn.phase === 'main' &&
+    !turn.skipReview &&
+    !turn.hadError &&
+    !codexBuiltIt &&
+    !session.isDead() &&
+    reviewAllowed()
 
   turn.phase = 'reviewing'
   const abort = new AbortController()

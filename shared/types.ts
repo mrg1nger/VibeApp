@@ -1,3 +1,5 @@
+import type { AgentBalance } from './balance'
+
 export type CliName = 'claude' | 'codex'
 
 export type AuthStatus = 'checking' | 'logged_in' | 'logged_out' | 'not_installed'
@@ -240,6 +242,8 @@ export interface ThemeDefinition {
 }
 
 export interface AppSettings {
+  /** How work leans between Claude and Codex ("auto" follows which plan has more left). */
+  agentBalance: AgentBalance
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */
