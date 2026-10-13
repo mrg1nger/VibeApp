@@ -1,6 +1,6 @@
 import { app, safeStorage } from 'electron'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { join, resolve, sep } from 'path'
 import type { ExtensionDraft, ExtensionInfo } from '@shared/types'
 import { RESERVED_ENV_NAMES, SECRET_NAME } from '@shared/secretPatterns'
 
@@ -9,7 +9,8 @@ import { RESERVED_ENV_NAMES, SECRET_NAME } from '@shared/secretPatterns'
 // of any keys they need are encrypted with the Windows account's key, like
 // project secrets.
 
-interface StoredExtension extends Omit<ExtensionInfo, 'envNames'> {
+interface StoredExtension extends Omit<ExtensionInfo, 'envNames' | 'needsKeys'> {
+  needsKeys?: string[]
   /** Base64 of the safeStorage-encrypted JSON of the env values. */
   env: string
 }
@@ -64,7 +65,8 @@ function cleanEnv(env: Record<string, string>): Record<string, string> {
 
 function toInfo(e: StoredExtension): ExtensionInfo {
   const { env, ...rest } = e
-  return { ...rest, envNames: Object.keys(decryptEnv(env)) }
+  const have = Object.keys(decryptEnv(env))
+  return { ...rest, envNames: have, needsKeys: (e.needsKeys ?? []).filter((n) => !have.includes(n)) }
 }
 
 function slug(name: string): string {
@@ -77,6 +79,14 @@ function slug(name: string): string {
   )
 }
 
+/** A name unused by any installed extension, for choosing a folder before adding it. */
+export function freeId(name: string): string {
+  const taken = new Set(readAll().map((e) => e.id))
+  let id = slug(name)
+  for (let n = 2; taken.has(id); n++) id = `${slug(name)}_${n}`
+  return id
+}
+
 export function listExtensions(): ExtensionInfo[] {
   return readAll().map(toInfo)
 }
@@ -87,9 +97,7 @@ export function addExtension(draft: ExtensionDraft): ExtensionInfo {
   if (!name) throw new Error('Give the extension a name.')
   if (!command) throw new Error('Say which program runs the extension.')
   const list = readAll()
-  const taken = new Set(list.map((e) => e.id))
-  let id = slug(name)
-  for (let n = 2; taken.has(id); n++) id = `${slug(name)}_${n}`
+  const id = freeId(name)
   const stored: StoredExtension = {
     id,
     name,
@@ -97,8 +105,10 @@ export function addExtension(draft: ExtensionDraft): ExtensionInfo {
     command,
     args: draft.args.map((a) => a.trim()).filter(Boolean),
     instructions: draft.instructions?.trim() ?? '',
-    enabled: true,
+    enabled: draft.enabled ?? true,
     catalogId: draft.catalogId,
+    needsKeys: draft.needsKeys,
+    folder: draft.folder,
     env: encryptEnv(cleanEnv(draft.env))
   }
   writeAll([...list, stored])
@@ -110,12 +120,38 @@ export function setExtensionEnabled(id: string, enabled: boolean): void {
 }
 
 export function setExtensionEnv(id: string, env: Record<string, string>): void {
-  const encrypted = encryptEnv(cleanEnv(env))
-  writeAll(readAll().map((e) => (e.id === id ? { ...e, env: encrypted } : e)))
+  const supplied = cleanEnv(env)
+  writeAll(
+    readAll().map((e) => {
+      if (e.id !== id) return e
+      // New values are added to the keys already saved.
+      const clean = { ...decryptEnv(e.env), ...supplied }
+      const encrypted = encryptEnv(clean)
+      // An extension waiting for its keys switches on once it has them all.
+      const complete = (e.needsKeys ?? []).length > 0 && (e.needsKeys ?? []).every((n) => n in clean)
+      return { ...e, env: encrypted, enabled: complete ? true : e.enabled }
+    })
+  )
+}
+
+/** Where agent-built servers are kept: inside VibeApp's data, so they outlive any one project. */
+export function extensionsDir(): string {
+  return join(app.getPath('userData'), 'extensions')
 }
 
 export function removeExtension(id: string): void {
-  writeAll(readAll().filter((e) => e.id !== id))
+  const list = readAll()
+  const gone = list.find((e) => e.id === id)
+  writeAll(list.filter((e) => e.id !== id))
+  // Only ever delete a folder VibeApp itself created.
+  if (gone?.folder && resolve(gone.folder).startsWith(resolve(extensionsDir()) + sep)) {
+    try {
+      rmSync(gone.folder, { recursive: true, force: true })
+    } catch (err) {
+      // Removed from the list either way; a locked folder is only leftover disk space.
+      console.warn('Removing extension files failed:', (err as Error).message)
+    }
+  }
 }
 
 /** An enabled extension, ready to hand to an agent. */
@@ -130,7 +166,7 @@ export interface ActiveExtension {
 }
 
 /** On Windows, npx and similar launchers are .cmd scripts and need cmd.exe to start. */
-function launcher(command: string, args: string[]): { command: string; args: string[] } {
+export function launcher(command: string, args: string[]): { command: string; args: string[] } {
   if (process.platform === 'win32' && /^(npx|npm|pnpm|yarn|uvx|uv)$/i.test(command)) {
     return { command: 'cmd', args: ['/c', command, ...args] }
   }

@@ -10,6 +10,7 @@ import { changeStats, diffSnapshots, takeSnapshot, type FileChange } from '../gi
 import { verifyChanges } from '../review/checks'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import type { DelegationActivity } from '@shared/types'
+import type { AgentInstallRequest } from '../extensions/install'
 
 export type DelegationProgressListener = (note: string) => void
 
@@ -70,12 +71,41 @@ export function createCodexDelegationServer(
   getRequestContext?: () => RequestContext | undefined,
   codexThread?: { get: () => CodexThread | undefined; set: (thread: CodexThread | undefined) => void },
   /** Each step Codex takes, for the live feed in the chat. */
-  onActivity?: (activity: DelegationActivity) => void
+  onActivity?: (activity: DelegationActivity) => void,
+  /** Registers an MCP server the agent built as an extension (asks the user first). */
+  installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>
 ): ReturnType<typeof createSdkMcpServer> {
   return createSdkMcpServer({
     name: 'vibe_tools',
     version: '1.0.0',
     tools: [
+      tool(
+        'install_extension',
+        "Install an MCP server (a set of tools) for the user, available to you and to Codex in every project, switchable in VibeApp's Extensions screen. Use it after you have built an MCP server in the project, or when the user asks to add one. The user is asked to confirm and the server is started once to check it works. Put the server's code in a project folder and pass it as sourceDir: the folder is copied into VibeApp's data so it outlives the project, and \"{{dir}}\" in args becomes that copy's path (for example command \"node\", args [\"{{dir}}/index.js\"]). If it needs API keys, list their names in keys and read them from environment variables; never ask the user to paste a key into the chat.",
+        {
+          name: z.string().describe('Short human name, e.g. "Weather lookup".'),
+          description: z.string().optional().describe('One sentence on what the tools do.'),
+          command: z.string().describe('Program that runs the server, e.g. node, npx, python.'),
+          args: z.array(z.string()).describe('Arguments; {{dir}} stands for the copied folder.'),
+          sourceDir: z.string().optional().describe('Folder inside the project with the server code (relative or absolute).'),
+          instructions: z.string().optional().describe('One or two sentences telling the agents when to use these tools.'),
+          keys: z.array(z.string()).optional().describe('Names of environment variables it needs (e.g. WEATHER_API_KEY).')
+        },
+        async (args) => {
+          if (!installExtension) {
+            return { content: [{ type: 'text' as const, text: 'Installing extensions is not available here.' }], isError: true }
+          }
+          try {
+            const result = await installExtension(args)
+            return { content: [{ type: 'text' as const, text: result.message }], isError: !result.ok }
+          } catch (err) {
+            return {
+              content: [{ type: 'text' as const, text: `Install failed: ${(err as Error).message}` }],
+              isError: true
+            }
+          }
+        }
+      ),
       tool(
         'run_codex_subtask',
         "Delegate a scoped coding subtask to the Codex CLI (a separate AI coding agent) and return its result. Useful for getting a second implementation, a second opinion, or offloading an independent chunk of work. Codex is automatically given the user's original request, the key facts, relevant memories and recent hand-offs, and several hand-offs in one request continue the same Codex session, so a task only needs to say what to do, which files are involved, and what \"done\" looks like. The result is a short summary, the files changed (with a small diff) and the outcome of automatic checks (script syntax, JSON, the project's npm test); the full report is available from the handoffs tool.",

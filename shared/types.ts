@@ -96,6 +96,10 @@ export interface ExtensionInfo {
   instructions: string
   enabled: boolean
   catalogId?: string
+  /** Keys it needs that haven't been supplied yet (it stays off until they are). */
+  needsKeys: string[]
+  /** Where an agent-built server's files were copied to (inside VibeApp's data folder). */
+  folder?: string
 }
 
 export interface ExtensionDraft {
@@ -106,6 +110,9 @@ export interface ExtensionDraft {
   env: Record<string, string>
   instructions?: string
   catalogId?: string
+  needsKeys?: string[]
+  folder?: string
+  enabled?: boolean
 }
 
 export interface ExtensionCatalogItem {

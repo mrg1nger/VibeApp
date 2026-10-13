@@ -2381,3 +2381,12 @@ textarea {
   font: inherit;
   padding: 6px 8px;
 }
+
+.extension-row {
+  flex-wrap: wrap;
+}
+
+.extension-row .extension-form {
+  flex-basis: 100%;
+  margin-top: 4px;
+}

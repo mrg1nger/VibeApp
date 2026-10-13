@@ -23,6 +23,8 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
   const [pending, setPending] = useState<{ item: ExtensionCatalogItem; env: Record<string, string> } | null>(null)
   const [custom, setCustom] = useState({ name: '', command: '', args: '', instructions: '', env: '' })
   const [showCustom, setShowCustom] = useState(false)
+  // Keys typed in for installed extensions that are waiting for them.
+  const [keyInputs, setKeyInputs] = useState<Record<string, Record<string, string>>>({})
 
   const reload = useCallback(async () => {
     try {
@@ -124,6 +126,34 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
                 </small>
               </span>
             </label>
+            {ext.needsKeys.length > 0 && (
+              <div className="extension-form">
+                <span className="review-muted">Switched off until you add {ext.needsKeys.length === 1 ? 'this key' : 'these keys'}:</span>
+                {ext.needsKeys.map((name) => (
+                  <label key={name} className="settings-field">
+                    {name}
+                    <input
+                      type="password"
+                      value={keyInputs[ext.id]?.[name] ?? ''}
+                      onChange={(e) =>
+                        setKeyInputs({ ...keyInputs, [ext.id]: { ...keyInputs[ext.id], [name]: e.target.value } })
+                      }
+                    />
+                  </label>
+                ))}
+                <button
+                  disabled={busyId === ext.id}
+                  onClick={() =>
+                    run(ext.id, async () => {
+                      await window.vibe.extensions.setEnv(ext.id, keyInputs[ext.id] ?? {})
+                      setKeyInputs({ ...keyInputs, [ext.id]: {} })
+                    })
+                  }
+                >
+                  Save keys
+                </button>
+              </div>
+            )}
             <button
               className="chat-inline-action"
               disabled={busyId === ext.id}

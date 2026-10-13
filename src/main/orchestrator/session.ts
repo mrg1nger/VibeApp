@@ -12,6 +12,7 @@ import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { activeExtensions, extensionInstructions } from '../extensions/store'
+import { installExtensionForAgent } from '../extensions/install'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
@@ -39,7 +40,8 @@ You share a persistent memory with Codex through the mcp__vibe_memory tools. The
 const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
 Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview, or remembered facts and files that look relevant to the request). Use them as context; they're not something the user typed. Notes from a search are hints: check them against the code before relying on them.
-Codex is automatically given the user's original request, the key facts and recent hand-offs when you hand it a task, so a task only needs to say what to do, which files are involved, and what done looks like.`
+Codex is automatically given the user's original request, the key facts and recent hand-offs when you hand it a task, so a task only needs to say what to do, which files are involved, and what done looks like.
+If the user wants a new tool for you and Codex ("add a tool that...", "make an MCP server for..."), build it as a small MCP server in the project, then call mcp__vibe_tools__install_extension so it's available everywhere. Don't edit .mcp.json for that: servers listed there are only seen by you in this project.`
 
 function secretsInstructions(projectId: string): string {
   let names: string[] = []
@@ -207,6 +209,13 @@ export class ClaudeSession extends EventEmitter {
       (activity) => {
         const event: VibeEvent = { type: 'delegation_activity', activity }
         this.emit('event', event)
+      },
+      async (req) => {
+        const result = await installExtensionForAgent(req, this.projectPath, ({ reason, input }) =>
+          this.requestConfirmation('install_extension', input, reason)
+        )
+        if (result.ok) refreshExtensionsForAllSessions()
+        return result
       }
     )
 
