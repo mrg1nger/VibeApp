@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1f4a"/>
+      <stop offset="1" stop-color="#0b0d22"/>
+    </linearGradient>
+    <radialGradient id="warm" cx="0.35" cy="0.3" r="0.9">
+      <stop offset="0" stop-color="#ffb066"/>
+      <stop offset="1" stop-color="#ff5f3a"/>
+    </radialGradient>
+    <radialGradient id="cool" cx="0.65" cy="0.3" r="0.9">
+      <stop offset="0" stop-color="#6fe3ff"/>
+      <stop offset="1" stop-color="#2f6bff"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <g style="isolation:isolate">
+    <circle cx="396" cy="512" r="262" fill="url(#warm)" style="mix-blend-mode:screen"/>
+    <circle cx="628" cy="512" r="262" fill="url(#cool)" style="mix-blend-mode:screen"/>
+  </g>
+  <ellipse cx="512" cy="512" rx="120" ry="230" fill="url(#glow)"/>
+  <path d="M512 330 L548 476 L694 512 L548 548 L512 694 L476 548 L330 512 L476 476 Z" fill="#ffffff" opacity="0.95"/>
+</svg>
