@@ -124,6 +124,7 @@ function App() {
             setScreen('chat')
           }}
           onError={showError}
+          onRemoved={(projectId) => setActiveProject((current) => (current?.id === projectId ? null : current))}
         />
       )}
       {screen === 'projects' && !claudeReady && !claudeChecking && (

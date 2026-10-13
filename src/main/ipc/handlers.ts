@@ -33,8 +33,10 @@ import {
   setSdkSessionId,
   getProject,
   setGoNutzMode,
-  setDeployUrl
+  setDeployUrl,
+  removeProject
 } from '../projects/store'
+import { eraseProjectData } from '../projects/erase'
 import { appendUserMessage, appendEvent, loadTranscript } from '../projects/transcript'
 import {
   ensureRepo,
@@ -158,6 +160,21 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   ipcMain.handle('vibe:project:list', () => listProjects())
+
+  // Takes a project off the list; its folder is never touched. With erase,
+  // VibeApp's own data for it (history, memory, secrets) is deleted too.
+  ipcMain.handle('vibe:project:remove', (_event, projectId: string, erase: boolean) => {
+    if (!/^[A-Za-z0-9_-]+$/.test(projectId)) throw new Error('Invalid project id.')
+    const removed = removeProject(projectId, !erase)
+    if (!removed) return listProjects()
+    if (erase) eraseProjectData(projectId)
+    else {
+      // Keep the data, but stop anything running for it.
+      disposeSession(projectId)
+      findPreview(projectId)?.stop(true)
+    }
+    return listProjects()
+  })
 
   ipcMain.handle('vibe:project:pickExisting', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })

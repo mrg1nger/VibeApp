@@ -2296,3 +2296,64 @@ textarea {
 .codex-step-wait {
   display: block;
 }
+
+/* Removing a project from the list. */
+.project-item {
+  position: relative;
+}
+
+.project-item .project-row {
+  width: 100%;
+  padding-right: 2.6rem;
+}
+
+.project-remove {
+  position: absolute;
+  top: 50%;
+  right: 0.6rem;
+  transform: translateY(-50%);
+  width: 1.8rem;
+  height: 1.8rem;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.project-item:hover .project-remove,
+.project-remove:focus-visible {
+  opacity: 1;
+}
+
+.project-remove:hover {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.remove-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.remove-choices button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+}
+
+.remove-choices small {
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.modal .remove-erase {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}

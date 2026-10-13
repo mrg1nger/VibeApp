@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ProjectRecord } from '@shared/types'
+import Modal from '../components/Modal'
 
 interface ProjectPickerViewProps {
   onOpen: (project: ProjectRecord) => void
   onError: (message: string) => void
+  /** A project was taken off the list. */
+  onRemoved?: (projectId: string) => void
 }
 
-function ProjectPickerView({ onOpen, onError }: ProjectPickerViewProps) {
+function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProps) {
   const [recent, setRecent] = useState<ProjectRecord[]>([])
   const [busy, setBusy] = useState(false)
+  const [removing, setRemoving] = useState<ProjectRecord | null>(null)
 
   useEffect(() => {
     window.vibe.project.list().then(setRecent)
@@ -38,6 +42,22 @@ function ProjectPickerView({ onOpen, onError }: ProjectPickerViewProps) {
     }
   }, [onOpen, onError])
 
+  const handleRemove = useCallback(
+    async (project: ProjectRecord, erase: boolean) => {
+      setBusy(true)
+      try {
+        setRecent(await window.vibe.project.remove(project.id, erase))
+        onRemoved?.(project.id)
+        setRemoving(null)
+      } catch (err) {
+        onError(`Couldn't remove that project: ${(err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [onRemoved, onError]
+  )
+
   return (
     <div className="project-picker">
       <h2>Projects</h2>
@@ -55,15 +75,49 @@ function ProjectPickerView({ onOpen, onError }: ProjectPickerViewProps) {
           <h3>Recent</h3>
           <ul>
             {recent.map((project) => (
-              <li key={project.id}>
+              <li key={project.id} className="project-item">
                 <button className="project-row" onClick={() => onOpen(project)}>
                   <span className="project-name">{project.name}</span>
                   <span className="project-path">{project.path}</span>
+                </button>
+                <button
+                  className="project-remove"
+                  title="Remove from this list (your folder and files aren't touched)"
+                  aria-label={`Remove ${project.name} from the list`}
+                  onClick={() => setRemoving(project)}
+                >
+                  ✕
                 </button>
               </li>
             ))}
           </ul>
         </div>
+      )}
+
+      {removing && (
+        <Modal title={`Remove “${removing.name}”?`} onClose={() => setRemoving(null)}>
+          <p className="modal-text">
+            This only takes it off this list. Your project folder and everything in it stays exactly where it is:
+          </p>
+          <p className="modal-muted">{removing.path}</p>
+          <div className="remove-choices">
+            <button className="modal-primary" disabled={busy} onClick={() => handleRemove(removing, false)}>
+              Remove from list
+              <small>Keeps its chat history and memory. They come back if you add the folder again.</small>
+            </button>
+            <button className="remove-erase" disabled={busy} onClick={() => handleRemove(removing, true)}>
+              Remove and erase VibeApp&apos;s data for it
+              <small>
+                Also deletes its chat history, memory, saved secrets and attached images. This can&apos;t be undone.
+              </small>
+            </button>
+          </div>
+          <div className="modal-actions">
+            <button disabled={busy} onClick={() => setRemoving(null)}>
+              Cancel
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   )

@@ -773,6 +773,32 @@ export function relevantCode(db: DatabaseSync, projectId: string, text: string, 
     .slice(0, limit)
 }
 
+// ---- erasing a project ----------------------------------------------------------
+
+/** Removes everything the database holds for one project. Returns what was removed. */
+export function eraseProjectFromMemory(
+  db: DatabaseSync,
+  projectId: string
+): { facts: number; messages: number; handoffs: number; files: number } {
+  return transaction(db, () => {
+    // The search index for messages has no delete trigger, so clear it row by row.
+    const rows = db
+      .prepare('SELECT id, text, note FROM messages WHERE project_id = ?')
+      .all(projectId) as { id: number; text: string; note: string | null }[]
+    const unindex = db.prepare("INSERT INTO messages_fts(messages_fts, rowid, text, note) VALUES ('delete', ?, ?, ?)")
+    for (const r of rows) unindex.run(r.id, r.text, r.note)
+
+    const count = (sql: string): number => Number(db.prepare(sql).run(projectId).changes)
+    const messages = count('DELETE FROM messages WHERE project_id = ?')
+    const facts = count('DELETE FROM facts WHERE scope = ?')
+    const handoffs = count('DELETE FROM handoffs WHERE project_id = ?')
+    const files = count('DELETE FROM code_files WHERE project_id = ?')
+    count('DELETE FROM usage_log WHERE project_id = ?')
+    db.prepare('DELETE FROM meta WHERE key IN (?, ?)').run(`history_imported:${projectId}`, `tidy:${projectId}`)
+    return { facts, messages, handoffs, files }
+  })
+}
+
 // ---- usage log ---------------------------------------------------------------
 
 export type UsageKind =

@@ -89,7 +89,10 @@ const vibeApi = {
     pickExisting: (): Promise<ProjectRecord | null> =>
       ipcRenderer.invoke('vibe:project:pickExisting'),
     pickNewFolder: (): Promise<ProjectRecord | null> =>
-      ipcRenderer.invoke('vibe:project:pickNewFolder')
+      ipcRenderer.invoke('vibe:project:pickNewFolder'),
+    /** Takes a project off the list (its folder is never touched); erase also deletes VibeApp's data for it. */
+    remove: (projectId: string, erase: boolean): Promise<ProjectRecord[]> =>
+      ipcRenderer.invoke('vibe:project:remove', projectId, erase)
   },
 
   chat: {
