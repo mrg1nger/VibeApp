@@ -225,7 +225,8 @@ export function claudeBlockedUntil(): number | null {
   let until = seenLimitUntil > now ? seenLimitUntil : 0
   const snapshot = peekUsage('claude')
   if (snapshot?.status === 'ok') {
-    const exhausted = snapshot.windows.filter((w) => w.usedPercent >= 99.95 && (w.resetsAt ?? 0) > now)
+    // Same rounding as the meter: it shows 0% left from 99.5% used.
+    const exhausted = snapshot.windows.filter((w) => Math.round(w.usedPercent) >= 100 && (w.resetsAt ?? 0) > now)
     for (const w of exhausted) until = Math.max(until, w.resetsAt ?? 0)
   }
   return until > now ? until : null
