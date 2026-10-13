@@ -6,6 +6,7 @@ import { promisify } from 'util'
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
+import { claudeHelpersAllowed } from '../usage/usage'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { memoryDb } from './paths'
 import { codeHashes, countCodeFiles, hashFile, removeCodeFiles, saveCodeSummaries, type CodeFile } from './store'
@@ -171,7 +172,7 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
 /** Refreshes in the background if the setting is on and it hasn't just run. Never throws. */
 export function maybeRefreshCodeMap(projectId: string, projectPath: string): void {
   try {
-    if (!getSettings().codeMap || running.has(projectId)) return
+    if (!getSettings().codeMap || running.has(projectId) || !claudeHelpersAllowed()) return
     if (Date.now() - (lastRun.get(projectId) ?? 0) < MIN_GAP_MS) return
     refreshCodeMap(projectId, projectPath)
       .then((r) => {

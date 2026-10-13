@@ -123,6 +123,11 @@ export class ClaudeSession extends EventEmitter {
   /** The user's current request in their own words, passed along with Codex hand-offs. */
   private requestContext: RequestContext | undefined
 
+  /** When the plan limit says Claude is usable again (epoch ms), from the last rate-limit event. */
+  private limitResetsAt: number | undefined
+  /** The limit has been reported for the current request. */
+  private limitReported = false
+
   /** The Codex session this request's hand-offs share (reset by each new request). */
   private codexThread: CodexThread | undefined
   /** Size of the conversation Claude last saw, in tokens (from its latest API call). */
@@ -431,6 +436,32 @@ export class ClaudeSession extends EventEmitter {
           this.capturedSessionId = message.session_id
           this.emit('session_id', message.session_id)
         }
+        // Plan limit reached: report it as itself (not as a crash or a normal
+        // reply) so VibeApp can hand the request to Codex.
+        if (message.type === 'rate_limit_event') {
+          const info = (message as { rate_limit_info?: { status?: string; resetsAt?: number } }).rate_limit_info
+          if (info?.resetsAt) this.limitResetsAt = info.resetsAt * 1000
+        }
+        if (isLimitMessage(message)) {
+          if (!this.limitReported) {
+            this.limitReported = true
+            const raw = message as { type: string; result?: string; message?: { content?: { text?: string }[] } }
+            const text =
+              raw.type === 'result'
+                ? String(raw.result ?? '')
+                : (raw.message?.content ?? []).map((b) => b.text ?? '').join('')
+            this.emit('event', {
+              type: 'claude_limit',
+              resetsAt: this.limitResetsAt ?? null,
+              message: text.trim() || "Claude's usage limit was reached."
+            } satisfies VibeEvent)
+          }
+          if (message.type === 'result') {
+            this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+            this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
+          }
+          continue
+        }
         if (message.type === 'assistant') {
           // Each API call reports how much it read: that's the conversation's size now.
           const u = (
@@ -471,6 +502,8 @@ export class ClaudeSession extends EventEmitter {
       }
     } catch (err) {
       failure = (err as Error).message
+      // The SDK throws after a limit error result; that was already reported.
+      if (this.limitReported) failure = undefined
     }
     if (queryHandle !== this.queryHandle || this.disposed) return
     // The Claude process is gone (crash, launch failure, auth error). Mark
@@ -534,6 +567,7 @@ export class ClaudeSession extends EventEmitter {
 
   /** Sends a message; images (Claude image content blocks) go ahead of the text. */
   send(text: string, images: PreparedImage['block'][] = []): void {
+    this.limitReported = false
     this.turnsInFlight++
     this.queue.push(images.length ? [...images, { type: 'text', text }] : text)
   }
@@ -586,6 +620,14 @@ function isLikelyDestructive(toolName: string, input: unknown): boolean {
   if (!SHELL_TOOLS.has(toolName)) return false
   const command = (input as { command?: string })?.command ?? ''
   return DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command))
+}
+
+/** An SDK message that says the plan limit was hit (an assistant error, or a 429 result). */
+function isLimitMessage(message: unknown): boolean {
+  const m = message as { type?: string; error?: string; is_error?: boolean; api_error_status?: number | null }
+  if (m.type === 'assistant') return m.error === 'rate_limit'
+  if (m.type === 'result') return m.is_error === true && m.api_error_status === 429
+  return false
 }
 
 const sessions = new Map<string, ClaudeSession>()

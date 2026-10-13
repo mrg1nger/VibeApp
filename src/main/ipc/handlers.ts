@@ -77,9 +77,10 @@ import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
 import { generateTheme } from '../themes/generate'
-import { getUsage } from '../usage/usage'
+import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
+import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
 import { prepareImages, imagesNote } from '../attachments/images'
@@ -214,6 +215,36 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // Before anything else, so a bad file fails the send cleanly.
       const prepared = images?.length ? prepareImages(projectId, images) : []
 
+      // Claude's plan is already used up: don't send it to Claude just to be
+      // rejected; Codex takes the request (or the user is asked).
+      const blockedUntil = claudeBlockedUntil()
+      const takeoverMode = getSettings().limitTakeover
+      if (blockedUntil !== null && takeoverMode !== 'off' && !process.env.VIBEAPP_SKIP_PREEMPTIVE) {
+        const snapshot = await takeSnapshot(projectPath, text).catch(() => undefined)
+        const thumbnails = prepared.map((p) => p.thumbnail)
+        const element = picked ? pickedNote(picked) : undefined
+        appendUserMessage(projectId, text, {
+          snapshot,
+          attachment: picked ? describePicked(picked) : undefined,
+          images: thumbnails.length ? thumbnails : undefined
+        })
+        recordUserMessage(
+          projectId,
+          text,
+          [picked ? describePicked(picked) : '', ...prepared.map((p) => `image: ${p.savedPath}`)]
+            .filter(Boolean)
+            .join('; ')
+        )
+        const request: LastRequest = { text, element, images: prepared.map((p) => p.savedPath), snapshot }
+        lastRequests.set(projectId, request)
+        if (takeoverMode === 'ask') {
+          session.emit('event', { type: 'takeover_offer', text, resetsAt: blockedUntil } satisfies VibeEvent)
+        } else {
+          startTakeover(session, projectId, projectPath, request, blockedUntil)
+        }
+        return { snapshot, thumbnails }
+      }
+
       // Snapshot first so "Undo" can put the files back exactly as they
       // were before this message (a failure only costs the undo button).
       // Haiku labels the request meanwhile, so the two waits overlap.
@@ -281,8 +312,11 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // First request in a project: start mapping the code now, in the background.
       maybeRefreshCodeMap(projectId, projectPath)
       turnRecords.set(projectId, { request: text, replies: [], actions: [], stopped: false, hadError: false })
+      lastRequests.set(projectId, { text, element, images: prepared.map((p) => p.savedPath), snapshot })
       const message = [
         carried,
+        // What Codex did on its own while Claude was out.
+        takeCatchUpNote(projectId),
         route.note,
         relevant,
         picked ? pickedNote(picked) : undefined,
@@ -308,8 +342,23 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
   ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
+    const takeover = takeovers.get(projectId)
+    if (takeover) {
+      takeover.abort()
+      return
+    }
     if (skipReview(projectId)) return
     await getSession(projectId)?.stop()
+  })
+
+  // The user chose "Let Codex do it" after being offered a takeover.
+  ipcMain.handle('vibe:chat:takeover', (_event, projectId: string, projectPath: string) => {
+    const request = lastRequests.get(projectId)
+    if (!request) return
+    const project = getProject(projectId)
+    const session = getOrCreateSession(projectId, projectPath, project?.sdkSessionId, project?.goNutzMode ?? false)
+    wireSessionEvents(session, projectId, getSender)
+    startTakeover(session, projectId, projectPath, request, claudeBlockedUntil())
   })
 
   ipcMain.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
@@ -528,6 +577,49 @@ function rotateThreshold(): number {
 /** Per project: what's happened so far this request, kept for the memory scribe. */
 const turnRecords = new Map<string, TurnRecord>()
 
+/** The latest user request per project, so it can be handed to Codex if Claude turns out to be out. */
+interface LastRequest {
+  text: string
+  element?: string
+  images: string[]
+  snapshot?: string
+}
+const lastRequests = new Map<string, LastRequest>()
+/** Projects whose Claude turn just failed on the plan limit, waiting for that turn to end. */
+const pendingTakeover = new Map<string, number | null>()
+/** Running takeovers; aborting one stops Codex. */
+const takeovers = new Map<string, AbortController>()
+
+function startTakeover(
+  session: ReturnType<typeof getOrCreateSession>,
+  projectId: string,
+  projectPath: string,
+  request: LastRequest,
+  resetsAt: number | null
+): void {
+  if (takeovers.has(projectId)) return
+  const abort = new AbortController()
+  takeovers.set(projectId, abort)
+  // Codex builds it, so there's no second-opinion review to hold the result back.
+  beginTurn(projectId, { projectPath, request: request.text, snapshot: request.snapshot, skipReview: true })
+  runTakeover({
+    projectId,
+    projectPath,
+    text: request.text,
+    element: request.element,
+    images: request.images,
+    resetsAt,
+    unsandboxed: session.isGoNutzMode(),
+    emit: (event) => session.emit('event', event),
+    signal: abort.signal
+  })
+    .catch((err: Error) => {
+      session.emit('event', { type: 'error', message: err.message } satisfies VibeEvent)
+      session.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
+    })
+    .finally(() => takeovers.delete(projectId))
+}
+
 const wiredSessions = new WeakSet<object>()
 
 function wireSessionEvents(
@@ -539,6 +631,19 @@ function wireSessionEvents(
   wiredSessions.add(session)
 
   session.on('event', (event: VibeEvent) => {
+    if (event.type === 'claude_limit') {
+      // Remember it so later requests go straight to Codex, and keep the
+      // failed turn from being reviewed. What follows happens at its turn_complete.
+      noteClaudeLimit(event.resetsAt)
+      const last = lastRequests.get(projectId)
+      const path = getProject(projectId)?.path
+      if (last && path && !takeovers.has(projectId) && getSettings().limitTakeover !== 'off') {
+        pendingTakeover.set(projectId, event.resetsAt)
+        beginTurn(projectId, { projectPath: path, request: last.text, snapshot: last.snapshot, skipReview: true })
+      }
+    } else if (event.type === 'usage' && !takeovers.has(projectId)) {
+      clearClaudeLimit() // a Claude request just ran fine
+    }
     handleSessionEvent(projectId, session, event, (forwarded) => {
       appendEvent(projectId, forwarded)
       getSender()?.send('vibe:chat:event', projectId, forwarded)
@@ -559,7 +664,7 @@ function wireSessionEvents(
         const path = getProject(projectId)?.path
         const finished = turnRecords.get(projectId)
         turnRecords.delete(projectId)
-        if (finished && getSettings().autoMemory) {
+        if (finished && getSettings().autoMemory && claudeHelpersAllowed()) {
           runScribe(projectId, finished)
             .catch((err: Error) => console.warn('Saving memory failed:', err.message))
             .finally(() => {
@@ -573,6 +678,20 @@ function wireSessionEvents(
           maybeTidy(GLOBAL_SCOPE)
         }
         if (path) maybeRefreshCodeMap(projectId, path)
+
+        // The turn failed on Claude's plan limit: hand the request to Codex.
+        if (pendingTakeover.has(projectId)) {
+          const resetsAt = pendingTakeover.get(projectId) ?? null
+          pendingTakeover.delete(projectId)
+          const last = lastRequests.get(projectId)
+          if (last && path) {
+            if (getSettings().limitTakeover === 'ask') {
+              session.emit('event', { type: 'takeover_offer', text: last.text, resetsAt } satisfies VibeEvent)
+            } else {
+              startTakeover(session, projectId, path, last, resetsAt)
+            }
+          }
+        }
       }
     })
   })

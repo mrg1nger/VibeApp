@@ -5,6 +5,7 @@ import type { AppSettings } from '@shared/types'
 
 const DEFAULTS: AppSettings = {
   agentBalance: 'auto',
+  limitTakeover: 'auto',
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',

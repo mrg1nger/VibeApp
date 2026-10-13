@@ -5,6 +5,7 @@ import { join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryFact, type MemoryTidyResult } from '@shared/types'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
+import { claudeHelpersAllowed } from '../usage/usage'
 import { memoryDb } from './paths'
 import {
   countFacts,
@@ -200,6 +201,7 @@ export async function tidyMemory(scope: string): Promise<MemoryTidyResult> {
 /** Starts a background tidy-up if this scope needs one. Never throws. */
 export function maybeTidy(scope: string): void {
   try {
+    if (!claudeHelpersAllowed()) return
     const db = memoryDb()
     const { active, unclassified } = countFacts(db, scope)
     const last = JSON.parse(getMeta(db, `tidy:${scope}`) ?? 'null') as { at: number; count: number } | null

@@ -162,6 +162,26 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
         </label>
 
         <label className="settings-toggle">
+          <span>
+            When Claude's plan limit is reached
+            <small>
+              Codex can take your request directly, so you keep working until Claude's window resets. Ask first
+              shows a button instead; Off just reports the limit.
+            </small>
+          </span>
+          <select
+            value={settings.limitTakeover}
+            onChange={(e) =>
+              onSettingsChange({ limitTakeover: e.target.value as typeof settings.limitTakeover }).catch(() => undefined)
+            }
+          >
+            <option value="auto">Switch to Codex automatically</option>
+            <option value="ask">Ask me first</option>
+            <option value="off">Do nothing</option>
+          </select>
+        </label>
+
+        <label className="settings-toggle">
           <input
             type="checkbox"
             checked={settings.autoMemory}

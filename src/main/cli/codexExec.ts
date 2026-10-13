@@ -98,6 +98,8 @@ export function killTree(child: ChildProcess): void {
 
 export interface CodexExecArgs {
   prompt: string
+  /** Who the task is from, as the prompt words it (default: "Task from Claude"). */
+  taskLabel?: string
   cwd?: string
   timeoutMs?: number
   /** Go Nutz mode: no sandbox, no approval prompts. EXTREMELY DANGEROUS -- see codex exec --help. */
@@ -176,14 +178,14 @@ export async function runCodexExec(
     args.memory?.autoMemory ? SAVE_AUTOMATICALLY : SAVE_MANUALLY
   )
   const prompt = args.resumeThreadId
-    ? `Follow-up task from Claude, in the same overall request (you already have the context from earlier in this session; what you changed since then is in the project files):
+    ? `Follow-up ${args.taskLabel ? "request from the user" : 'task from Claude'}, in the same overall request (you already have the context from earlier in this session; what you changed since then is in the project files):
 ${args.prompt}`
     : args.memory
     ? [
         instructions,
         `Key facts:\n${args.memory.keyFacts ?? '(none yet)'}`,
         args.memory.context,
-        args.memory.context ? `Task from Claude:\n${args.prompt}` : args.prompt
+        args.memory.context ? `${args.taskLabel ?? 'Task from Claude'}:\n${args.prompt}` : args.prompt
       ]
         .filter(Boolean)
         .join('\n\n')

@@ -51,6 +51,7 @@ type ChatItem =
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
+  | { kind: 'offer'; text: string; resetsAt: number | null; used?: boolean }
   | {
       kind: 'review'
       status: 'running' | 'done' | 'error'
@@ -100,6 +101,11 @@ function compactCount(n: number): string {
   if (n >= 10_000) return `${Math.round(n / 1000)}k`
   if (n >= 1_000) return `${(n / 1000).toFixed(1)}k`
   return String(n)
+}
+
+/** An epoch-ms time as a short local clock time ("7:30 PM"). */
+function formatClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
 function readPreviewPref(): boolean {
@@ -278,6 +284,29 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 text: `Started a fresh Claude session to keep things fast (the last one had grown to about ${compactCount(event.contextTokens)} tokens). Memory and a summary of the conversation carried over.`
               }
             ]
+          case 'claude_limit':
+            return [
+              ...prev,
+              {
+                kind: 'notice',
+                text: `Claude's plan limit was reached${event.resetsAt ? ` (it resets at ${formatClock(event.resetsAt)})` : ''}.`
+              }
+            ]
+          case 'takeover_started':
+            if (!isReplay) setBusy(true)
+            return [
+              ...prev,
+              {
+                kind: 'notice',
+                text: `Claude is out${event.resetsAt ? ` until ${formatClock(event.resetsAt)}` : ''}. Codex is handling this directly.`
+              }
+            ]
+          case 'takeover_offer':
+            if (isReplay) {
+              return [...prev, { kind: 'notice', text: 'Claude is out. This request was waiting for you to let Codex handle it.' }]
+            }
+            setBusy(false)
+            return [...prev, { kind: 'offer', text: event.text, resetsAt: event.resetsAt }]
           case 'stopped':
             // Stop also cancelled any open prompts or questions.
             if (!isReplay) setConfirmations([])
@@ -648,6 +677,26 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
                 {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
+                {item.kind === 'offer' && (
+                  <div className="review-card review-card-running">
+                    <div className="review-card-header">
+                      <span>
+                        Claude is out{item.resetsAt ? ` until ${formatClock(item.resetsAt)}` : ''}. Let Codex handle this request?
+                      </span>
+                      <button
+                        className="chat-inline-action"
+                        disabled={item.used || busy}
+                        onClick={() => {
+                          setItems((prev) => prev.map((it, idx) => (idx === i && it.kind === 'offer' ? { ...it, used: true } : it)))
+                          setBusy(true)
+                          window.vibe.chat.takeover(project.id, project.path).catch(() => setBusy(false))
+                        }}
+                      >
+                        {item.used ? 'Sent to Codex' : 'Let Codex do it'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {item.kind === 'usage' && (
                   <span
                     className="chat-usage"

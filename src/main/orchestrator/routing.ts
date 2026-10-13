@@ -1,5 +1,5 @@
 import type { AppSettings } from '@shared/types'
-import { peekUsage, percentLeft } from '../usage/usage'
+import { claudeHelpersAllowed, peekUsage, percentLeft } from '../usage/usage'
 import { requestClassifier, type Classification } from './classifier'
 import { BALANCE_LABELS, applyBalance, leanFor, stepOfLean } from '@shared/balance'
 
@@ -57,7 +57,8 @@ export async function routeMessage(
 ): Promise<RouteDecision> {
   if (!settings.smartRouting) return { model: null, skipReview: false, size: 'normal' }
   const images = context.images ?? 0
-  const labelled = settings.aiRouting
+  // The Haiku judge also spends Claude plan; stand it down when Claude is nearly out.
+  const labelled = settings.aiRouting && claudeHelpersAllowed()
     ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt, projectId: context.projectId })
     : null
   const request = labelled ?? keywordClassification(text, images)

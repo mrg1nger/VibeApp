@@ -137,6 +137,8 @@ const vibeApi = {
     ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:chat:stop', projectId),
+    takeover: (projectId: string, projectPath: string): Promise<void> =>
+      ipcRenderer.invoke('vibe:chat:takeover', projectId, projectPath),
     pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
       ipcRenderer.invoke('vibe:chat:pendingConfirmations', projectId),
     dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),

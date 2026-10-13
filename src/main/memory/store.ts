@@ -810,6 +810,7 @@ export type UsageKind =
   | 'tidy' // Haiku tidying memory
   | 'codemap' // Haiku summarising files
   | 'summary' // Haiku summarising a conversation for a fresh session
+  | 'takeover' // Codex handling a request directly because Claude was out
 
 export interface UsageRecord {
   projectId?: string

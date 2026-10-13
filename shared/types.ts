@@ -64,6 +64,12 @@ export type VibeEvent =
   | { type: 'error'; message: string }
   /** The user pressed Stop; the turn ended early on purpose. */
   | { type: 'stopped' }
+  /** Claude's plan limit was reached; it can't run until `resetsAt` (epoch ms, if known). */
+  | { type: 'claude_limit'; resetsAt: number | null; message: string }
+  /** Codex is handling the request directly because Claude is out. */
+  | { type: 'takeover_started'; resetsAt: number | null }
+  /** Claude is out; the user can choose to let Codex handle the request. */
+  | { type: 'takeover_offer'; text: string; resetsAt: number | null }
   /** One step of what Codex is doing during a hand-off (shown as a live feed under its card). */
   | { type: 'delegation_activity'; activity: DelegationActivity }
   /** What one request cost (tokens), shown quietly under the reply. */
@@ -264,6 +270,8 @@ export interface ThemeDefinition {
 export interface AppSettings {
   /** How work leans between Claude and Codex ("auto" follows which plan has more left). */
   agentBalance: AgentBalance
+  /** When Claude's plan limit is reached: let Codex take the request, ask first, or just report it. */
+  limitTakeover: 'auto' | 'ask' | 'off'
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */

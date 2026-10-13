@@ -197,3 +197,43 @@ async function fetchCodexUsage(): Promise<UsageSnapshot> {
     killTree(child)
   }
 }
+
+// ---- is Claude usable right now? -------------------------------------------------
+
+/** Below this share of a plan window left, optional background helpers stand down. */
+const HELPERS_STAND_DOWN_BELOW = 5
+
+/** A limit seen directly (from a rejected request), until its reset time. */
+let seenLimitUntil = 0
+
+/** Remember that Claude rejected a request for its plan limit. resetsAt is epoch ms, if known. */
+export function noteClaudeLimit(resetsAt: number | null): void {
+  // Without a reset time, assume a short wait; the next reading corrects it.
+  seenLimitUntil = resetsAt && resetsAt > Date.now() ? resetsAt : Date.now() + 15 * 60_000
+}
+
+export function clearClaudeLimit(): void {
+  seenLimitUntil = 0
+}
+
+/**
+ * When Claude can't run until (epoch ms), or null if it can. Based on a
+ * rejection VibeApp saw itself, or on the usage reading showing a window at 100%.
+ */
+export function claudeBlockedUntil(): number | null {
+  const now = Date.now()
+  let until = seenLimitUntil > now ? seenLimitUntil : 0
+  const snapshot = peekUsage('claude')
+  if (snapshot?.status === 'ok') {
+    const exhausted = snapshot.windows.filter((w) => w.usedPercent >= 99.95 && (w.resetsAt ?? 0) > now)
+    for (const w of exhausted) until = Math.max(until, w.resetsAt ?? 0)
+  }
+  return until > now ? until : null
+}
+
+/** Whether small optional Haiku jobs (code map, memory saving, tidy-up) may run: not when Claude is nearly out. */
+export function claudeHelpersAllowed(): boolean {
+  if (claudeBlockedUntil() !== null) return false
+  const left = percentLeft(peekUsage('claude'))
+  return left === undefined || left >= HELPERS_STAND_DOWN_BELOW
+}
