@@ -84,6 +84,30 @@ export type VibeEvent =
   /** A secret key was written into a project file. */
   | { type: 'secret_leak'; leaks: SecretLeak[] }
 
+export type TalkAgent = 'claude' | 'codex'
+
+export interface TalkMessage {
+  role: 'user' | 'assistant'
+  text: string
+  /** Which agent wrote an assistant message. */
+  agent?: TalkAgent
+  at: number
+}
+
+export interface TalkConversation {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messages: TalkMessage[]
+}
+
+export interface TalkSummary {
+  id: string
+  title: string
+  updatedAt: number
+}
+
 /** A tool (an MCP server plus instructions) installed once and offered to Claude and Codex in every project. */
 export interface ExtensionInfo {
   id: string

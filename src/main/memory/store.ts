@@ -811,6 +811,7 @@ export type UsageKind =
   | 'codemap' // Haiku summarising files
   | 'summary' // Haiku summarising a conversation for a fresh session
   | 'takeover' // Codex handling a request directly because Claude was out
+  | 'chat' // a question answered without building (Ask mode or the Chat tab)
 
 export interface UsageRecord {
   projectId?: string

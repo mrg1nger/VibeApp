@@ -19,6 +19,9 @@ import type {
   QuestionAnswers,
   SecretSummary,
   ExtensionInfo,
+  TalkAgent,
+  TalkConversation,
+  TalkSummary,
   ExtensionDraft,
   ExtensionCatalogItem,
   ThemeDefinition,
@@ -140,6 +143,8 @@ const vibeApi = {
     ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:chat:stop', projectId),
+    ask: (projectId: string, projectPath: string, text: string): Promise<void> =>
+      ipcRenderer.invoke('vibe:chat:ask', projectId, projectPath, text),
     takeover: (projectId: string, projectPath: string): Promise<void> =>
       ipcRenderer.invoke('vibe:chat:takeover', projectId, projectPath),
     pendingConfirmations: (projectId: string): Promise<ConfirmationRequest[]> =>
@@ -231,6 +236,15 @@ const vibeApi = {
       ipcRenderer.invoke('vibe:secrets:set', projectId, name, value),
     delete: (projectId: string, name: string): Promise<void> =>
       ipcRenderer.invoke('vibe:secrets:delete', projectId, name)
+  },
+
+  talk: {
+    list: (): Promise<TalkSummary[]> => ipcRenderer.invoke('vibe:talk:list'),
+    load: (id: string): Promise<TalkConversation | null> => ipcRenderer.invoke('vibe:talk:load', id),
+    send: (id: string, text: string, agent: TalkAgent): Promise<TalkConversation> =>
+      ipcRenderer.invoke('vibe:talk:send', id, text, agent),
+    stop: (id: string): Promise<void> => ipcRenderer.invoke('vibe:talk:stop', id),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('vibe:talk:delete', id)
   },
 
   extensions: {

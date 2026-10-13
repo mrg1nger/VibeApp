@@ -7,12 +7,13 @@ import HistoryView from './views/HistoryView'
 import MemoryView from './views/MemoryView'
 import SettingsView from './views/SettingsView'
 import ExtensionsView from './views/ExtensionsView'
+import TalkView from './views/TalkView'
 import ToastHost from './components/ToastHost'
 import UsageMeters from './components/UsageMeters'
 import { useToasts } from './lib/useToasts'
 import { applyTheme } from './lib/theme'
 
-type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory' | 'extensions' | 'settings'
+type Screen = 'accounts' | 'projects' | 'chat' | 'history' | 'memory' | 'extensions' | 'talk' | 'settings'
 
 // Logins and installs re-check right away (AccountsView), so this only catches
 // changes made outside the app.
@@ -99,6 +100,9 @@ function App() {
           >
             Projects
           </button>
+          <button className={screen === 'talk' ? 'active' : ''} onClick={() => setScreen('talk')}>
+            Chat
+          </button>
           <button className={screen === 'memory' ? 'active' : ''} onClick={() => setScreen('memory')}>
             Memory
           </button>
@@ -160,6 +164,7 @@ function App() {
         />
       )}
       {screen === 'memory' && <MemoryView project={activeProject} onError={showError} />}
+      {screen === 'talk' && <TalkView onError={showError} />}
       {screen === 'extensions' && <ExtensionsView onError={showError} />}
       {screen === 'settings' && settings && (
         <SettingsView

@@ -62,6 +62,7 @@ type ChatItem =
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
+const ASK_PREF_KEY = 'vibeapp.askMode'
 
 function describePicked(picked: PickedElement): string {
   const text = picked.text.trim().replace(/\s+/g, ' ').slice(0, 40)
@@ -108,6 +109,14 @@ function formatClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
+function readAskPref(): boolean {
+  try {
+    return localStorage.getItem(ASK_PREF_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 function readPreviewPref(): boolean {
   try {
     return localStorage.getItem(PREVIEW_PREF_KEY) !== 'false'
@@ -127,6 +136,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [hasChanges, setHasChanges] = useState(false)
   const [goNutz, setGoNutz] = useState(false)
   const [showPreview, setShowPreview] = useState(readPreviewPref)
+  // Ask: answer a question without changing anything. Build: the normal coding flow.
+  const [askMode, setAskMode] = useState(readAskPref)
   const [refreshToken, setRefreshToken] = useState(0)
   const [picking, setPicking] = useState(false)
   const [picked, setPicked] = useState<PickedElement | null>(null)
@@ -397,6 +408,15 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       })
       setBusy(true)
       setProblem(null)
+      if (askMode && !element && images.length === 0) {
+        try {
+          await window.vibe.chat.ask(project.id, project.path, text)
+        } catch (err) {
+          setBusy(false)
+          onError(`Couldn't ask that: ${(err as Error).message}`)
+        }
+        return
+      }
       try {
         const { snapshot, thumbnails } = await window.vibe.chat.send(
           project.id,
@@ -418,7 +438,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         onError(`Failed to send message: ${(err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`)
       }
     },
-    [project, onError]
+    [project, onError, askMode]
   )
 
   const handleSend = useCallback(() => {
@@ -855,6 +875,31 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             </div>
           )}
 
+          <div className="chat-mode-switch" role="group" aria-label="Message type">
+            <button
+              className={!askMode ? 'active' : ''}
+              disabled={busy}
+              title="Build: Claude and Codex work on your project"
+              onClick={() => {
+                setAskMode(false)
+                try { localStorage.setItem(ASK_PREF_KEY, 'false') } catch { /* a remembered preference only */ }
+              }}
+            >
+              🔨 Build
+            </button>
+            <button
+              className={askMode ? 'active' : ''}
+              disabled={busy}
+              title="Ask: get an answer about your project without changing any files"
+              onClick={() => {
+                setAskMode(true)
+                try { localStorage.setItem(ASK_PREF_KEY, 'true') } catch { /* a remembered preference only */ }
+              }}
+            >
+              💬 Ask
+            </button>
+          </div>
+
           <div className="chat-input-row">
             <button
               className="chat-attach"
@@ -897,7 +942,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 }
               }}
               placeholder={
-                picked
+                askMode
+                  ? 'Ask a question about your project…'
+                  : picked
                   ? 'What should change about this?'
                   : pendingImages.length
                     ? 'What should Claude do with this?'

@@ -12,6 +12,7 @@ import type {
   PreviewProblem,
   PreviewState,
   QuestionAnswers,
+  TalkAgent,
   VibeEvent
 } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
@@ -63,7 +64,7 @@ import {
   restoreFact,
   deleteFact
 } from '../memory/store'
-import { memoryDb } from '../memory/paths'
+import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { tidyMemory, maybeTidy } from '../memory/tidy'
 import { maybeRefreshCodeMap } from '../memory/codeMap'
 import {
@@ -74,7 +75,7 @@ import {
 } from '../memory/context'
 import { runScribe, summarizeConversation, type TurnRecord } from '../memory/scribe'
 import { syncAgentsFile } from '../memory/agentsFile'
-import { usageSummary } from '../memory/store'
+import { keyFactsBlock, usageSummary } from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
@@ -82,6 +83,10 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
+import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
+import { runTalk, stopTalk, getTalk } from '../chat/talk'
+import { deleteTalk, listTalks } from '../chat/talkStore'
+import { recordUsage } from '../usage/tokens'
 import { CATALOG } from '../extensions/catalog'
 import {
   addExtension,
@@ -352,6 +357,11 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
   ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
+    const ask = asks.get(projectId)
+    if (ask) {
+      ask.abort()
+      return
+    }
     const takeover = takeovers.get(projectId)
     if (takeover) {
       takeover.abort()
@@ -360,6 +370,83 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     if (skipReview(projectId)) return
     await getSession(projectId)?.stop()
   })
+
+  // Ask mode: answer a question about the project without changing anything.
+  ipcMain.handle('vibe:chat:ask', async (_event, projectId: string, projectPath: string, text: string) => {
+    if (asks.has(projectId) || takeovers.has(projectId)) return
+    const abort = new AbortController()
+    asks.set(projectId, abort)
+    const emit = (event: VibeEvent): void => {
+      appendEvent(projectId, event)
+      getSender()?.send('vibe:chat:event', projectId, event)
+    }
+    appendUserMessage(projectId, text)
+    recordUserMessage(projectId, text, 'asked as a question')
+    emit({ type: 'route', label: 'Question', reason: 'answered without changing any files' })
+    void (async () => {
+      try {
+        const keyFacts = keyFactsBlock(memoryDb(), projectId)
+        const relevant = prefetchBlock(projectId, text)
+        const chosen = getSettings().claudeModel
+        const system = `You are answering a question about the user's software project inside VibeApp. Do not change anything: you can only read and search files and look things up in the project's memory. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
+        const prompt = [relevant, text].filter(Boolean).join('\n\n')
+        let answer
+        const blocked = claudeBlockedUntil() !== null
+        if (!blocked) {
+          try {
+            answer = await askClaude({
+              prompt,
+              cwd: projectPath,
+              system,
+              // Cheap by default; never Opus for a question.
+              model: !chosen ? 'haiku' : /opus/i.test(chosen) ? 'sonnet' : chosen,
+              abort,
+              readFiles: true,
+              memory: {
+                scriptPath: memoryServerScriptPath(),
+                dbPath: memoryDbPath(),
+                projectId,
+                projectPath
+              },
+              resume: askSessions.get(projectId)
+            })
+            if (answer.sessionId) askSessions.set(projectId, answer.sessionId)
+            recordUsage(projectId, 'chat', 'claude', answer.counts)
+          } catch (err) {
+            if (!(err instanceof ClaudeLimitError)) throw err
+            noteClaudeLimit(null)
+          }
+        }
+        if (!answer) {
+          // Claude is out: Codex answers instead, read-only.
+          answer = await askCodex({
+            prompt: `${system}
+
+${prompt}`,
+            cwd: projectPath,
+            model: getSettings().codexModel ?? undefined,
+            abort
+          })
+          recordUsage(projectId, 'chat', 'codex', answer.counts)
+          emit({ type: 'route', label: 'Answered by Codex', reason: 'Claude is out right now' })
+        }
+        recordAssistantMessage(projectId, answer.text)
+        emit({ type: 'assistant_text', text: answer.text, partial: false })
+      } catch (err) {
+        if (abort.signal.aborted) emit({ type: 'stopped' })
+        else emit({ type: 'error', message: `Couldn't answer that: ${(err as Error).message}` })
+      } finally {
+        asks.delete(projectId)
+        emit({ type: 'turn_complete' })
+      }
+    })()
+  })
+
+  ipcMain.handle('vibe:talk:list', () => listTalks())
+  ipcMain.handle('vibe:talk:load', (_event, id: string) => getTalk(id) ?? null)
+  ipcMain.handle('vibe:talk:send', (_event, id: string, text: string, agent: TalkAgent) => runTalk(id, text, agent))
+  ipcMain.handle('vibe:talk:stop', (_event, id: string) => stopTalk(id))
+  ipcMain.handle('vibe:talk:delete', (_event, id: string) => deleteTalk(id))
 
   // The user chose "Let Codex do it" after being offered a takeover.
   ipcMain.handle('vibe:chat:takeover', (_event, projectId: string, projectPath: string) => {
@@ -620,6 +707,9 @@ interface LastRequest {
 const lastRequests = new Map<string, LastRequest>()
 /** Projects whose Claude turn just failed on the plan limit, waiting for that turn to end. */
 const pendingTakeover = new Map<string, number | null>()
+/** Running questions (Ask mode), and each project's Claude session for follow-ups. */
+const asks = new Map<string, AbortController>()
+const askSessions = new Map<string, string>()
 /** Running takeovers; aborting one stops Codex. */
 const takeovers = new Map<string, AbortController>()
 
