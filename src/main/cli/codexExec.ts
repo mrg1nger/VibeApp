@@ -5,6 +5,7 @@ import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { promisify } from 'util'
 import type { DelegationActivity } from '@shared/types'
+import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { describeActivity, progressNote } from './codexActivity'
 
 const execFileAsync = promisify(execFile)
@@ -173,10 +174,14 @@ export async function runCodexExec(
   // still enforces an equivalent workspace-only write boundary (a write
   // outside the project folder was denied), regardless of this machine's
   // own ~/.codex/config.toml sandbox default, so it's a safe substitute.
-  const instructions = CODEX_MEMORY_INSTRUCTIONS.replace(
-    '{{SAVING}}',
-    args.memory?.autoMemory ? SAVE_AUTOMATICALLY : SAVE_MANUALLY
-  )
+  // Tools the user installed in the Extensions screen (not for read-only reviews).
+  const extensions = args.memory && !args.readOnly ? activeExtensions() : []
+  const extensionNote = extensionInstructions(extensions)
+  const instructions =
+    CODEX_MEMORY_INSTRUCTIONS.replace('{{SAVING}}', args.memory?.autoMemory ? SAVE_AUTOMATICALLY : SAVE_MANUALLY) +
+    (extensionNote ? `
+
+${extensionNote}` : '')
   const prompt = args.resumeThreadId
     ? `Follow-up ${args.taskLabel ? "request from the user" : 'task from Claude'}, in the same overall request (you already have the context from earlier in this session; what you changed since then is in the project files):
 ${args.prompt}`
@@ -224,6 +229,7 @@ ${args.prompt}`
     writeFileSync(schemaPath, JSON.stringify(args.outputSchema), 'utf-8')
     cliArgs.push('--output-schema', schemaPath)
   }
+  const extensionEnv: Record<string, string> = {}
   if (args.memory && !args.unsandboxed && !args.readOnly) {
     cliArgs.push('--approve-for-me')
   }
@@ -242,6 +248,18 @@ ${args.prompt}`
       '-c',
       'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}'
     )
+    for (const ext of extensions) {
+      // Keys are passed through the environment (env_vars), not the command line.
+      cliArgs.push(
+        '-c',
+        `mcp_servers.${ext.server}.command=${JSON.stringify(toForwardSlash(ext.command))}`,
+        '-c',
+        `mcp_servers.${ext.server}.args=${JSON.stringify(ext.args)}`
+      )
+      const names = Object.keys(ext.env)
+      if (names.length) cliArgs.push('-c', `mcp_servers.${ext.server}.env_vars=${JSON.stringify(names)}`)
+      Object.assign(extensionEnv, ext.env)
+    }
   }
 
   // Resuming: the shared flags go before the subcommand (verified against the CLI).
@@ -254,7 +272,7 @@ ${args.prompt}`
   const exitCode = await new Promise<number>((resolve, reject) => {
     const child = spawn(launch.file, [...launch.prefixArgs, ...cliArgs], {
       windowsHide: true,
-      env: launch.env
+      env: { ...launch.env, ...extensionEnv }
     })
     let stdoutBuffer = ''
     let stderrOutput = ''

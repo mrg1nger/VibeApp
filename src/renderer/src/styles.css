@@ -2357,3 +2357,27 @@ textarea {
   background: var(--danger-bg);
   color: var(--danger-text);
 }
+
+.extension-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+
+.extension-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+}
+
+.extension-form textarea {
+  font: inherit;
+  padding: 6px 8px;
+}

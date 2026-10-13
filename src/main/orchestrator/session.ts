@@ -11,6 +11,7 @@ import type { ConfirmationRequest, QuestionAnswers, UserQuestion, VibeEvent } fr
 import { mapSdkMessage } from './eventSchema'
 import { createCodexDelegationServer } from '../delegation/codexTool'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
+import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
@@ -272,6 +273,12 @@ export class ClaudeSession extends EventEmitter {
       }
     }
 
+    // Tools the user installed once for every project (Extensions screen).
+    const extensions = activeExtensions()
+    const extensionServers = Object.fromEntries(
+      extensions.map((e) => [e.server, { type: 'stdio' as const, command: e.command, args: e.args, env: e.env }])
+    )
+
     const queue = new MessageQueue()
     this.activeModel = getSettings().claudeModel
     this.queryHandle = query({
@@ -291,9 +298,11 @@ export class ClaudeSession extends EventEmitter {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: `${memoryInstructions(getSettings().autoMemory)}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}`
+          append: `${memoryInstructions(getSettings().autoMemory)}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}${extensionInstructions(extensions) ? `
+
+${extensionInstructions(extensions)}` : ''}`
         },
-        mcpServers: { vibe_tools: codexServer, vibe_memory: memoryServer },
+        mcpServers: { ...extensionServers, vibe_tools: codexServer, vibe_memory: memoryServer },
         // Only called when Claude Code itself wants to ask (sensitive files
         // like .mcp.json, paths outside the project). With no handler those
         // requests were silently denied.
@@ -390,6 +399,11 @@ export class ClaudeSession extends EventEmitter {
       const event: VibeEvent = { type: 'task_progress', note: 'mcp_config_reloaded' }
       this.emit('event', event)
     }
+  }
+
+  /** Extensions changed: restart Claude Code (keeping the conversation) so it loads the new tool list. */
+  refreshExtensions(): void {
+    this.requestReload(false)
   }
 
   /** Secrets changed: restart Claude Code (keeping the conversation) so it gets the new environment. */
@@ -653,6 +667,10 @@ export function getOrCreateSession(
 /** Applies a model change to every open chat; new chats read it from settings. */
 export async function setModelForAllSessions(model: string | null): Promise<void> {
   await Promise.all([...sessions.values()].map((s) => s.setModel(model).catch(() => undefined)))
+}
+
+export function refreshExtensionsForAllSessions(): void {
+  for (const s of sessions.values()) s.refreshExtensions()
 }
 
 export function getSession(projectId: string): ClaudeSession | undefined {

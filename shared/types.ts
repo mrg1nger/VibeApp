@@ -84,6 +84,43 @@ export type VibeEvent =
   /** A secret key was written into a project file. */
   | { type: 'secret_leak'; leaks: SecretLeak[] }
 
+/** A tool (an MCP server plus instructions) installed once and offered to Claude and Codex in every project. */
+export interface ExtensionInfo {
+  id: string
+  name: string
+  description: string
+  command: string
+  args: string[]
+  /** Names only; the values stay in the encrypted store. */
+  envNames: string[]
+  instructions: string
+  enabled: boolean
+  catalogId?: string
+}
+
+export interface ExtensionDraft {
+  name: string
+  description?: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  instructions?: string
+  catalogId?: string
+}
+
+export interface ExtensionCatalogItem {
+  id: string
+  name: string
+  description: string
+  command: string
+  args: string[]
+  /** Keys the user has to supply (name shown as the label). */
+  envNeeded: { name: string; label: string }[]
+  instructions: string
+  /** Program that must be installed for it to run. */
+  requires: 'node'
+}
+
 export interface SecretSummary {
   name: string
   /** Masked, e.g. "••••a1b2". */

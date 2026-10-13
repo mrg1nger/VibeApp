@@ -4,6 +4,7 @@ import type {
   AppSettings,
   CliName,
   ConfirmationRequest,
+  ExtensionDraft,
   ImageAttachment,
   MemoryCategory,
   MemoryScope,
@@ -15,7 +16,7 @@ import type {
 } from '@shared/types'
 import { checkClaudeStatus } from '../cli/claude'
 import { checkCodexStatus } from '../cli/codex'
-import { isCliOnPath, refreshPathFromRegistry } from '../cli/execCli'
+import { findCli, isCliOnPath, refreshPathFromRegistry } from '../cli/execCli'
 import { startLoginSession, getLoginSession, disposeLoginSession } from '../pty/loginSession'
 import {
   startInstallSession,
@@ -50,7 +51,8 @@ import {
   getOrCreateSession,
   getSession,
   disposeSession,
-  setModelForAllSessions
+  setModelForAllSessions,
+  refreshExtensionsForAllSessions
 } from '../orchestrator/session'
 import {
   GLOBAL_SCOPE,
@@ -80,6 +82,14 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
+import { CATALOG } from '../extensions/catalog'
+import {
+  addExtension,
+  listExtensions,
+  removeExtension,
+  setExtensionEnabled,
+  setExtensionEnv
+} from '../extensions/store'
 import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
@@ -440,6 +450,29 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipcMain.handle('vibe:memory:tidy', (_event, projectId: string, scope: MemoryScope) =>
     tidyMemory(scopeKey(scope, projectId))
   )
+
+  ipcMain.handle('vibe:extensions:list', async () => ({
+    installed: listExtensions(),
+    catalog: CATALOG,
+    nodeAvailable: (await findCli('npx')) !== 'missing'
+  }))
+  ipcMain.handle('vibe:extensions:add', (_event, draft: ExtensionDraft) => {
+    const added = addExtension(draft)
+    refreshExtensionsForAllSessions()
+    return added
+  })
+  ipcMain.handle('vibe:extensions:setEnabled', (_event, id: string, enabled: boolean) => {
+    setExtensionEnabled(id, enabled)
+    refreshExtensionsForAllSessions()
+  })
+  ipcMain.handle('vibe:extensions:setEnv', (_event, id: string, env: Record<string, string>) => {
+    setExtensionEnv(id, env)
+    refreshExtensionsForAllSessions()
+  })
+  ipcMain.handle('vibe:extensions:remove', (_event, id: string) => {
+    removeExtension(id)
+    refreshExtensionsForAllSessions()
+  })
 
   ipcMain.handle('vibe:settings:get', () => getSettings())
 

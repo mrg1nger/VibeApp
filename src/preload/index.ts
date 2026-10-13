@@ -18,6 +18,9 @@ import type {
   PublishStatus,
   QuestionAnswers,
   SecretSummary,
+  ExtensionInfo,
+  ExtensionDraft,
+  ExtensionCatalogItem,
   ThemeDefinition,
   TranscriptEntry,
   UsageSnapshot,
@@ -228,6 +231,17 @@ const vibeApi = {
       ipcRenderer.invoke('vibe:secrets:set', projectId, name, value),
     delete: (projectId: string, name: string): Promise<void> =>
       ipcRenderer.invoke('vibe:secrets:delete', projectId, name)
+  },
+
+  extensions: {
+    list: (): Promise<{ installed: ExtensionInfo[]; catalog: ExtensionCatalogItem[]; nodeAvailable: boolean }> =>
+      ipcRenderer.invoke('vibe:extensions:list'),
+    add: (draft: ExtensionDraft): Promise<ExtensionInfo> => ipcRenderer.invoke('vibe:extensions:add', draft),
+    setEnabled: (id: string, enabled: boolean): Promise<void> =>
+      ipcRenderer.invoke('vibe:extensions:setEnabled', id, enabled),
+    setEnv: (id: string, env: Record<string, string>): Promise<void> =>
+      ipcRenderer.invoke('vibe:extensions:setEnv', id, env),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('vibe:extensions:remove', id)
   },
 
   publish: {
