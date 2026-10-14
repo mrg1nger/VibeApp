@@ -742,6 +742,28 @@ export function removeCodeFiles(db: DatabaseSync, projectId: string, paths: stri
   })
 }
 
+/** One-line descriptions of the given files from the code map (files not mapped are left out). */
+export function codeSummariesFor(db: DatabaseSync, projectId: string, paths: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  const stmt = db.prepare('SELECT summary FROM code_files WHERE project_id = ? AND path = ?')
+  for (const path of paths) {
+    const row = stmt.get(projectId, path) as { summary: string } | undefined
+    if (row?.summary) out.set(path, row.summary)
+  }
+  return out
+}
+
+/**
+ * Remembered conventions and decisions that bear on a change: related
+ * preferences, gotchas and decisions that aren't already among the key facts
+ * every request starts with.
+ */
+export function reviewConventions(db: DatabaseSync, projectId: string, text: string, limit = 4): MemoryFact[] {
+  return relevantFacts(db, projectId, text, 10)
+    .filter((f) => f.category === 'preference' || f.category === 'gotcha' || f.category === 'decision')
+    .slice(0, limit)
+}
+
 export function countCodeFiles(db: DatabaseSync, projectId: string): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM code_files WHERE project_id = ?').get(projectId) as { n: number }).n
 }

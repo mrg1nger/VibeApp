@@ -4,7 +4,8 @@ import * as z from 'zod/v4'
 import { runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
 import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
-import { finishHandoff, keyFactsBlock, startHandoff } from '../memory/store'
+import { codeSummariesFor, finishHandoff, keyFactsBlock, reviewConventions, startHandoff } from '../memory/store'
+import { digestDiff } from './diffDigest'
 import { handoffContext } from '../memory/context'
 import { changeStats, diffSnapshots, takeSnapshot, type FileChange } from '../git/snapshots'
 import { verifyChanges } from '../review/checks'
@@ -227,11 +228,34 @@ export function createCodexDelegationServer(
             const lines = [summary, `[${parts.join(' · ')}]`]
             if (checks) lines.push(`[${checks}]`)
             if (diff.trim()) {
-              lines.push(
-                diff.length <= DIFF_INLINE_CHARS
-                  ? `Diff:\n${diff.trim()}`
-                  : `(The diff is ${diff.length} characters, so it isn't included; read the files you need to review.)`
-              )
+              if (diff.length <= DIFF_INLINE_CHARS) {
+                lines.push(`Diff:\n${diff.trim()}`)
+              } else {
+                // Too big to hand back whole: a digest built from the code map and the request.
+                const summaries =
+                  (projectId && changes
+                    ? attempt(() =>
+                        codeSummariesFor(
+                          memoryDb(),
+                          projectId,
+                          changes.map((c) => c.path)
+                        )
+                      )
+                    : undefined) ?? new Map<string, string>()
+                lines.push(digestDiff(diff, changes ?? [], `${request?.text ?? ''} ${args.prompt}`, summaries))
+              }
+            }
+            // Remembered conventions that bear on this change, so the review checks against them.
+            if (projectId && changes?.length) {
+              const text = [request?.text, args.prompt, ...changes.map((c) => c.path)].filter(Boolean).join(' ')
+              const rules = attempt(() => reviewConventions(memoryDb(), projectId, text))
+              if (rules?.length) {
+                lines.push(
+                  `[Remembered conventions that apply here; check the change against them:\n${rules
+                    .map((r) => `- ${r.text}`)
+                    .join('\n')}]`
+                )
+              }
             }
             return {
               content: [{ type: 'text' as const, text: lines.join('\n\n') }],
