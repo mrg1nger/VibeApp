@@ -732,6 +732,7 @@ function startTakeover(
     element: request.element,
     images: request.images,
     resetsAt,
+    snapshot: request.snapshot,
     unsandboxed: session.isGoNutzMode(),
     emit: (event) => session.emit('event', event),
     signal: abort.signal

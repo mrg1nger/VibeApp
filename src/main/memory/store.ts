@@ -816,7 +816,11 @@ export function eraseProjectFromMemory(
     const handoffs = count('DELETE FROM handoffs WHERE project_id = ?')
     const files = count('DELETE FROM code_files WHERE project_id = ?')
     count('DELETE FROM usage_log WHERE project_id = ?')
-    db.prepare('DELETE FROM meta WHERE key IN (?, ?)').run(`history_imported:${projectId}`, `tidy:${projectId}`)
+    db.prepare('DELETE FROM meta WHERE key IN (?, ?, ?)').run(
+      `history_imported:${projectId}`,
+      `tidy:${projectId}`,
+      `catchup:${projectId}`
+    )
     return { facts, messages, handoffs, files }
   })
 }

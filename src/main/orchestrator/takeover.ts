@@ -4,7 +4,7 @@ import { runCodexExec } from '../cli/codexExec'
 import { changeStats, takeSnapshot, type FileChange } from '../git/snapshots'
 import { handoffContext } from '../memory/context'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
-import { finishHandoff, keyFactsBlock, startHandoff } from '../memory/store'
+import { finishHandoff, getMeta, keyFactsBlock, setMeta, startHandoff } from '../memory/store'
 import { verifyChanges } from '../review/checks'
 import { getSettings } from '../settings/store'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
@@ -18,8 +18,32 @@ const TIMEOUT_MS = 15 * 60_000
 /** Per project: the Codex session takeovers continue, so follow-ups keep their context. */
 const threads = new Map<string, { id: string; unsandboxed: boolean }>()
 
-/** Per project: what Codex handled while Claude was out, for Claude's catch-up note. */
-const handled = new Map<string, { request: string; outcome: string }[]>()
+/** What Codex handled directly while Claude was out, kept (across restarts) for Claude's catch-up note. */
+interface CatchUpItem {
+  request: string
+  outcome: string
+  files: string[]
+  /** The project as it was before this request, for a git diff against it. */
+  snapshot?: string
+}
+
+const catchUpKey = (projectId: string): string => `catchup:${projectId}`
+
+function readCatchUp(projectId: string): CatchUpItem[] {
+  try {
+    const raw = getMeta(memoryDb(), catchUpKey(projectId))
+    return raw ? (JSON.parse(raw) as CatchUpItem[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writeCatchUp(projectId: string, items: CatchUpItem[]): void {
+  attempt(() => {
+    if (items.length) setMeta(memoryDb(), catchUpKey(projectId), JSON.stringify(items.slice(-8)))
+    else memoryDb().prepare('DELETE FROM meta WHERE key = ?').run(catchUpKey(projectId))
+  })
+}
 
 export interface TakeoverRequest {
   projectId: string
@@ -30,6 +54,8 @@ export interface TakeoverRequest {
   /** Saved image files the user attached. */
   images: string[]
   resetsAt: number | null
+  /** The project as it was before this request (the Undo snapshot). */
+  snapshot?: string
   unsandboxed: boolean
   emit: (event: VibeEvent) => void
   signal: AbortSignal
@@ -46,17 +72,31 @@ function attempt<T>(work: () => T): T | undefined {
 
 /** A note for Claude's next message, listing what Codex did while it was out. Clears the list. */
 export function takeCatchUpNote(projectId: string): string | undefined {
-  const items = handled.get(projectId)
-  handled.delete(projectId)
-  if (!items?.length) return undefined
-  const lines = items.map((i, n) => `${n + 1}. "${i.request.slice(0, 200)}" -> ${i.outcome.slice(0, 400)}`)
+  const items = readCatchUp(projectId)
+  if (!items.length) return undefined
+  writeCatchUp(projectId, [])
   const many = items.length > 1
-  return `[VibeApp note: while Claude's plan limit was reached, Codex handled ${many ? 'these requests' : 'this request'} directly, so the earlier conversation doesn't include ${many ? 'them' : 'it'}. The project files are current; the handoffs tool has the full reports.\n${lines.join('\n')}]`
+  const lines = items.map((i, n) => {
+    const more = i.files.length > 12 ? ` and ${i.files.length - 12} more` : ''
+    const files = i.files.length ? ` Files: ${i.files.slice(0, 12).join(', ')}${more}.` : ''
+    return `${n + 1}. "${i.request.slice(0, 200)}" -> ${i.outcome.slice(0, 300)}${files}`
+  })
+  const first = items.find((i) => i.snapshot)?.snapshot
+  return [
+    `[VibeApp note: while Claude's plan limit was reached, Codex handled ${many ? 'these requests' : 'this request'} directly, so ${many ? 'they are' : 'it is'} not in this conversation.`,
+    "Those changes are in the working tree as uncommitted edits (VibeApp doesn't commit for the user), so git status and git diff will show them mixed in with everything else. That is expected and is not part of the new request unless the user says so; don't try to untangle or revert them.",
+    first ? `To see exactly what Codex changed in that time: git diff ${first} (plus git status --short for new files).` : '',
+    'Judge what changed during a request from the hand-off results (they list their own files and diff), not from a whole-tree git diff. The handoffs tool has the full reports.',
+    'What Codex did:',
+    ...lines
+  ]
+    .filter(Boolean)
+    .join('\n') + ']'
 }
 
 export function forgetTakeover(projectId: string): void {
   threads.delete(projectId)
-  handled.delete(projectId)
+  writeCatchUp(projectId, [])
 }
 
 /** Runs one request on Codex and reports it to the chat as a normal (delegated) turn. */
@@ -175,12 +215,15 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
         })
       )
     }
-    const list = handled.get(projectId) ?? []
-    list.push({
-      request: req.text,
-      outcome: `${status}${changes?.length ? `, changed ${changes.length} file(s)` : ''}. ${report}`
-    })
-    handled.set(projectId, list.slice(-5))
+    writeCatchUp(projectId, [
+      ...readCatchUp(projectId),
+      {
+        request: req.text,
+        outcome: `${status}. ${report}`,
+        files: changes?.map((c) => c.path) ?? [],
+        snapshot: req.snapshot
+      }
+    ])
     emit({ type: 'turn_complete' })
   }
 }
