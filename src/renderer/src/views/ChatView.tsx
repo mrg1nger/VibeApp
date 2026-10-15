@@ -63,6 +63,8 @@ type ChatItem =
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
 const ASK_PREF_KEY = 'vibeapp.askMode'
+/** A Build chat this big (tokens) gets a note about what each message costs. */
+const CONTEXT_NOTE_TOKENS = 60_000
 
 function describePicked(picked: PickedElement): string {
   const text = picked.text.trim().replace(/\s+/g, ' ').slice(0, 40)
@@ -138,6 +140,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [showPreview, setShowPreview] = useState(readPreviewPref)
   // Ask: answer a question without changing anything. Build: the normal coding flow.
   const [askMode, setAskMode] = useState(readAskPref)
+  // How big this project's Claude conversation is now (tokens re-read on every Build step).
+  const [contextTokens, setContextTokens] = useState(0)
   const [refreshToken, setRefreshToken] = useState(0)
   const [picking, setPicking] = useState(false)
   const [picked, setPicked] = useState<PickedElement | null>(null)
@@ -327,6 +331,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               setBusy(false)
               refreshHasChanges()
               setRefreshToken((t) => t + 1)
+              window.vibe.chat.contextSize(project.id).then(setContextTokens).catch(() => undefined)
             }
             return prev
           default:
@@ -334,8 +339,12 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         }
       })
     },
-    [refreshHasChanges, onError]
+    [refreshHasChanges, onError, project.id]
   )
+
+  useEffect(() => {
+    window.vibe.chat.contextSize(project.id).then(setContextTokens).catch(() => undefined)
+  }, [project.id])
 
   useEffect(() => {
     let cancelled = false
@@ -392,7 +401,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   }, [items])
 
   const sendMessage = useCallback(
-    async (text: string, element?: PickedElement, images: PendingImage[] = []) => {
+    async (text: string, element?: PickedElement, images: PendingImage[] = [], forceBuild = false) => {
       const index = { value: -1 }
       setItems((prev) => {
         index.value = prev.length
@@ -408,7 +417,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       })
       setBusy(true)
       setProblem(null)
-      if (askMode && !element && images.length === 0) {
+      if (askMode && !forceBuild && !element && images.length === 0) {
         try {
           await window.vibe.chat.ask(project.id, project.path, text)
         } catch (err) {
@@ -423,7 +432,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           project.path,
           text,
           element,
-          images.map(toAttachment)
+          images.map(toAttachment),
+          forceBuild
         )
         // Swap the full-size local previews for the small saved thumbnails.
         setItems((prev) =>
@@ -733,6 +743,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     ⚡ {item.label} · {item.reason}
                   </span>
                 )}
+                {item.kind === 'route' && item.label === 'Answered as a question' && !busy && (
+                  <button
+                    className="chat-inline-action"
+                    title="Send this message to Claude as a normal build request instead"
+                    onClick={() => {
+                      const asked = [...items.slice(0, i)].reverse().find((it) => it.kind === 'user_text')
+                      if (asked && asked.kind === 'user_text') sendMessage(asked.text, undefined, [], true)
+                    }}
+                  >
+                    Do it in Build instead
+                  </button>
+                )}
                 {item.kind === 'review' && (
                   <div className={`review-card review-card-${item.status}`}>
                     {item.status === 'running' && (
@@ -872,6 +894,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {!askMode && !busy && contextTokens >= CONTEXT_NOTE_TOKENS && (
+            <div className="chat-cost-note">
+              <span>
+                💡 This chat has grown to about {compactCount(contextTokens)} tokens, and every Build message re-reads
+                it. Questions are much cheaper in Ask mode; for a new, unrelated task, a fresh chat is cheaper still.
+              </span>
+              <button className="chat-inline-action" onClick={() => setAskMode(true)}>
+                Switch to Ask
+              </button>
             </div>
           )}
 

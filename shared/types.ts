@@ -340,6 +340,8 @@ export interface AppSettings {
   agentBalance: AgentBalance
   /** When Claude's plan limit is reached: let Codex take the request, ask first, or just report it. */
   limitTakeover: 'auto' | 'ask' | 'off'
+  /** Send plain questions typed in Build mode to the cheaper Ask path. */
+  autoAsk: boolean
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */

@@ -83,6 +83,7 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
+import { isPlainQuestion } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
 import { runTalk, stopTalk, getTalk } from '../chat/talk'
 import { deleteTalk, listTalks } from '../chat/talkStore'
@@ -216,8 +217,23 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       projectPath: string,
       text: string,
       picked?: PickedElement,
-      images?: ImageAttachment[]
+      images?: ImageAttachment[],
+      forceBuild?: boolean
     ) => {
+      // A plain question doesn't need the full coding session (and its whole
+      // conversation re-read on every step): answer it the cheap way.
+      if (
+        !forceBuild &&
+        !picked &&
+        !images?.length &&
+        getSettings().autoAsk &&
+        !asks.has(projectId) &&
+        isPlainQuestion(text)
+      ) {
+        runAsk(projectId, projectPath, text, getSender, true)
+        return { snapshot: undefined, thumbnails: [] as string[] }
+      }
+
       const project = getProject(projectId)
       const session = getOrCreateSession(
         projectId,
@@ -287,10 +303,20 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         }
       }
 
-      try {
-        await session.useModel(route.model)
-      } catch (err) {
-        console.warn('Model switch failed:', (err as Error).message)
+      // The prompt cache is per model, so dropping to Haiku in a big
+      // conversation re-processes all of it, costing more than a quick edit
+      // saves. Stay on the current model then.
+      if (route.model === 'haiku' && session.contextTokens() > CACHE_KEEP_TOKENS) {
+        route.model = null
+        route.label = undefined
+        route.reason = undefined
+        route.detail = undefined
+      } else {
+        try {
+          await session.useModel(route.model)
+        } catch (err) {
+          console.warn('Model switch failed:', (err as Error).message)
+        }
       }
 
       // Quick edits skip the Codex review: it would take longer than the edit.
@@ -356,6 +382,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
+  ipcMain.handle('vibe:chat:contextSize', (_event, projectId: string) => getSession(projectId)?.contextTokens() ?? 0)
+
   ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
     const ask = asks.get(projectId)
     if (ask) {
@@ -372,74 +400,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   // Ask mode: answer a question about the project without changing anything.
-  ipcMain.handle('vibe:chat:ask', async (_event, projectId: string, projectPath: string, text: string) => {
-    if (asks.has(projectId) || takeovers.has(projectId)) return
-    const abort = new AbortController()
-    asks.set(projectId, abort)
-    const emit = (event: VibeEvent): void => {
-      appendEvent(projectId, event)
-      getSender()?.send('vibe:chat:event', projectId, event)
-    }
-    appendUserMessage(projectId, text)
-    recordUserMessage(projectId, text, 'asked as a question')
-    emit({ type: 'route', label: 'Question', reason: 'answered without changing any files' })
-    void (async () => {
-      try {
-        const keyFacts = keyFactsBlock(memoryDb(), projectId)
-        const relevant = prefetchBlock(projectId, text)
-        const chosen = getSettings().claudeModel
-        const system = `You are answering a question about the user's software project inside VibeApp. Do not change anything: you can only read and search files and look things up in the project's memory. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
-        const prompt = [relevant, text].filter(Boolean).join('\n\n')
-        let answer
-        const blocked = claudeBlockedUntil() !== null
-        if (!blocked) {
-          try {
-            answer = await askClaude({
-              prompt,
-              cwd: projectPath,
-              system,
-              // Cheap by default; never Opus for a question.
-              model: !chosen ? 'haiku' : /opus/i.test(chosen) ? 'sonnet' : chosen,
-              abort,
-              readFiles: true,
-              memory: {
-                scriptPath: memoryServerScriptPath(),
-                dbPath: memoryDbPath(),
-                projectId,
-                projectPath
-              },
-              resume: askSessions.get(projectId)
-            })
-            if (answer.sessionId) askSessions.set(projectId, answer.sessionId)
-            recordUsage(projectId, 'chat', 'claude', answer.counts)
-          } catch (err) {
-            if (!(err instanceof ClaudeLimitError)) throw err
-            noteClaudeLimit(null)
-          }
-        }
-        if (!answer) {
-          // Claude is out: Codex answers instead, read-only.
-          answer = await askCodex({
-            prompt: `${system}
-
-${prompt}`,
-            cwd: projectPath,
-            model: getSettings().codexModel ?? undefined,
-            abort
-          })
-          recordUsage(projectId, 'chat', 'codex', answer.counts)
-          emit({ type: 'route', label: 'Answered by Codex', reason: 'Claude is out right now' })
-        }
-        recordAssistantMessage(projectId, answer.text)
-        emit({ type: 'assistant_text', text: answer.text, partial: false })
-      } catch (err) {
-        if (abort.signal.aborted) emit({ type: 'stopped' })
-        else emit({ type: 'error', message: `Couldn't answer that: ${(err as Error).message}` })
-      } finally {
-        asks.delete(projectId)
-        emit({ type: 'turn_complete' })
-      }
-    })()
+  ipcMain.handle('vibe:chat:ask', (_event, projectId: string, projectPath: string, text: string) => {
+    runAsk(projectId, projectPath, text, getSender, false)
   })
 
   ipcMain.handle('vibe:talk:list', () => listTalks())
@@ -688,6 +650,9 @@ function pickedNote(picked: PickedElement): string {
   ].join('\n')
 }
 
+/** Above this conversation size, small requests keep the current model rather than breaking the prompt cache. */
+const CACHE_KEEP_TOKENS = 30_000
+
 /** Context size (tokens) past which a long conversation moves to a fresh session, if that's enabled. */
 function rotateThreshold(): number {
   // The override is for testing; Claude Code's own prompt is ~40k of this.
@@ -712,6 +677,87 @@ const asks = new Map<string, AbortController>()
 const askSessions = new Map<string, string>()
 /** Running takeovers; aborting one stops Codex. */
 const takeovers = new Map<string, AbortController>()
+
+/** Answers a question about the project without changing anything (Ask mode, or a plain question sent from Build). */
+function runAsk(
+  projectId: string,
+  projectPath: string,
+  text: string,
+  getSender: () => WebContents | undefined,
+  auto: boolean
+): void {
+  if (asks.has(projectId) || takeovers.has(projectId)) return
+  const abort = new AbortController()
+  asks.set(projectId, abort)
+  const emit = (event: VibeEvent): void => {
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+  }
+  appendUserMessage(projectId, text)
+  recordUserMessage(projectId, text, 'asked as a question')
+  emit(
+    auto
+      ? { type: 'route', label: 'Answered as a question', reason: 'cheaper than a build request; no files changed' }
+      : { type: 'route', label: 'Question', reason: 'answered without changing any files' }
+  )
+  void (async () => {
+    try {
+      const keyFacts = keyFactsBlock(memoryDb(), projectId)
+      const relevant = prefetchBlock(projectId, text)
+      const chosen = getSettings().claudeModel
+      const system = `You are answering a question about the user's software project inside VibeApp. Do not change anything: you can only read and search files and look things up in the project's memory. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
+      const prompt = [relevant, text].filter(Boolean).join('\n\n')
+      let answer
+      const blocked = claudeBlockedUntil() !== null
+      if (!blocked) {
+        try {
+          answer = await askClaude({
+            prompt,
+            cwd: projectPath,
+            system,
+            // Cheap by default; never Opus for a question.
+            model: !chosen ? 'haiku' : /opus/i.test(chosen) ? 'sonnet' : chosen,
+            abort,
+            readFiles: true,
+            memory: {
+              scriptPath: memoryServerScriptPath(),
+              dbPath: memoryDbPath(),
+              projectId,
+              projectPath
+            },
+            resume: askSessions.get(projectId)
+          })
+          if (answer.sessionId) askSessions.set(projectId, answer.sessionId)
+          recordUsage(projectId, 'chat', 'claude', answer.counts)
+        } catch (err) {
+          if (!(err instanceof ClaudeLimitError)) throw err
+          noteClaudeLimit(null)
+        }
+      }
+      if (!answer) {
+        // Claude is out: Codex answers instead, read-only.
+        answer = await askCodex({
+          prompt: `${system}
+
+${prompt}`,
+          cwd: projectPath,
+          model: getSettings().codexModel ?? undefined,
+          abort
+        })
+        recordUsage(projectId, 'chat', 'codex', answer.counts)
+        emit({ type: 'route', label: 'Answered by Codex', reason: 'Claude is out right now' })
+      }
+      recordAssistantMessage(projectId, answer.text)
+      emit({ type: 'assistant_text', text: answer.text, partial: false })
+    } catch (err) {
+      if (abort.signal.aborted) emit({ type: 'stopped' })
+      else emit({ type: 'error', message: `Couldn't answer that: ${(err as Error).message}` })
+    } finally {
+      asks.delete(projectId)
+      emit({ type: 'turn_complete' })
+    }
+  })()
+}
 
 function startTakeover(
   session: ReturnType<typeof getOrCreateSession>,

@@ -107,9 +107,10 @@ const vibeApi = {
       projectPath: string,
       text: string,
       picked?: PickedElement,
-      images?: ImageAttachment[]
+      images?: ImageAttachment[],
+      forceBuild?: boolean
     ): Promise<{ snapshot?: string; thumbnails: string[] }> =>
-      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images),
+      ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images, forceBuild),
     undo: (
       projectPath: string,
       snapshot: string
@@ -143,6 +144,7 @@ const vibeApi = {
     ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:chat:stop', projectId),
+    contextSize: (projectId: string): Promise<number> => ipcRenderer.invoke('vibe:chat:contextSize', projectId),
     ask: (projectId: string, projectPath: string, text: string): Promise<void> =>
       ipcRenderer.invoke('vibe:chat:ask', projectId, projectPath, text),
     takeover: (projectId: string, projectPath: string): Promise<void> =>

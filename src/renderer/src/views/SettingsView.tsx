@@ -184,6 +184,22 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
         <label className="settings-toggle">
           <input
             type="checkbox"
+            checked={settings.autoAsk}
+            onChange={(e) => onSettingsChange({ autoAsk: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Answer plain questions the cheap way
+            <small>
+              A message that is only a question ("which file handles X?", "how many realms are there?") is answered
+              in Ask mode even when you're in Build, so it doesn't re-read the whole coding conversation. The reply
+              has a button to send it to Build instead.
+            </small>
+          </span>
+        </label>
+
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
             checked={settings.autoMemory}
             onChange={(e) => onSettingsChange({ autoMemory: e.target.checked }).catch(() => undefined)}
           />
