@@ -764,6 +764,13 @@ export function reviewConventions(db: DatabaseSync, projectId: string, text: str
     .slice(0, limit)
 }
 
+/** The first `limit` mapped files, by path, with their one-line descriptions. */
+export function listCodeFiles(db: DatabaseSync, projectId: string, limit = 60): { path: string; summary: string }[] {
+  return db
+    .prepare('SELECT path, summary FROM code_files WHERE project_id = ? ORDER BY path LIMIT ?')
+    .all(projectId, limit) as unknown as { path: string; summary: string }[]
+}
+
 export function countCodeFiles(db: DatabaseSync, projectId: string): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM code_files WHERE project_id = ?').get(projectId) as { n: number }).n
 }
@@ -838,6 +845,7 @@ export type UsageKind =
   | 'summary' // Haiku summarising a conversation for a fresh session
   | 'takeover' // Codex handling a request directly because Claude was out
   | 'chat' // a question answered without building (Ask mode or the Chat tab)
+  | 'brief' // Haiku writing the project brief
 
 export interface UsageRecord {
   projectId?: string

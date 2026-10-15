@@ -39,6 +39,8 @@ function MemoryView({ project, onError }: MemoryViewProps) {
   const [editingText, setEditingText] = useState('')
   const [tidying, setTidying] = useState(false)
   const [tidyNote, setTidyNote] = useState('')
+  const [brief, setBrief] = useState<{ text: string; updatedAt: string } | null>(null)
+  const [briefBusy, setBriefBusy] = useState(false)
 
   const effectiveScope: MemoryScope = project ? scope : 'global'
   // A stable id is required for project-scoped memory; global scope ignores it.
@@ -57,6 +59,23 @@ function MemoryView({ project, onError }: MemoryViewProps) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!project) return
+    window.vibe.brief.get(project.id).then(setBrief).catch(() => undefined)
+  }, [project])
+
+  const refreshBrief = useCallback(async () => {
+    if (!project) return
+    setBriefBusy(true)
+    try {
+      setBrief(await window.vibe.brief.refresh(project.id, project.path))
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBriefBusy(false)
+    }
+  }, [project, fail])
 
   const run = useCallback(
     async (action: () => Promise<unknown>) => {
@@ -204,6 +223,23 @@ function MemoryView({ project, onError }: MemoryViewProps) {
         </div>
       )}
       {!project && <p className="memory-hint">Open a project to see its project-scoped memory too.</p>}
+
+      {project && effectiveScope === 'project' && (
+        <details className="memory-brief" open={!!brief}>
+          <summary>
+            Project brief{brief ? ` (updated ${new Date(brief.updatedAt).toLocaleString()})` : ' (not written yet)'}
+          </summary>
+          <p className="memory-hint">
+            A short summary of what this project is and how it's run, tested and deployed, built from the facts below
+            and the commands that were run. New Claude sessions and Codex start from it. It's rewritten automatically
+            now and then and before a fresh session starts.
+          </p>
+          {brief && <pre style={{ whiteSpace: 'pre-wrap' }}>{brief.text}</pre>}
+          <button onClick={refreshBrief} disabled={briefBusy}>
+            {briefBusy ? 'Writing…' : brief ? 'Rewrite it now' : 'Write it now'}
+          </button>
+        </details>
+      )}
 
       <p className="memory-hint">
         ★ Key facts are given to Claude and Codex at the start of every request. The rest are searched when a request

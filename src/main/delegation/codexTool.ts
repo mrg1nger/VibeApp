@@ -6,6 +6,7 @@ import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
 import { codeSummariesFor, finishHandoff, keyFactsBlock, reviewConventions, startHandoff } from '../memory/store'
 import { digestDiff } from './diffDigest'
+import { briefBlock } from '../memory/brief'
 import { handoffContext } from '../memory/context'
 import { changeStats, diffSnapshots, takeSnapshot, type FileChange } from '../git/snapshots'
 import { verifyChanges } from '../review/checks'
@@ -188,6 +189,7 @@ export function createCodexDelegationServer(
                     ? {
                         ...memory,
                         keyFacts: currentKeyFacts(memory.projectId),
+                        brief: attempt(() => briefBlock(memory.projectId)),
                         context,
                         autoMemory: getSettings().autoMemory
                       }

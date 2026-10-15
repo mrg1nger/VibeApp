@@ -10,7 +10,7 @@ import { describeActivity, progressNote } from './codexActivity'
 
 const execFileAsync = promisify(execFile)
 
-const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Use where to find which file holds something (a map of every file with a one-line summary) before searching the code yourself, history to look up what the user said earlier, and handoffs to see what earlier hand-offs did. {{SAVING}} If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state.`
+const CODEX_MEMORY_INSTRUCTIONS = `You have a persistent memory shared with Claude through the vibe_memory MCP tools. The project's key facts are below; for anything else, search with recall (a short query like "sprites" or "tests"). Use where to find which file holds something (a map of every file with a one-line summary) before searching the code yourself, history to look up what the user said earlier, and handoffs to see what earlier hand-offs did. {{SAVING}} If a remembered fact is wrong or outdated, fix it with update or forget instead of saving a contradicting one. Don't save secrets or temporary task state. Before an operational job (deploy, release, restart, restore, a test run), look for how it was done before (the project brief, key facts, recall "deploy" or "procedure", history) and follow that method rather than writing a new script or inventing steps.`
 
 const SAVE_MANUALLY = 'Before finishing, use remember to save anything worth keeping across sessions (how to run/build/test, decisions, gotchas), one standalone sentence per fact with a category.'
 const SAVE_AUTOMATICALLY = "VibeApp saves lasting facts from each request automatically, so don't call remember unless you were asked to remember something."
@@ -127,6 +127,8 @@ export interface CodexExecArgs {
     projectId: string
     /** The project's key facts, given to Codex up front. */
     keyFacts?: string
+    /** The project brief (what a newcomer needs to know), if one has been written. */
+    brief?: string
     /** The project folder, so the memory tool can tell when a file summary is out of date. */
     projectPath: string
     /** Relevant memories, recent hand-offs and the user's own words, ahead of the task. */
@@ -189,6 +191,7 @@ ${args.prompt}`
     ? [
         instructions,
         `Key facts:\n${args.memory.keyFacts ?? '(none yet)'}`,
+        args.memory.brief ? `Project brief:\n${args.memory.brief}` : undefined,
         args.memory.context,
         args.memory.context ? `${args.taskLabel ?? 'Task from Claude'}:\n${args.prompt}` : args.prompt
       ]

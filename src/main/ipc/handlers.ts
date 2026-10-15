@@ -73,7 +73,9 @@ import {
   recordAssistantMessage,
   recordUserMessage
 } from '../memory/context'
-import { runScribe, summarizeConversation, type TurnRecord } from '../memory/scribe'
+import { runSavePass, runScribe, summarizeConversation, type TurnRecord } from '../memory/scribe'
+import { getBrief, maybeRefreshBrief, refreshBrief } from '../memory/brief'
+import { cleanCommand, isNotableCommand } from '../memory/commands'
 import { syncAgentsFile } from '../memory/agentsFile'
 import { keyFactsBlock, usageSummary } from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
@@ -350,7 +352,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       const relevant = prefetchBlock(projectId, text)
       // First request in a project: start mapping the code now, in the background.
       maybeRefreshCodeMap(projectId, projectPath)
-      turnRecords.set(projectId, { request: text, replies: [], actions: [], stopped: false, hadError: false })
+      turnRecords.set(projectId, { request: text, replies: [], actions: [], commands: [], stopped: false, hadError: false })
       lastRequests.set(projectId, { text, element, images: prepared.map((p) => p.savedPath), snapshot })
       const message = [
         carried,
@@ -424,6 +426,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   // Ask mode: answer a question about the project without changing anything.
   ipcMain.handle('vibe:chat:ask', (_event, projectId: string, projectPath: string, text: string) => {
     runAsk(projectId, projectPath, text, getSender, false)
+  })
+
+  ipcMain.handle('vibe:memory:brief', (_event, projectId: string) => getBrief(projectId) ?? null)
+  ipcMain.handle('vibe:memory:refreshBrief', async (_event, projectId: string, projectPath: string) => {
+    const brief = await refreshBrief(projectId, projectPath, { force: true })
+    return brief ?? getBrief(projectId) ?? null
   })
 
   ipcMain.handle('vibe:talk:list', () => listTalks())
@@ -694,6 +702,22 @@ async function rotateWithSummary(
   projectId: string
 ): Promise<string | undefined> {
   ensureHistoryImported(projectId)
+  // The last chance to save what only this conversation knows (procedures,
+  // rules, decisions), and to bring the project brief up to date, before it
+  // is left behind. Neither may stop the rollover.
+  try {
+    await runSavePass(projectId)
+  } catch (err) {
+    console.warn('Save pass before the fresh session failed:', (err as Error).message)
+  }
+  const projectPath = getProject(projectId)?.path
+  if (projectPath) {
+    try {
+      await refreshBrief(projectId, projectPath, { force: true })
+    } catch (err) {
+      console.warn('Project brief refresh failed:', (err as Error).message)
+    }
+  }
   const summary = await summarizeConversation(projectId)
   if (!summary || !session.rotate(summary)) return undefined
   return `[VibeApp note: this is a fresh session continuing earlier work, started to keep things fast. Summary of the conversation so far:\n${summary}\nTreat the STANDING RULES in it as binding. The history tool (mcp__vibe_memory__history) has the details; check it before assuming something wasn't discussed.]`
@@ -863,7 +887,21 @@ function wireSessionEvents(
       const record = turnRecords.get(projectId)
       if (record) {
         if (forwarded.type === 'assistant_text') record.replies.push(forwarded.text)
-        else if (forwarded.type === 'tool_call') record.actions.push(forwarded.friendlyLabel.slice(0, 160))
+        else if (forwarded.type === 'tool_call') {
+          record.actions.push(forwarded.friendlyLabel.slice(0, 160))
+          // The commands themselves, for saving how things are done.
+          const command =
+            forwarded.name === 'Bash' || forwarded.name === 'PowerShell'
+              ? (forwarded.input as { command?: string } | undefined)?.command
+              : undefined
+          if (command && isNotableCommand(command)) record.commands?.push(cleanCommand(command))
+        } else if (forwarded.type === 'delegation_activity') {
+          const a = forwarded.activity
+          if (a.step === 'run' && a.done && a.ok !== false) {
+            const command = a.full ?? a.text
+            if (isNotableCommand(command)) record.commands?.push(cleanCommand(command))
+          }
+        }
         else if (forwarded.type === 'error') record.hadError = true
         else if (forwarded.type === 'stopped') record.stopped = true
       }
@@ -881,6 +919,7 @@ function wireSessionEvents(
               if (path) syncAgentsFile(projectId, path)
               maybeTidy(projectId)
               maybeTidy(GLOBAL_SCOPE)
+              if (path) maybeRefreshBrief(projectId, path)
             })
         } else {
           if (path) syncAgentsFile(projectId, path)

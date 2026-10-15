@@ -251,6 +251,13 @@ const vibeApi = {
     delete: (id: string): Promise<void> => ipcRenderer.invoke('vibe:talk:delete', id)
   },
 
+  brief: {
+    get: (projectId: string): Promise<{ text: string; updatedAt: string } | null> =>
+      ipcRenderer.invoke('vibe:memory:brief', projectId),
+    refresh: (projectId: string, projectPath: string): Promise<{ text: string; updatedAt: string } | null> =>
+      ipcRenderer.invoke('vibe:memory:refreshBrief', projectId, projectPath)
+  },
+
   extensions: {
     list: (): Promise<{ installed: ExtensionInfo[]; catalog: ExtensionCatalogItem[]; nodeAvailable: boolean }> =>
       ipcRenderer.invoke('vibe:extensions:list'),

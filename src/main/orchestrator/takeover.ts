@@ -4,6 +4,7 @@ import { runCodexExec } from '../cli/codexExec'
 import { changeStats, takeSnapshot, type FileChange } from '../git/snapshots'
 import { handoffContext } from '../memory/context'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
+import { briefBlock } from '../memory/brief'
 import { finishHandoff, getMeta, keyFactsBlock, setMeta, startHandoff } from '../memory/store'
 import { verifyChanges } from '../review/checks'
 import { getSettings } from '../settings/store'
@@ -137,6 +138,7 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
       projectId,
       projectPath,
       keyFacts: attempt(() => keyFactsBlock(memoryDb(), projectId)),
+      brief: attempt(() => briefBlock(projectId)),
       context: attempt(() => handoffContext(projectId, prompt, request)),
       // Claude's note-taker is out too, so Codex saves what it learns itself.
       autoMemory: false

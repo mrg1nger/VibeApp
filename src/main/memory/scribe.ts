@@ -7,6 +7,7 @@ import { detectSecrets } from '@shared/secretPatterns'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { memoryDb } from './paths'
+import { recentNotableCommands } from './commands'
 import {
   forgetFact,
   getFact,
@@ -31,6 +32,10 @@ export interface TurnRecord {
   actions: string[]
   stopped: boolean
   hadError: boolean
+  /** Commands that were run (secrets already scrubbed), for saving how things are done. */
+  commands?: string[]
+  /** The last look before a fresh session: save everything a newcomer would need. */
+  thorough?: boolean
 }
 
 export interface ScribeResult {
@@ -92,6 +97,7 @@ interface Plan {
 }
 
 const MAX_CHANGES = 3
+const MAX_CHANGES_THOROUGH = 8
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
@@ -99,15 +105,18 @@ function clip(text: string, max: number): string {
 
 function buildPrompt(turn: TurnRecord, known: string[]): string {
   const actions = turn.actions.length ? turn.actions.slice(-25).join('\n') : '(none)'
+  const commands = turn.commands?.length ? turn.commands.slice(-25).join('\n') : ''
+  const limit = turn.thorough ? MAX_CHANGES_THOROUGH : MAX_CHANGES
   const replies = turn.replies.map((r) => clip(r, 2500)).join('\n---\n') || '(no reply)'
   return `You keep the long-term memory of a software project that an AI coding assistant works on. After each exchange you decide what, if anything, is worth remembering for future sessions.
 
 Worth remembering: what the project is; how to run, build, test or deploy it; decisions that were made and why; the user's standing preferences and rules; non-obvious pitfalls; naming and structure conventions that were agreed.
 Not worth remembering: the task itself or its progress ("added a button"); things anyone can see in the code; temporary state; anything uncertain or guessed; anything already known; secrets, keys or passwords of any kind.
 
-Be conservative: most exchanges produce nothing, so return empty lists. One standalone sentence per fact.
+Procedures: if COMMANDS THAT WERE RUN show a multi-step routine that worked (a deploy, release, restart, backup, restore, migration, test run), save it as ONE fact in category "setup" that begins "Procedure - <name>:" and gives the commands in order exactly as run, plus what showed it succeeded (for example the check that came back fine). Use only commands that appear in that list, never invent steps, and refer to keys or passwords by their environment variable name, never their value. If a procedure with that name is already known, update it only when the working steps differ. A procedure fact can be up to 800 characters; mark it "key" only if it is under 300.
+Be conservative: most exchanges produce nothing, so return empty lists. One standalone sentence per fact (a procedure is the exception).
 Record only what the exchange actually says or clearly shows. Never add details that weren't stated (ports, versions, file names, commands), even if they would be typical. When correcting a known fact, state only what is now known to be true: drop details that belonged to the old version (an old port, path or option) unless the exchange confirms they still hold.
-A preference or rule counts only if the USER said it and it plainly applies beyond this one task. What the assistant chose to do is not a preference of the user's. Instructions for this task alone ("keep it tiny", "just acknowledge", "no code changes") are not preferences. Don't save the same idea twice in different words, and save at most three facts.
+A preference or rule counts only if the USER said it and it plainly applies beyond this one task. What the assistant chose to do is not a preference of the user's. Instructions for this task alone ("keep it tiny", "just acknowledge", "no code changes") are not preferences. Don't save the same idea twice in different words, and save at most ${limit} facts.
 Only mark a fact "key" if it is the project's description, how to run it, or a standing rule the user gave.
 Prefer correcting a known fact (update, using its id) over adding one that contradicts it; use forget when a known fact is now plainly untrue. "global" is only for the user's preferences that apply to ALL their projects. "key" is only for facts needed on almost every request.
 
@@ -117,9 +126,29 @@ ${known.length ? known.join('\n') : '(none yet)'}
 The exchange:
 USER: ${clip(turn.request, 3000)}
 WHAT WAS DONE:
-${actions}
+${actions}${commands ? `\nCOMMANDS THAT WERE RUN:\n${commands}` : ''}
 ASSISTANT'S REPLY:
-${replies}`
+${replies}${turn.thorough ? '\n\nThis is the last look before the conversation moves to a fresh session that will not remember any of it. Be thorough: save every durable thing a newcomer would need that is not already known (procedures, services and where they run, standing rules, decisions and why, non-obvious pitfalls), up to the limit.' : ''}`
+}
+
+/**
+ * A last, thorough look at the recent conversation and the commands that were
+ * run, before the chat moves into a fresh session (which keeps only what is
+ * saved). Returns what it saved.
+ */
+export function runSavePass(projectId: string): Promise<ScribeResult> {
+  const messages = recentMessages(memoryDb(), projectId, 24)
+  const users = messages.filter((m) => m.role === 'user').map((m) => clip(m.text, 600))
+  const replies = messages.filter((m) => m.role !== 'user').map((m) => clip(m.text, 1200))
+  return runScribe(projectId, {
+    request: users.join('\n---\n'),
+    replies: replies.slice(-10),
+    actions: [],
+    stopped: false,
+    hadError: false,
+    commands: recentNotableCommands(projectId, 25),
+    thorough: true
+  })
 }
 
 const chains = new Map<string, Promise<unknown>>()
@@ -184,9 +213,10 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
 
   // What this run has written so far, so it doesn't write the same thing twice.
   const written: string[] = []
-  const evidence = [turn.request, ...turn.replies, ...turn.actions].join('\n')
+  const evidence = [turn.request, ...turn.replies, ...turn.actions, ...(turn.commands ?? [])].join('\n')
+  const maxChanges = turn.thorough ? MAX_CHANGES_THOROUGH : MAX_CHANGES
 
-  for (const raw of plan.update.slice(0, MAX_CHANGES)) {
+  for (const raw of plan.update.slice(0, maxChanges)) {
     const old = getFact(db, raw.id)
     const text = grounded(raw.text, evidence)
     const item = { ...raw, text: text ?? raw.text }
@@ -199,11 +229,11 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
     written.push(item.text)
     result.updated++
   }
-  for (const item of plan.forget.slice(0, MAX_CHANGES)) {
+  for (const item of plan.forget.slice(0, maxChanges)) {
     if (!mine(item.id)) continue
     if (forgetFact(db, item.id, `saved automatically: ${clip(item.reason, 120)}`)) result.forgotten++
   }
-  for (const raw of plan.add.slice(0, MAX_CHANGES)) {
+  for (const raw of plan.add.slice(0, maxChanges)) {
     const text = grounded(raw.text, evidence)
     if (text === null) continue
     const item = { ...raw, text }
@@ -213,7 +243,9 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
     if (written.some((w) => overlap(w, item.text) >= 0.6)) continue
     rememberFact(db, item.global ? GLOBAL_SCOPE : projectId, item.text, 'scribe', {
       category: item.category,
-      key: item.key
+      // Key facts are in every session's instructions, so a long one (a
+      // procedure) stays searchable instead of being carried everywhere.
+      key: item.key && item.text.length <= 400
     })
     written.push(item.text)
     result.added++

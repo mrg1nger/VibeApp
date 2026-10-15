@@ -14,6 +14,7 @@ import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { installExtensionForAgent } from '../extensions/install'
 import { buildSubagents } from './subagents'
+import { briefBlock } from '../memory/brief'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
@@ -36,7 +37,8 @@ You share a persistent memory with Codex through the mcp__vibe_memory tools. The
 3. If a remembered fact turns out to be wrong or out of date, fix it with mcp__vibe_memory__update (or mcp__vibe_memory__forget), using its id. Don't save a new fact that contradicts an old one.
 4. Never save secrets, credentials, or temporary task state. Use global: true only for preferences that apply to all the user's projects.
 5. For trivial quick edits, don't save anything to memory.
-6. To find where something lives in the code, call mcp__vibe_memory__where first (a map of the source files, each with a one-line summary) instead of searching files yourself. To look up what the user said earlier, use mcp__vibe_memory__history; to see what Codex did in earlier hand-offs, use mcp__vibe_memory__handoffs.`
+6. To find where something lives in the code, call mcp__vibe_memory__where first (a map of the source files, each with a one-line summary) instead of searching files yourself. To look up what the user said earlier, use mcp__vibe_memory__history; to see what Codex did in earlier hand-offs, use mcp__vibe_memory__handoffs.
+7. Before any operational job (deploy, publish, release, restart a service, restore or migrate data, run the tests), find out how it was done before: the project brief and key facts below, mcp__vibe_memory__recall (try "deploy" or "procedure") and mcp__vibe_memory__history. Follow the method that worked. Don't write a new script or invent steps when one exists; if you find nothing, say so before working it out.`
 
 const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
@@ -197,6 +199,7 @@ export class ClaudeSession extends EventEmitter {
     } catch (err) {
       console.warn('Reading key facts failed:', (err as Error).message)
     }
+    const briefText = briefBlock(this.projectId)
 
     const codexServer = createCodexDelegationServer(
       this.projectPath,
@@ -314,7 +317,7 @@ export class ClaudeSession extends EventEmitter {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: `${memoryInstructions(getSettings().autoMemory)}\n\n## Key facts\n${keyFacts}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}${extensionInstructions(extensions) ? `
+          append: `${memoryInstructions(getSettings().autoMemory)}\n\n## Key facts\n${keyFacts}${briefText ? `\n\n## Project brief (what a newcomer needs to know)\n${briefText}` : ''}\n\n${APP_INSTRUCTIONS}${secretsInstructions(this.projectId)}${extensionInstructions(extensions) ? `
 
 ${extensionInstructions(extensions)}` : ''}`
         },
