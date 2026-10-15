@@ -54,8 +54,8 @@ export interface UsageSnapshot {
 
 export type VibeEvent =
   | { type: 'assistant_text'; text: string; partial: boolean }
-  | { type: 'tool_call'; toolUseId: string; name: string; input: unknown; friendlyLabel: string }
-  | { type: 'tool_result'; toolUseId: string; ok: boolean; summary: string; raw: unknown }
+  | { type: 'tool_call'; toolUseId: string; name: string; input: unknown; friendlyLabel: string; /** Set when a helper agent made the call; the id of the Agent call that started it. */ parentToolUseId?: string }
+  | { type: 'tool_result'; toolUseId: string; ok: boolean; summary: string; raw: unknown; parentToolUseId?: string }
   | { type: 'delegation_started'; toolUseId: string; subtaskPrompt: string }
   | { type: 'delegation_progress'; toolUseId: string; note: string }
   | { type: 'delegation_result'; toolUseId: string; ok: boolean; summary: string }

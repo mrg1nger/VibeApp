@@ -64,7 +64,10 @@ function friendlyToolLabel(name: string, input: unknown): string {
       return `Searched the web: ${(input as { query?: string })?.query ?? ''}`.trim()
     case 'Task':
     case 'Agent':
-      return `Started a helper: ${(input as { description?: string })?.description ?? 'a subtask'}`
+      {
+        const agent = input as { subagent_type?: string; description?: string }
+        return `Helper${agent?.subagent_type ? ` (${agent.subagent_type})` : ''}: ${agent?.description ?? 'a subtask'}`
+      }
     default: {
       // Other MCP tools: "mcp__github__create_issue" -> "github: create issue".
       const mcp = /^mcp__(.+?)__(.+)$/.exec(name)
@@ -89,6 +92,7 @@ function summarizeToolResult(content: unknown): string {
 export function mapSdkMessage(message: SDKMessage): VibeEvent[] {
   switch (message.type) {
     case 'assistant': {
+      const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? undefined
       const blocks = (message.message.content as ContentBlockLike[]) ?? []
       const events: VibeEvent[] = []
       for (const block of blocks) {
@@ -100,7 +104,8 @@ export function mapSdkMessage(message: SDKMessage): VibeEvent[] {
             toolUseId: block.id,
             name: block.name,
             input: block.input,
-            friendlyLabel: friendlyToolLabel(block.name, block.input)
+            friendlyLabel: friendlyToolLabel(block.name, block.input),
+            ...(parent ? { parentToolUseId: parent } : {})
           })
         }
       }
@@ -108,6 +113,7 @@ export function mapSdkMessage(message: SDKMessage): VibeEvent[] {
     }
 
     case 'user': {
+      const parent = (message as { parent_tool_use_id?: string | null }).parent_tool_use_id ?? undefined
       const content = message.message.content
       if (!Array.isArray(content)) return []
       const events: VibeEvent[] = []
@@ -118,7 +124,8 @@ export function mapSdkMessage(message: SDKMessage): VibeEvent[] {
             toolUseId: block.tool_use_id,
             ok: !block.is_error,
             summary: summarizeToolResult(block.content),
-            raw: block.content
+            raw: block.content,
+            ...(parent ? { parentToolUseId: parent } : {})
           })
         }
       }

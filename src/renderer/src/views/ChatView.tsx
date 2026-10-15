@@ -44,6 +44,8 @@ type ChatItem =
       progressNote?: string
       /** Codex's steps during a hand-off. */
       activity?: DelegationActivity[]
+      /** What a helper agent (started by this call) did, step by step. */
+      substeps?: { toolUseId: string; label: string; status: 'running' | 'ok' | 'error' }[]
       startedAt?: number
     }
   | { kind: 'error'; message: string }
@@ -206,6 +208,20 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           case 'assistant_text':
             return [...prev, { kind: 'assistant_text', text: event.text }]
           case 'tool_call':
+            if (event.parentToolUseId) {
+              // A helper agent's step: shown inside the card that started it.
+              return prev.map((item) =>
+                item.kind === 'tool' && item.toolUseId === event.parentToolUseId
+                  ? {
+                      ...item,
+                      substeps: [
+                        ...(item.substeps ?? []),
+                        { toolUseId: event.toolUseId, label: event.friendlyLabel, status: 'running' as const }
+                      ].slice(-60)
+                    }
+                  : item
+              )
+            }
             return [
               ...prev,
               {
@@ -218,6 +234,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               }
             ]
           case 'tool_result':
+            if (event.parentToolUseId) {
+              return prev.map((item) =>
+                item.kind === 'tool' && item.toolUseId === event.parentToolUseId
+                  ? {
+                      ...item,
+                      substeps: item.substeps?.map((s) =>
+                        s.toolUseId === event.toolUseId ? { ...s, status: event.ok ? ('ok' as const) : ('error' as const) } : s
+                      )
+                    }
+                  : item
+              )
+            }
             return prev.map((item) =>
               item.kind === 'tool' && item.toolUseId === event.toolUseId
                 ? { ...item, status: event.ok ? 'ok' : 'error', summary: event.summary }
@@ -720,6 +748,21 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     )}
                     {item.status === 'error' && <span className="tool-status">failed</span>}
                   </div>
+                )}
+                {item.kind === 'tool' && !!item.substeps?.length && (
+                  <details className="substeps" open={item.status === 'running'}>
+                    <summary>
+                      {item.substeps.length} step{item.substeps.length === 1 ? '' : 's'} by this helper
+                    </summary>
+                    <ul>
+                      {item.substeps.map((s) => (
+                        <li key={s.toolUseId} className={`substep-${s.status}`}>
+                          {s.status === 'ok' ? '✓' : s.status === 'error' ? '✗' : '…'}{' '}
+                          {shortenProjectPaths(s.label, project.path)}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
                 {item.kind === 'tool' && item.isDelegation && (
                   <CodexFeed

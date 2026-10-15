@@ -13,6 +13,7 @@ import { createCodexDelegationServer } from '../delegation/codexTool'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { installExtensionForAgent } from '../extensions/install'
+import { buildSubagents } from './subagents'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
@@ -41,6 +42,7 @@ const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
 Messages may start with bracketed notes from VibeApp (for example, an element the user pointed at in the preview, or remembered facts and files that look relevant to the request). Use them as context; they're not something the user typed. Notes from a search are hints: check them against the code before relying on them.
 Codex is automatically given the user's original request, the key facts and recent hand-offs when you hand it a task, so a task only needs to say what to do, which files are involved, and what done looks like.
+Helpers: you can start sub-agents (the Agent tool) for self-contained jobs so this long conversation isn't re-read for them. Use explorer (cheap, read-only) to find where something is or survey several files, reviewer after a large or risky change (name the files and any rules that apply), and test-runner when test output would be long. They don't see this conversation, so put everything they need in the task. Don't use one for something a single file read would answer.
 VibeApp doesn't commit anything for the user, so the working tree usually holds uncommitted work from earlier requests (some done by Codex while you were unavailable). A whole-tree git diff or git status therefore shows much more than the current request changed. Judge what a request changed from hand-off results, which list their own files and diff, and don't try to untangle or revert earlier uncommitted work unless asked.
 If the user wants a new tool for you and Codex ("add a tool that...", "make an MCP server for..."), build it as a small MCP server in the project, then call mcp__vibe_tools__install_extension so it's available everywhere. Don't edit .mcp.json for that: servers listed there are only seen by you in this project.`
 
@@ -298,7 +300,11 @@ export class ClaudeSession extends EventEmitter {
         pathToClaudeCodeExecutable: resolveClaudeExecutable(),
         model: this.activeModel ?? undefined,
         // Replaces the inherited environment, so start from process.env.
-        env: { ...process.env, ...agentSecretEnv(this.projectId) },
+        // Helper agents must finish inside the request: left to run in the
+        // background they report back after VibeApp has already called the
+        // turn done (and reviewed a half-finished change).
+        env: { ...process.env, ...agentSecretEnv(this.projectId), CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
+        agents: buildSubagents(this.projectPath),
         permissionMode: goNutz ? 'bypassPermissions' : 'acceptEdits',
         // Always set so setPermissionMode('bypassPermissions') can be used
         // later to enter Go Nutz mode without recreating the session -- this
