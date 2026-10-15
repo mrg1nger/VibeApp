@@ -262,7 +262,7 @@ function overlap(a: string, b: string): number {
  */
 export async function summarizeConversation(projectId: string): Promise<string> {
   const db = memoryDb()
-  const messages = recentMessages(db, projectId, 40)
+  const messages = recentMessages(db, projectId, 60)
   if (!messages.length) return ''
   const handoffs = recentHandoffs(db, projectId, 4)
   const transcript = messages
@@ -272,7 +272,7 @@ export async function summarizeConversation(projectId: string): Promise<string> 
     ? `\n\nWork handed to Codex recently:\n${handoffs.map((h) => `- ${clip(h.brief, 160)} (${h.status})`).join('\n')}`
     : ''
   const session = query({
-    prompt: `Summarise this conversation between a user and an AI coding assistant, so a fresh session can pick it up without the history. At most 200 words, plain text, no greeting. Cover: what is being built, what is done, what is in progress or next, and any decisions or user preferences that aren't obvious from the code. Don't repeat setup details (how to run it) that are saved elsewhere.\n\n${transcript}${work}`,
+    prompt: `Summarise this conversation between a user and an AI coding assistant, so a fresh session can pick it up without the history. At most 350 words, plain text, no greeting. Use these headings, leaving out any that are empty: STANDING RULES (anything the user said never to do, to leave alone, or always to do, quoted as closely as possible, including files or areas they said not to touch); IN PROGRESS (what was being worked on and what is left); DONE (briefly); DECISIONS (choices made and why, and user preferences that aren't obvious from the code); OPEN (questions or ideas the user raised that are unresolved). Be precise about names of files, features and settings. Don't repeat setup details (how to run it) that are saved elsewhere.\n\n${transcript}${work}`,
     options: {
       cwd: mkdtempSync(join(tmpdir(), 'vibeapp-summary-')),
       pathToClaudeCodeExecutable: resolveClaudeExecutable(),

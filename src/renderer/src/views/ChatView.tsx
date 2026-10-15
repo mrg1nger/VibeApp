@@ -47,7 +47,7 @@ type ChatItem =
       startedAt?: number
     }
   | { kind: 'error'; message: string }
-  | { kind: 'notice'; text: string }
+  | { kind: 'notice'; text: string; details?: string }
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
@@ -142,6 +142,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [askMode, setAskMode] = useState(readAskPref)
   // How big this project's Claude conversation is now (tokens re-read on every Build step).
   const [contextTokens, setContextTokens] = useState(0)
+  const [rotating, setRotating] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [picking, setPicking] = useState(false)
   const [picked, setPicked] = useState<PickedElement | null>(null)
@@ -296,7 +297,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               ...prev,
               {
                 kind: 'notice',
-                text: `Started a fresh Claude session to keep things fast (the last one had grown to about ${compactCount(event.contextTokens)} tokens). Memory and a summary of the conversation carried over.`
+                text: `Started a fresh Claude session to keep things fast (the last one had grown to about ${compactCount(event.contextTokens)} tokens). Memory and a summary of the conversation carried over.`,
+                details: event.summary
               }
             ]
           case 'claude_limit':
@@ -450,6 +452,28 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
     },
     [project, onError, askMode]
   )
+
+  // Moves this chat into a new Claude session seeded with a summary, so it stops re-reading everything.
+  const handleFreshSession = useCallback(async () => {
+    if (
+      hasChanges &&
+      !window.confirm(
+        "You have changes that aren't committed yet. A fresh session doesn't touch your files, but this is a good moment to press Checkpoint first. Continue anyway?"
+      )
+    ) {
+      return
+    }
+    setRotating(true)
+    try {
+      const result = await window.vibe.chat.rotateNow(project.id, project.path)
+      if (result.ok) setContextTokens(0)
+      else onError(result.message ?? "Couldn't start a fresh session.")
+    } catch (err) {
+      onError(`Couldn't start a fresh session: ${(err as Error).message}`)
+    } finally {
+      setRotating(false)
+    }
+  }, [hasChanges, project.id, project.path, onError])
 
   const handleSend = useCallback(() => {
     const images = pendingImages
@@ -706,7 +730,17 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   />
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
-                {item.kind === 'notice' && <p className="chat-notice">{item.text}</p>}
+                {item.kind === 'notice' && (
+                  <>
+                    <p className="chat-notice">{item.text}</p>
+                    {item.details && (
+                      <details className="chat-notice-details">
+                        <summary>What carried over (check it, and tell Claude if something is missing)</summary>
+                        <p style={{ whiteSpace: 'pre-wrap' }}>{item.details}</p>
+                      </details>
+                    )}
+                  </>
+                )}
                 {item.kind === 'offer' && (
                   <div className="review-card review-card-running">
                     <div className="review-card-header">
@@ -905,6 +939,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               </span>
               <button className="chat-inline-action" onClick={() => setAskMode(true)}>
                 Switch to Ask
+              </button>
+              <button className="chat-inline-action" disabled={rotating} onClick={handleFreshSession}>
+                {rotating ? 'Starting…' : 'Start a fresh session'}
               </button>
             </div>
           )}

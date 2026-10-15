@@ -7,6 +7,7 @@ const DEFAULTS: AppSettings = {
   agentBalance: 'auto',
   limitTakeover: 'auto',
   autoAsk: true,
+  rotateAtTokens: 120_000,
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',

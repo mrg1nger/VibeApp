@@ -290,14 +290,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // A very long conversation is re-read on every step. When enabled,
       // continue it in a fresh session seeded with a summary instead (the
       // key facts, history and code map are all in the database anyway).
-      let carried: string | undefined
-      if (getSettings().freshSessions && session.contextTokens() > rotateThreshold()) {
+      // A fresh session the user started by hand brings its summary along now.
+      let carried: string | undefined = pendingCarry.get(projectId)
+      pendingCarry.delete(projectId)
+      if (!carried && getSettings().freshSessions && session.contextTokens() > rotateThreshold()) {
         try {
-          ensureHistoryImported(projectId)
-          const summary = await summarizeConversation(projectId)
-          if (summary && session.rotate()) {
-            carried = `[VibeApp note: this is a fresh session continuing earlier work, started to keep things fast. Summary of the conversation so far:\n${summary}\nThe history tool (mcp__vibe_memory__history) has the details.]`
-          }
+          carried = await rotateWithSummary(session, projectId)
         } catch (err) {
           console.warn('Starting a fresh session failed; continuing in the current one:', (err as Error).message)
         }
@@ -382,6 +380,30 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
+  // The user chose "Start a fresh session now".
+  ipcMain.handle('vibe:chat:rotateNow', async (_event, projectId: string, projectPath: string) => {
+    if (asks.has(projectId) || takeovers.has(projectId)) {
+      return { ok: false, message: 'Wait for the current request to finish first.' }
+    }
+    const project = getProject(projectId)
+    const session = getOrCreateSession(projectId, projectPath, project?.sdkSessionId, project?.goNutzMode ?? false)
+    wireSessionEvents(session, projectId, getSender)
+    try {
+      const carried = await rotateWithSummary(session, projectId)
+      if (!carried) {
+        return {
+          ok: false,
+          message:
+            "A fresh session couldn't be started right now (a request may still be running, or there's no conversation to summarise yet)."
+        }
+      }
+      pendingCarry.set(projectId, carried)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, message: `Couldn't start a fresh session: ${(err as Error).message}` }
+    }
+  })
+
   ipcMain.handle('vibe:chat:contextSize', (_event, projectId: string) => getSession(projectId)?.contextTokens() ?? 0)
 
   ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
@@ -656,7 +678,25 @@ const CACHE_KEEP_TOKENS = 30_000
 /** Context size (tokens) past which a long conversation moves to a fresh session, if that's enabled. */
 function rotateThreshold(): number {
   // The override is for testing; Claude Code's own prompt is ~40k of this.
-  return Number(process.env.VIBEAPP_ROTATE_TOKENS) || 120_000
+  return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
+}
+
+/** A manually started fresh session's summary, delivered with the next message. */
+const pendingCarry = new Map<string, string>()
+
+/**
+ * Moves the project's chat into a brand-new Claude session seeded with a
+ * summary (only between requests). Returns the note the new session starts
+ * with, or undefined if nothing changed (no summary, or a request is running).
+ */
+async function rotateWithSummary(
+  session: ReturnType<typeof getOrCreateSession>,
+  projectId: string
+): Promise<string | undefined> {
+  ensureHistoryImported(projectId)
+  const summary = await summarizeConversation(projectId)
+  if (!summary || !session.rotate(summary)) return undefined
+  return `[VibeApp note: this is a fresh session continuing earlier work, started to keep things fast. Summary of the conversation so far:\n${summary}\nTreat the STANDING RULES in it as binding. The history tool (mcp__vibe_memory__history) has the details; check it before assuming something wasn't discussed.]`
 }
 
 /** Per project: what's happened so far this request, kept for the memory scribe. */

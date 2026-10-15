@@ -144,6 +144,8 @@ const vibeApi = {
     ): void => ipcRenderer.send('vibe:chat:confirmationResponse', projectId, confirmationId, approved, answers),
     skipReview: (projectId: string): void => ipcRenderer.send('vibe:chat:skipReview', projectId),
     stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:chat:stop', projectId),
+    rotateNow: (projectId: string, projectPath: string): Promise<{ ok: boolean; message?: string }> =>
+      ipcRenderer.invoke('vibe:chat:rotateNow', projectId, projectPath),
     contextSize: (projectId: string): Promise<number> => ipcRenderer.invoke('vibe:chat:contextSize', projectId),
     ask: (projectId: string, projectPath: string, text: string): Promise<void> =>
       ipcRenderer.invoke('vibe:chat:ask', projectId, projectPath, text),

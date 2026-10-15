@@ -75,7 +75,7 @@ export type VibeEvent =
   /** What one request cost (tokens), shown quietly under the reply. */
   | { type: 'usage'; steps: number; fresh: number; cached: number; output: number; model?: string }
   /** The conversation was moved into a fresh Claude session to keep it fast. */
-  | { type: 'session_rotated'; contextTokens: number }
+  | { type: 'session_rotated'; contextTokens: number; /** What was carried into the new session. */ summary?: string }
   /** Smart model switching picked a model for this message. */
   | { type: 'route'; label: string; reason: string; detail?: string }
   /** Codex started reviewing the changes Claude just made. */
@@ -342,6 +342,8 @@ export interface AppSettings {
   limitTakeover: 'auto' | 'ask' | 'off'
   /** Send plain questions typed in Build mode to the cheaper Ask path. */
   autoAsk: boolean
+  /** Conversation size (tokens) past which a long chat moves to a fresh session, when that's switched on. */
+  rotateAtTokens: number
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */

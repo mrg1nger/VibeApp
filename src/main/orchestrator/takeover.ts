@@ -16,7 +16,15 @@ const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const TIMEOUT_MS = 15 * 60_000
 
 /** Per project: the Codex session takeovers continue, so follow-ups keep their context. */
-const threads = new Map<string, { id: string; unsandboxed: boolean }>()
+const threads = new Map<string, { id: string; unsandboxed: boolean; turns: number; tokens: number }>()
+
+/**
+ * A Codex session is resumed for follow-ups, but every step re-reads all of
+ * it, so one that has done a few requests or a lot of work starts over (the
+ * key facts, relevant memories and recent hand-offs are given to the new one).
+ */
+const MAX_THREAD_TURNS = 3
+const MAX_THREAD_TOKENS = 5_000_000
 
 /** What Codex handled directly while Claude was out, kept (across restarts) for Claude's catch-up note. */
 interface CatchUpItem {
@@ -152,17 +160,26 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
       )
 
     const earlier = threads.get(projectId)
-    const resumeId = earlier && earlier.unsandboxed === req.unsandboxed ? earlier.id : undefined
+    const tooBig = !!earlier && (earlier.turns >= MAX_THREAD_TURNS || earlier.tokens > MAX_THREAD_TOKENS)
+    if (tooBig) threads.delete(projectId)
+    const resumeId = !tooBig && earlier && earlier.unsandboxed === req.unsandboxed ? earlier.id : undefined
     let result = await run(resumeId)
     if (resumeId && result.exitCode !== 0 && !result.finalMessage && !signal.aborted) {
       threads.delete(projectId)
       recordUsage(projectId, 'takeover', 'codex', countsFromCodexEvents(result.events))
       result = await run(undefined)
     }
-    if (result.threadId && result.exitCode === 0) {
-      threads.set(projectId, { id: result.threadId, unsandboxed: req.unsandboxed })
-    }
     const counts = countsFromCodexEvents(result.events)
+    if (result.threadId && result.exitCode === 0) {
+      const carried = threads.get(projectId)
+      const sameThread = carried?.id === result.threadId
+      threads.set(projectId, {
+        id: result.threadId,
+        unsandboxed: req.unsandboxed,
+        turns: sameThread ? carried.turns + 1 : 1,
+        tokens: (sameThread ? carried.tokens : 0) + counts.fresh + counts.cached
+      })
+    }
     recordUsage(projectId, 'takeover', 'codex', counts)
     emit({
       type: 'usage',

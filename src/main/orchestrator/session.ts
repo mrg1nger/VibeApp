@@ -151,7 +151,7 @@ export class ClaudeSession extends EventEmitter {
    * re-reading a very long history on every step. Only between requests;
    * the caller carries the earlier conversation over as a summary.
    */
-  rotate(): boolean {
+  rotate(summary?: string): boolean {
     if (this.dead || this.disposed || this.turnsInFlight > 0) return false
     const before = this.lastContextTokens
     const old = this.queue
@@ -159,7 +159,7 @@ export class ClaudeSession extends EventEmitter {
     this.lastContextTokens = 0
     this.queue = this.startQuery(undefined, this.goNutz)
     old.close()
-    this.emit('event', { type: 'session_rotated', contextTokens: before } satisfies VibeEvent)
+    this.emit('event', { type: 'session_rotated', contextTokens: before, summary } satisfies VibeEvent)
     return true
   }
 

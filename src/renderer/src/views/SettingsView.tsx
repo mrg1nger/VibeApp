@@ -222,11 +222,30 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Start a fresh session when a conversation gets very long
             <small>
-              Experimental, off by default. A long conversation is re-read on every step; this moves it into a
-              new session (seeded with memory and a short summary) once it grows past a point. Details can be
-              lost in the summary, so watch the usage numbers below before relying on it.
+              A long conversation is re-read on every step; this moves it into a new session (seeded with memory
+              and a summary that keeps your standing rules) once it grows past the size below. The summary is
+              shown in the chat so you can check it. Details can still be lost, so keep important rules in
+              Memory.
             </small>
           </span>
+        </label>
+
+        <label className="settings-toggle settings-subtoggle">
+          <span>
+            Start a fresh session at about
+            <small>Lower saves more usage but forgets sooner. You can also start one yourself from the chat.</small>
+          </span>
+          <select
+            value={settings.rotateAtTokens}
+            disabled={!settings.freshSessions}
+            onChange={(e) => onSettingsChange({ rotateAtTokens: Number(e.target.value) }).catch(() => undefined)}
+          >
+            {[60_000, 90_000, 120_000, 160_000, 200_000].map((n) => (
+              <option key={n} value={n}>
+                {n / 1000}k tokens
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="settings-toggle">
