@@ -124,6 +124,7 @@ interface RawItem {
   server?: string
   tool?: string
   name?: string
+  prompt?: string | null
 }
 
 /** One readable step for a Codex JSON event, or null if the event isn't worth showing. */
@@ -171,6 +172,12 @@ export function describeActivity(event: { type: string; item?: unknown }): Deleg
         done: true,
         ok: item.exit_code === 0 || item.exit_code === null || item.exit_code === undefined
       }
+    }
+    case 'collab_tool_call': {
+      // Codex's own helper agents (spawn / wait / send ...).
+      const what = item.tool ?? 'working'
+      const task = item.prompt?.trim() ? `: ${scrubSecrets(item.prompt.trim()).slice(0, 80)}` : ''
+      return { id, step: 'tool', text: `Helper agent - ${what}${task}`, done, ok: done ? item.status !== 'failed' : undefined }
     }
     default: {
       // A tool call (for example, the shared memory tools).
