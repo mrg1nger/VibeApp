@@ -32,6 +32,9 @@ export interface CodexThread {
   unsandboxed: boolean
 }
 
+/** How long a hand-off may run before it is stopped (real tasks on a big project take a while). */
+const HANDOFF_TIMEOUT_MS = 15 * 60_000
+
 /** Longest summary returned to Claude; the full report is kept for the handoffs tool. */
 const SUMMARY_CHARS = 1500
 /** A diff this small is included, so Claude doesn't have to open the files to review it. */
@@ -77,6 +80,16 @@ export function createCodexDelegationServer(
   /** Registers an MCP server the agent built as an extension (asks the user first). */
   installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>
 ): ReturnType<typeof createSdkMcpServer> {
+  // Hand-offs share the project folder and the request's Codex session, and each one's
+  // "files changed" comes from before/after snapshots, so two at once would edit the same
+  // files and report each other's changes. Claude may ask for several at once; run them in turn.
+  let queue: Promise<unknown> = Promise.resolve()
+  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = queue.then(work)
+    queue = run.catch(() => undefined)
+    return run
+  }
+
   return createSdkMcpServer({
     name: 'vibe_tools',
     version: '1.0.0',
@@ -110,15 +123,15 @@ export function createCodexDelegationServer(
       ),
       tool(
         'run_codex_subtask',
-        "Delegate a scoped coding subtask to the Codex CLI (a separate AI coding agent) and return its result. Useful for getting a second implementation, a second opinion, or offloading an independent chunk of work. Codex is automatically given the user's original request, the key facts, relevant memories and recent hand-offs, and several hand-offs in one request continue the same Codex session, so a task only needs to say what to do, which files are involved, and what \"done\" looks like. The result is a short summary, the files changed (with a small diff) and the outcome of automatic checks (script syntax, JSON, the project's npm test); the full report is available from the handoffs tool.",
+        "Delegate a scoped coding subtask to the Codex CLI (a separate AI coding agent) and return its result. Useful for getting a second implementation, a second opinion, or offloading an independent chunk of work. Codex is automatically given the user's original request, the key facts, relevant memories and recent hand-offs, and several hand-offs in one request continue the same Codex session, so a task only needs to say what to do, which files are involved, and what \"done\" looks like. The result is a short summary, the files changed (with a small diff) and the outcome of automatic checks (script syntax, JSON, the project's npm test); the full report is available from the handoffs tool. Hand-offs run one at a time (they share the project folder), so asking for several at once doesn't make them faster.",
         {
           prompt: z.string().describe('The subtask instructions for Codex to carry out.'),
           timeoutMs: z
             .number()
             .optional()
-            .describe('Optional timeout in milliseconds. Defaults to 5 minutes.')
+            .describe('Optional timeout in milliseconds. Defaults to 15 minutes.')
         },
-        async (args) => {
+        (args) => oneAtATime(async () => {
           const signal = getStopSignal?.()
           const request = getRequestContext?.()
           const projectId = memory?.projectId
@@ -179,7 +192,7 @@ export function createCodexDelegationServer(
                 {
                   prompt: args.prompt,
                   cwd: projectPath,
-                  timeoutMs: args.timeoutMs ?? 300_000,
+                  timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
                   unsandboxed,
                   model: getSettings().codexModel ?? undefined,
                   images,
@@ -265,13 +278,19 @@ export function createCodexDelegationServer(
             }
           } catch (err) {
             const message = (err as Error).message
-            await outcome(signal?.aborted ? 'stopped' : 'error', message).catch(() => undefined)
+            const partial = await outcome(signal?.aborted ? 'stopped' : 'error', message).catch(() => undefined)
+            // Codex may have changed files before it failed or was stopped; say which, so
+            // nobody assumes the project is as it was.
+            const touched = partial?.changes?.length
+              ? `
+[Files Codex changed before it stopped: ${describeChanges(partial.changes)}. Check them before continuing; they may be half-done.]`
+              : ''
             return {
-              content: [{ type: 'text' as const, text: `Codex delegation failed: ${message}` }],
+              content: [{ type: 'text' as const, text: `Codex delegation failed: ${message}${touched}` }],
               isError: true
             }
           }
-        }
+        })
       )
     ]
   })

@@ -12,6 +12,8 @@
     "package:dir": "electron-vite build && electron-builder --win --dir",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node scripts/test.mjs unit",
+    "smoke": "node scripts/test.mjs smoke",
     "postinstall": "patch-package && electron-rebuild -f -w node-pty"
   },
   "dependencies": {
