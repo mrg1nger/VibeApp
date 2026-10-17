@@ -16,6 +16,7 @@ import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { installExtensionForAgent } from '../extensions/install'
 import { buildSubagents } from './subagents'
+import { staysInProject } from './commandScope'
 import { briefBlock } from '../memory/brief'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
@@ -328,7 +329,7 @@ export class ClaudeSession extends EventEmitter {
         hookSpecificOutput: {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
-          permissionDecisionReason: 'User declined this action'
+          permissionDecisionReason: "The user clicked Deny for this in VibeApp's Allow/Deny prompt. It was their choice, not a setting: don't retry it, and if it's really needed, explain why in plain words and let them decide."
         }
       }
     }
@@ -393,6 +394,18 @@ ${extensionInstructions(extensions)}` : ''}`
                   message: "The user skipped these questions. Continue with your best judgment, or ask in plain text if you're blocked."
                 }
           }
+          // On Windows, Claude Code asks before every PowerShell command, so outside Go Nutz
+          // mode even running the tests raised a prompt. Ordinary commands that stay in the
+          // project go ahead; risky ones (caught earlier by the PreToolUse gate) and anything
+          // reaching outside the project still ask.
+          const command = (input as { command?: string }).command ?? ''
+          if (
+            SHELL_TOOLS.has(toolName) &&
+            !isLikelyDestructive(toolName, input) &&
+            staysInProject(command, this.projectPath)
+          ) {
+            return { behavior: 'allow', updatedInput: input }
+          }
           const filePath = (input as { file_path?: string }).file_path ?? ''
           if (/(^|[\\/])\.mcp\.json$/.test(filePath)) {
             // Lets Claude install MCP servers; watchMcpConfig reloads them.
@@ -405,7 +418,7 @@ ${extensionInstructions(extensions)}` : ''}`
           )
           return approved
             ? { behavior: 'allow', updatedInput: input }
-            : { behavior: 'deny', message: 'The user declined this action.' }
+            : { behavior: 'deny', message: "The user clicked Deny for this in VibeApp's Allow/Deny prompt. It was their choice, not a setting: don't retry it, and if it's really needed, explain why in plain words and let them decide." }
         },
         hooks: {
           PreToolUse: [{ hooks: [destructiveCommandGate] }],

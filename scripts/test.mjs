@@ -63,7 +63,7 @@ try {
   const data = mkdtempSync(join(tmpdir(), `vibeapp-${kind}-data-`))
   const run = spawnSync(
     process.execPath,
-    ['--test', '--test-concurrency=1', '--no-warnings=ExperimentalWarning', ...bundles],
+    ['--test', '--test-concurrency=1', '--test-timeout=1200000', '--no-warnings=ExperimentalWarning', ...bundles],
     { cwd: root, stdio: 'inherit', env: { ...process.env, VIBEAPP_TEST_DATA: data } }
   )
   rmSync(data, { recursive: true, force: true })

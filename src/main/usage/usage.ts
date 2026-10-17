@@ -1,4 +1,7 @@
 import { spawn } from 'child_process'
+import { app } from 'electron'
+import { existsSync } from 'fs'
+import { join } from 'path'
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { CliName, UsageSnapshot, UsageWindow } from '@shared/types'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
@@ -255,6 +258,11 @@ export function clearClaudeLimit(): void {
  */
 export function claudeBlockedUntil(): number | null {
   const now = Date.now()
+  // The end-to-end test switches "Claude is out" on and off with a file, so the
+  // takeover screens can be tested without using up a real plan.
+  if (process.env.VIBEAPP_TEST_HOOKS === '1' && existsSync(join(app.getPath('userData'), 'test-claude-out'))) {
+    return now + 60 * 60_000
+  }
   let until = seenLimitUntil > now ? seenLimitUntil : 0
   const snapshot = peekUsage('claude')
   if (snapshot?.status === 'ok') {

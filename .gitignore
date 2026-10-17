@@ -10,3 +10,4 @@ release
 Thumbs.db
 *.tsbuildinfo
 .claude/settings.local.json
+test-results/

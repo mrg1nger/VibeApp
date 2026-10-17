@@ -2,10 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { ClaudeSession } from '../../src/main/orchestrator/session'
+import type { ClaudeSession } from '../../src/main/orchestrator/session'
 import { updateSettings } from '../../src/main/settings/store'
 import type { VibeEvent } from '@shared/types'
-import { makeProject, projectId, turn } from '../support/fixtures'
+import { makeProject, projectId, testSession, turn } from '../support/fixtures'
 
 // Claude (Haiku, to keep it cheap) hands work to the real Codex CLI through
 // VibeApp's run_codex_subtask tool, as it does in the app.
@@ -31,29 +31,33 @@ function handoffResults(events: VibeEvent[]): { prompt: string; text: string; ok
     }))
 }
 
-function session(): { s: ClaudeSession; dir: string } {
+function session(t: { after: (fn: () => void) => void }): { s: ClaudeSession; dir: string } {
   updateSettings({ claudeModel: 'haiku', autoMemory: false })
   const dir = makeProject()
-  return { s: new ClaudeSession(projectId('collab'), dir), dir }
+  return { s: testSession(t, projectId('collab'), dir), dir }
 }
 
-test('Claude hands a task to Codex and gets back the files changed and the check result', { timeout: 600_000 }, async () => {
-  const { s, dir } = session()
+test('Claude hands a task to Codex and gets back the files changed and the check result', { timeout: 600_000 }, async (t) => {
+  const { s, dir } = session(t)
   const events = await turn(
     s,
     'Use the run_codex_subtask tool (do not edit any files yourself) to have Codex create util.js exporting a function add(a, b) that returns their sum. Then reply DONE.',
     540_000
   )
   const results = handoffResults(events)
+  if (results.length !== 1) {
+    for (const [i, r] of results.entries()) {
+      console.log(`  hand-off ${i + 1} (${r.ok ? 'ok' : 'error'}): ${r.prompt.slice(0, 160)}\n    -> ${r.text.slice(0, 400).replace(/\n/g, ' | ')}`)
+    }
+  }
   assert.equal(results.length, 1, 'one hand-off')
   assert.ok(results[0].ok, results[0].text)
   assert.match(results[0].text, /files changed: .*util\.js/)
   assert.ok(existsSync(join(dir, 'util.js')), 'Codex created the file')
-  s.dispose()
 })
 
-test('a second hand-off in the same request continues the same Codex session', { timeout: 900_000 }, async () => {
-  const { s, dir } = session()
+test('a second hand-off in the same request continues the same Codex session', { timeout: 900_000 }, async (t) => {
+  const { s, dir } = session(t)
   const events = await turn(
     s,
     'Make two hand-offs with the run_codex_subtask tool, one after the other: wait for the first to finish before starting the second. First: create notes.txt containing the line "one". Second: append the line "two" to notes.txt. Do not edit files yourself. Then reply DONE.',
@@ -63,11 +67,10 @@ test('a second hand-off in the same request continues the same Codex session', {
   assert.equal(results.length, 2, 'two hand-offs')
   assert.match(results[1].text, /Continued the earlier Codex session/)
   assert.match(readFileSync(join(dir, 'notes.txt'), 'utf-8'), /one[\s\S]*two/)
-  s.dispose()
 })
 
-test('two hand-offs asked for at once are kept apart (each reports only its own files)', { timeout: 900_000 }, async () => {
-  const { s, dir } = session()
+test('two hand-offs asked for at once are kept apart (each reports only its own files)', { timeout: 900_000 }, async (t) => {
+  const { s, dir } = session(t)
   const events = await turn(
     s,
     'In ONE message, call the run_codex_subtask tool twice at the same time (two tool calls in parallel, not one after the other): the first creates x.txt containing "x"; the second creates y.txt containing "y". Do not edit files yourself. Then reply DONE.',
@@ -89,5 +92,4 @@ test('two hand-offs asked for at once are kept apart (each reports only its own 
     assert.ok(changed.includes(mine), `${mine} hand-off lists its own file: ${changed}`)
     assert.ok(!changed.includes(other), `${mine} hand-off doesn't claim ${other}: ${changed}`)
   }
-  s.dispose()
 })

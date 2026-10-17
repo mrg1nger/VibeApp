@@ -4,7 +4,11 @@ directories:
   buildResources: build
   output: release
 files:
-  - out/**/*
+  # Only the app itself: never test bundles, logs or screenshots that may be in out/.
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
+  - '!out/main/_test-*'
   - package.json
 asarUnpack:
   - '**/node_modules/node-pty/**/*'

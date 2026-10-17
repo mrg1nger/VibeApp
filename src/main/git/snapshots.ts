@@ -1,5 +1,5 @@
 import { execFile } from 'child_process'
-import { copyFileSync, existsSync, rmSync } from 'fs'
+import { rmSync } from 'fs'
 import { isAbsolute, join } from 'path'
 import { randomUUID } from 'crypto'
 import { promisify } from 'util'
@@ -45,11 +45,12 @@ async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promis
 export async function takeSnapshot(projectPath: string, label: string): Promise<string> {
   let gitDir = await git(projectPath, ['rev-parse', '--git-dir'])
   if (!isAbsolute(gitDir)) gitDir = join(projectPath, gitDir)
+  // A fresh index, so every file is read as it is on disk. Starting from the
+  // real index was quicker (git reuses its cached entries), but with
+  // core.autocrlf on those entries hold the committed, LF-normalised version
+  // of an unchanged file, and Undo then wrote a Windows-style file back with
+  // Unix line endings.
   const tempIndex = join(gitDir, `vibeapp-index-${randomUUID()}`)
-  // Starting from the real index lets git reuse its cached file stats
-  // instead of re-hashing every file.
-  const realIndex = join(gitDir, 'index')
-  if (existsSync(realIndex)) copyFileSync(realIndex, tempIndex)
   const env = { GIT_INDEX_FILE: tempIndex, ...IDENTITY_ENV }
   try {
     await git(projectPath, ['add', '-A', '--', '.', ...EXCLUDE_PATHSPECS], env)

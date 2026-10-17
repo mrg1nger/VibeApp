@@ -1,27 +1,25 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ClaudeSession } from '../../src/main/orchestrator/session'
 import { updateSettings } from '../../src/main/settings/store'
 import { memoryDb } from '../../src/main/memory/paths'
 import { rememberFact } from '../../src/main/memory/store'
-import { makeProject, projectId, replyText, turn } from '../support/fixtures'
+import { makeProject, projectId, replyText, testSession, turn } from '../support/fixtures'
 
 // VibeApp's own Claude session class against the real Claude Code (on Haiku).
 
-test('a normal request runs, reports its size and ends once', { timeout: 300_000 }, async () => {
+test('a normal request runs, reports its size and ends once', { timeout: 300_000 }, async (t) => {
   updateSettings({ claudeModel: 'haiku', autoMemory: false })
-  const s = new ClaudeSession(projectId('basic'), makeProject())
+  const s = testSession(t, projectId('basic'), makeProject())
   const events = await turn(s, 'Read shop.js and tell me the sword price. One line.')
   assert.match(replyText(events), /140/)
   assert.equal(events.filter((e) => e.type === 'turn_complete').length, 1)
   assert.ok(s.contextTokens() > 1000, `context size known: ${s.contextTokens()}`)
-  s.dispose()
 })
 
-test('compaction shrinks the conversation, keeps rules, and Claude then sees newly saved facts', { timeout: 400_000 }, async () => {
+test('compaction shrinks the conversation, keeps rules, and Claude then sees newly saved facts', { timeout: 400_000 }, async (t) => {
   updateSettings({ claudeModel: 'haiku', autoMemory: false })
   const pid = projectId('compact')
-  const s = new ClaudeSession(pid, makeProject())
+  const s = testSession(t, pid, makeProject())
   await turn(s, 'Read shop.js and tell me the sword price. Standing rule: never touch battle.js. One line.')
   // Saved just before compacting, as the save pass would.
   rememberFact(memoryDb(), pid, 'The project codename is BLUEHERON.', 'user', { category: 'about', key: true })
@@ -34,25 +32,23 @@ test('compaction shrinks the conversation, keeps rules, and Claude then sees new
   const answer = replyText(await turn(s, 'What standing rule did I give you, and what is the project codename from your key facts? One line.'))
   assert.match(answer, /battle/i)
   assert.match(answer, /BLUEHERON/)
-  s.dispose()
 })
 
-test('pressing Stop during a compaction does not mark the next reply as stopped', { timeout: 400_000 }, async () => {
+test('pressing Stop during a compaction does not mark the next reply as stopped', { timeout: 400_000 }, async (t) => {
   updateSettings({ claudeModel: 'haiku', autoMemory: false })
-  const s = new ClaudeSession(projectId('stopcompact'), makeProject())
+  const s = testSession(t, projectId('stopcompact'), makeProject())
   await turn(s, 'Read shop.js and tell me the sword price. One line.')
   const compacting = s.compact('Keep the facts.')
   setTimeout(() => void s.stop(), 1500)
   await compacting
   const events = await turn(s, 'Say OK.')
   assert.ok(!events.some((e) => e.type === 'stopped'), events.map((e) => e.type).join(','))
-  s.dispose()
 })
 
-test('helper agents run inside the request and stay in the project', { timeout: 400_000 }, async () => {
+test('helper agents run inside the request and stay in the project', { timeout: 400_000 }, async (t) => {
   updateSettings({ claudeModel: 'haiku', autoMemory: false })
   const dir = makeProject()
-  const s = new ClaudeSession(projectId('helpers'), dir)
+  const s = testSession(t, projectId('helpers'), dir)
   const events = await turn(
     s,
     'Use helper agents (the Agent tool): the explorer to find the sword price, and the test-runner to say whether this project has any test files. Then answer in two lines.'
@@ -68,5 +64,4 @@ test('helper agents run inside the request and stay in the project', { timeout: 
     return /[a-z]:\//.test(input) && !input.includes(dir.replace(/\\/g, '/').toLowerCase())
   })
   assert.equal(outside.length, 0, `helper looked outside the project: ${JSON.stringify(outside).slice(0, 300)}`)
-  s.dispose()
 })

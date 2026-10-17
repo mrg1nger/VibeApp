@@ -1,28 +1,39 @@
-// End-to-end test of the real app: builds it, launches Electron with its own
-// data folder and a fresh test project, and drives the screens through the
-// Chrome DevTools protocol (clicks and typing, as a person would).
+// End-to-end test of the real app: launches Electron with its own data folder
+// and a fresh test project, and drives the screens through the Chrome
+// DevTools protocol (clicks and typing, as a person would).
 //
-//   npm run e2e
+//   npm run e2e                    build, then test the development build
+//   npm run e2e -- --packaged      test the installed-style build in release/win-unpacked
+//                                  (run `npm run package` first)
+//   npm run e2e -- --no-build      skip the build step
 //
 // Needs Claude Code and Codex installed and logged in. Takes several minutes
 // and uses a little of both plans (Claude runs on Haiku). Screenshots of each
-// step are saved to out/e2e/.
+// step are saved to test-results/e2e/. Your own projects, memory and settings are never
+// touched.
 
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { deflateSync } from 'node:zlib'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
-const shots = join(root, 'out', 'e2e')
+const packaged = process.argv.includes('--packaged')
+const shots = join(root, 'test-results', packaged ? 'e2e-packaged' : 'e2e')
 const PORT = 9400 + Math.floor(Math.random() * 400)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ---- setup ----------------------------------------------------------------------
 
-if (!process.argv.includes('--no-build')) {
+const exe = join(root, 'release', 'win-unpacked', 'VibeApp.exe')
+if (packaged && !existsSync(exe)) {
+  console.error(`No packaged app at ${exe}. Run \`npm run package\` first.`)
+  process.exit(1)
+}
+if (!packaged && !process.argv.includes('--no-build')) {
   console.log('Building the app...')
   const built = spawnSync('npx', ['electron-vite', 'build'], { cwd: root, stdio: 'inherit', shell: true })
   if (built.status !== 0) process.exit(built.status ?? 1)
@@ -30,9 +41,13 @@ if (!process.argv.includes('--no-build')) {
 rmSync(shots, { recursive: true, force: true })
 mkdirSync(shots, { recursive: true })
 
+const PAGE = `<!doctype html><html><head><title>E2E Shop</title></head><body>
+<h1 id="title">E2E Shop</h1><p>Potions and swords for sale.</p></body></html>
+`
 const project = mkdtempSync(join(tmpdir(), 'vibeapp-e2e-project-'))
 writeFileSync(join(project, 'shop.js'), '// Shop prices: potion costs 25 gold, sword costs 140 gold.\nmodule.exports = { potion: 25, sword: 140 }\n')
 writeFileSync(join(project, 'battle.js'), '// Battle damage formula: damage = attack * 2 - defence\nmodule.exports = (a, d) => a * 2 - d\n')
+writeFileSync(join(project, 'index.html'), PAGE)
 for (const args of [['init'], ['add', '-A'], ['-c', 'user.email=e2e@example.com', '-c', 'user.name=e2e', 'commit', '-m', 'start']]) {
   execFileSync('git', args, { cwd: project, stdio: 'ignore' })
 }
@@ -56,75 +71,115 @@ writeFileSync(
   })
 )
 
-const electron = createRequire(import.meta.url)('electron')
+/** A small solid-colour PNG, for the image test. */
+function solidPng(r, g, b, size = 32) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    return c >>> 0
+  })
+  const crc = (buf) => {
+    let c = 0xffffffff
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  const chunk = (type, body) => {
+    const len = Buffer.alloc(4)
+    len.writeUInt32BE(body.length)
+    const tb = Buffer.concat([Buffer.from(type), body])
+    const c = Buffer.alloc(4)
+    c.writeUInt32BE(crc(tb))
+    return Buffer.concat([len, tb, c])
+  }
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(size, 0)
+  ihdr.writeUInt32BE(size, 4)
+  ihdr[8] = 8
+  ihdr[9] = 2
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(size * 3, Buffer.from([r, g, b]))])
+  const raw = Buffer.concat(Array.from({ length: size }, () => row))
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0))
+  ])
+}
+const redImage = join(data, 'red-square.png')
+writeFileSync(redImage, solidPng(220, 20, 20))
+
 // Editors such as VS Code set this for the processes they start, and it would
 // run Electron as plain Node instead of opening the app.
-const env = { ...process.env, VIBEAPP_USER_DATA: data, ELECTRON_ENABLE_LOGGING: '1' }
+const env = { ...process.env, VIBEAPP_USER_DATA: data, VIBEAPP_TEST_HOOKS: '1', ELECTRON_ENABLE_LOGGING: '1' }
 delete env.ELECTRON_RUN_AS_NODE
-const app = spawn(electron, ['.', `--remote-debugging-port=${PORT}`], {
-  cwd: root,
-  env,
-  stdio: ['ignore', 'pipe', 'pipe']
-})
+const command = packaged ? exe : createRequire(import.meta.url)('electron')
+const appArgs = packaged ? [`--remote-debugging-port=${PORT}`] : ['.', `--remote-debugging-port=${PORT}`]
+const app = spawn(command, appArgs, { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] })
 let appLog = ''
 app.stdout.on('data', (d) => (appLog += d))
 app.stderr.on('data', (d) => (appLog += d))
 
-// ---- the DevTools connection -----------------------------------------------------
+// ---- DevTools connections ----------------------------------------------------------
 
-let ws
-let nextId = 0
-const pending = new Map()
-const pageErrors = []
+async function targets() {
+  return (await fetch(`http://127.0.0.1:${PORT}/json`)).json()
+}
 
-async function connect() {
-  for (let i = 0; i < 120; i++) {
-    try {
-      const targets = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()
-      const page = targets.find((t) => t.type === 'page' && /index\.html|localhost:5173/.test(t.url))
-      if (page) {
-        ws = new WebSocket(page.webSocketDebuggerUrl)
-        await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)))
-        ws.onmessage = (raw) => {
-          const m = JSON.parse(raw.data)
-          if (m.id && pending.has(m.id)) {
-            pending.get(m.id)(m)
-            pending.delete(m.id)
-          } else if (m.method === 'Runtime.exceptionThrown') {
-            pageErrors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text)
-          }
-        }
-        await cdp('Runtime.enable')
-        await cdp('Page.enable')
-        return
-      }
-    } catch {
-      // not up yet
+/** Connects to one page (the app window, or the preview's embedded page). */
+async function attach(match) {
+  const target = (await targets()).find(match)
+  if (!target) return null
+  const ws = new WebSocket(target.webSocketDebuggerUrl)
+  await new Promise((r, j) => ((ws.onopen = r), (ws.onerror = j)))
+  let nextId = 0
+  const pending = new Map()
+  const errors = []
+  ws.onmessage = (raw) => {
+    const m = JSON.parse(raw.data)
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m)
+      pending.delete(m.id)
+    } else if (m.method === 'Runtime.exceptionThrown') {
+      errors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text)
     }
-    await sleep(500)
   }
-  throw new Error('The app window never appeared.')
+  const send = (method, params = {}) =>
+    new Promise((resolve) => {
+      const id = ++nextId
+      pending.set(id, resolve)
+      ws.send(JSON.stringify({ id, method, params }))
+    })
+  await send('Runtime.enable')
+  await send('Page.enable').catch(() => undefined)
+  return {
+    send,
+    errors,
+    close: () => ws.close(),
+    async evaluate(expression) {
+      const m = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
+      if (m.result?.exceptionDetails) throw new Error(m.result.exceptionDetails.exception?.description ?? 'evaluate failed')
+      return m.result?.result?.value
+    }
+  }
 }
 
-function cdp(method, params = {}) {
-  return new Promise((resolve) => {
-    const id = ++nextId
-    pending.set(id, resolve)
-    ws.send(JSON.stringify({ id, method, params }))
-  })
+let page
+for (let i = 0; i < 120 && !page; i++) {
+  try {
+    page = await attach((t) => t.type === 'page' && /index\.html|localhost:5173/.test(t.url))
+  } catch {
+    // not up yet
+  }
+  if (!page) await sleep(500)
 }
+const cdp = (method, params) => page.send(method, params)
+const evaluate = (expression) => page.evaluate(expression)
 
-async function evaluate(expression) {
-  const m = await cdp('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
-  if (m.result?.exceptionDetails) throw new Error(m.result.exceptionDetails.exception?.description ?? 'evaluate failed')
-  return m.result?.result?.value
-}
-
-async function waitFor(expression, what, timeoutMs = 30_000) {
+async function waitFor(expression, what, timeoutMs = 30_000, on = page) {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) {
     try {
-      if (await evaluate(expression)) return
+      if (await on.evaluate(expression)) return
     } catch {
       // page mid-render
     }
@@ -133,7 +188,7 @@ async function waitFor(expression, what, timeoutMs = 30_000) {
   throw new Error(`Timed out waiting for: ${what}`)
 }
 
-/** Clicks the first visible button (or other element) whose text contains `text`. */
+/** Clicks the first visible, enabled element (a button by default) whose text contains `text`. */
 async function click(text, selector = 'button') {
   const ok = await evaluate(`(() => {
     const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
@@ -142,17 +197,35 @@ async function click(text, selector = 'button') {
     el.click()
     return true
   })()`)
-  if (!ok) throw new Error(`No clickable "${text}"`)
+  if (!ok) throw new Error(`No clickable "${text}" (${selector})`)
   await sleep(300)
 }
 
-/** Types into the chat box and presses Enter, like a person. */
-async function send(text) {
+/** Fills a React-controlled input, as typing would. */
+async function fill(selector, value) {
+  await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)})
+    el.focus()
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set
+    setter.call(el, ${JSON.stringify(value)})
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+}
+
+const pressEscape = () => evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+
+/** Types into the message box and presses Enter. */
+async function type(text) {
   await waitFor(`!!document.querySelector('textarea.chat-input') && !document.querySelector('textarea.chat-input').disabled`, 'the message box')
   await evaluate(`document.querySelector('textarea.chat-input').focus()`)
   await cdp('Input.insertText', { text })
   await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
   await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+}
+
+/** Sends a chat message and waits until the request has started. */
+async function send(text) {
+  await type(text)
   await waitFor(`!!document.querySelector('.chat-stop')`, 'the request to start', 15_000)
 }
 
@@ -162,6 +235,8 @@ function idle(timeoutMs = 600_000) {
 }
 
 const chatText = () => evaluate(`document.querySelector('.chat-log')?.innerText ?? ''`)
+const lastReply = () =>
+  evaluate(`[...document.querySelectorAll('.chat-item-assistant_text')].at(-1)?.innerText ?? ''`)
 
 async function shot(name) {
   const m = await cdp('Page.captureScreenshot', { format: 'png' })
@@ -175,17 +250,25 @@ async function step(name, fn) {
   const start = Date.now()
   try {
     await fn()
-    results.push({ name, ok: true, ms: Date.now() - start })
+    results.push({ name, ok: true })
     console.log(`✔ ${name} (${((Date.now() - start) / 1000).toFixed(1)}s)`)
   } catch (err) {
     results.push({ name, ok: false, error: err.message })
     console.log(`✖ ${name}: ${err.message}`)
+    // Leave nothing half-open for the next step.
+    await pressEscape().catch(() => undefined)
+    if (await evaluate(`!!document.querySelector('.chat-stop')`).catch(() => false)) {
+      await click('Stop', 'button.chat-stop').catch(() => undefined)
+      await idle(60_000).catch(() => undefined)
+    }
   }
   await shot(name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()).catch(() => undefined)
 }
 
+const takeoverSwitch = join(data, 'test-claude-out')
+
 try {
-  await connect()
+  if (!page) throw new Error('The app window never appeared.')
 
   await step('the app opens with both accounts ready', async () => {
     await waitFor(`[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'Claude to be ready', 90_000)
@@ -201,12 +284,48 @@ try {
     await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat')
   })
 
+  // -- the live preview --
+
+  let preview
+  await step('the live preview shows the project page', async () => {
+    await waitFor(`!!document.querySelector('webview')`, 'the preview to start', 60_000)
+    for (let i = 0; i < 40 && !preview; i++) {
+      preview = await attach((t) => t.type === 'webview').catch(() => null)
+      if (!preview) await sleep(500)
+    }
+    if (!preview) throw new Error('no preview page')
+    await waitFor(`document.title === 'E2E Shop'`, 'the page to load', 30_000, preview)
+  })
+
+  await step('Point picks an element in the preview', async () => {
+    if (!preview) throw new Error('no preview page')
+    await click('Point')
+    await sleep(800)
+    const box = await preview.evaluate(`(() => { const r = document.getElementById('title').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`)
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+      await preview.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 })
+    }
+    await waitFor(`/E2E Shop/.test(document.querySelector('.picked-chip')?.innerText ?? '')`, 'the picked element chip', 10_000)
+    await click('✕', '.picked-chip button')
+  })
+
+  await step('an error in the page shows the "Something broke" banner', async () => {
+    if (!preview) throw new Error('no preview page')
+    writeFileSync(join(project, 'index.html'), PAGE.replace('</body>', '<script>throw new Error("e2e boom")</script></body>'))
+    await click('⟳')
+    await waitFor(`/Something broke in your app/.test(document.body.innerText)`, 'the problem banner', 30_000)
+    await click('Dismiss', '.problem-banner button')
+    writeFileSync(join(project, 'index.html'), PAGE)
+    await click('⟳')
+  })
+
+  // -- building, reviewing, undoing --
+
   await step('Claude edits a file itself and Codex double-checks it', async () => {
     await send('Add a function sellPrice(item) to shop.js that returns half of that item\'s price, rounded down, and export it alongside the prices. Make the edit yourself; do not hand it to Codex.')
     await waitFor(`!!document.querySelector('.review-card')`, 'the Codex review to start', 300_000)
     await idle()
-    const shop = readFileSync(join(project, 'shop.js'), 'utf-8')
-    if (!/sellPrice/.test(shop)) throw new Error('shop.js was not changed')
+    if (!/sellPrice/.test(readFileSync(join(project, 'shop.js'), 'utf-8'))) throw new Error('shop.js was not changed')
     const review = await evaluate(`[...document.querySelectorAll('.review-card')].map((c) => c.innerText).join(' | ')`)
     if (/couldn't review/i.test(review)) throw new Error(`review failed: ${review}`)
     if (!/double-checked|found \d+ issue/i.test(review)) throw new Error(`no review result: ${review}`)
@@ -218,22 +337,138 @@ try {
     if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js is not back to how it was')
   })
 
+  await step('a checkpoint is saved and listed on the History screen', async () => {
+    writeFileSync(join(project, 'notes.md'), '# Notes\n')
+    await click('Checkpoint')
+    await waitFor(`!!document.querySelector('.checkpoint-modal input')`, 'the checkpoint box', 5000)
+    await fill('.checkpoint-modal input', 'E2E checkpoint')
+    await click('Save', '.checkpoint-modal-actions button').catch(() => click('Checkpoint', '.checkpoint-modal-actions button'))
+    await waitFor(`!document.querySelector('.checkpoint-modal')`, 'the box to close', 15_000)
+    const log = execFileSync('git', ['log', '--oneline', '-1'], { cwd: project }).toString()
+    if (!/E2E checkpoint/.test(log)) throw new Error(`not committed: ${log}`)
+    await click('History')
+    await waitFor(`/E2E checkpoint/.test(document.body.innerText)`, 'the checkpoint in History', 10_000)
+    await click('Back', 'button').catch(() => click('←', 'button'))
+    await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat again', 10_000)
+  })
+
+  // -- asking --
+
   await step('Ask mode answers without changing anything', async () => {
     await click('Ask', '.chat-mode-switch button')
     await send('What does the sword cost in shop.js?')
     await idle(180_000)
     const text = await chatText()
-    if (!/Question/.test(text) || !/140/.test(text.slice(-400))) throw new Error('no answer with the price')
+    if (!/Question/.test(text) || !/140/.test(await lastReply())) throw new Error('no answer with the price')
     await click('Build', '.chat-mode-switch button')
   })
 
   await step('a plain question typed in Build is answered the cheap way', async () => {
     await send('How many prices are listed in shop.js?')
     await idle(180_000)
-    const text = await chatText()
-    if (!/Answered as a question/.test(text)) throw new Error('was not routed to Ask')
+    if (!/Answered as a question/.test(await chatText())) throw new Error('was not routed to Ask')
     await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Do it in Build instead'))`, 'the Build-instead button', 5000)
   })
+
+  await step('an attached image reaches Claude', async () => {
+    const { root: doc } = (await cdp('DOM.getDocument', { depth: -1 })).result
+    const { nodeId } = (await cdp('DOM.querySelector', { nodeId: doc.nodeId, selector: 'input[type=file]' })).result
+    await cdp('DOM.setFileInputFiles', { nodeId, files: [redImage] })
+    await waitFor(`!!document.querySelector('.pending-images img')`, 'the image preview', 10_000)
+    await send('What colour is the attached image? Answer with one word.')
+    await idle(180_000)
+    if (!/red/i.test(await lastReply())) throw new Error(`reply: ${await lastReply()}`)
+  })
+
+  // -- prompts and questions --
+
+  await step('Claude can ask a question with options and gets the answer', async () => {
+    await send('Before doing anything else, use your AskUserQuestion tool to ask me whether I prefer Red or Blue (exactly those two options). Then reply with only my choice.')
+    await waitFor(`!!document.querySelector('.question-card')`, 'the question card', 120_000)
+    await click('Blue', '.question-option')
+    await click('', '.question-submit')
+    await idle(120_000)
+    if (!/blue/i.test(await lastReply())) throw new Error(`reply: ${await lastReply()}`)
+  })
+
+  await step('risky commands ask first, and Allow and Deny are respected', async () => {
+    mkdirSync(join(project, 'a_tmp'))
+    mkdirSync(join(project, 'b_tmp'))
+    await send('Run these two shell commands now, both at once as two separate tool calls in the same message: rm -rf a_tmp  and  rm -rf b_tmp . Do not ask me in chat first; just run them.')
+    await waitFor(`/Allow it\\?/.test(document.body.innerText)`, 'the first Allow/Deny prompt', 120_000)
+    await click('Allow', '.confirmation-banner button')
+    let prompts = 1
+    for (let i = 0; i < 60; i++) {
+      if (await evaluate(`/Allow it\\?/.test(document.body.innerText)`)) {
+        prompts++
+        await click('Deny', '.confirmation-banner button')
+        break
+      }
+      if (!(await evaluate(`!!document.querySelector('.chat-stop')`))) break
+      await sleep(1000)
+    }
+    await idle(120_000)
+    console.log(`  (${prompts} prompt${prompts === 1 ? '' : 's'} shown)`)
+    if (existsSync(join(project, 'a_tmp'))) throw new Error('the allowed command did not run')
+    if (prompts === 2 && !existsSync(join(project, 'b_tmp'))) throw new Error('the denied command ran anyway')
+  })
+
+  await step('Go Nutz mode turns on (after confirming) and off', async () => {
+    await click('Go Nutz', '.go-nutz-control button')
+    await click('', '.go-nutz-confirm')
+    await waitFor(`/Go Nutz mode is ON/.test(document.body.innerText)`, 'the Go Nutz banner', 10_000)
+    await click('Go Nutz', '.go-nutz-control button')
+    await waitFor(`!/Go Nutz mode is ON/.test(document.body.innerText)`, 'the banner to go', 10_000)
+  })
+
+  // -- secrets --
+
+  const SECRET = 'zebra-quartz-77-plum'
+  await step('a secret is saved and reaches Claude as an environment variable', async () => {
+    await click('Secrets')
+    await waitFor(`!!document.querySelector('.secret-add input')`, 'the secrets box', 5000)
+    await fill('.secret-add input[placeholder^="NAME"]', 'E2E_SECRET')
+    await fill('.secret-add input[placeholder="Value"]', SECRET)
+    await click('Save', '.secret-add button')
+    await waitFor(`/E2E_SECRET/.test(document.querySelector('.secret-list')?.innerText ?? '')`, 'the secret in the list', 10_000)
+    await pressEscape()
+    await send('Using a shell command, find out how many characters long the E2E_SECRET environment variable is (do not print the value). Reply with just the number.')
+    await idle(180_000)
+    if (!/\b20\b/.test(await lastReply())) throw new Error(`reply: ${await lastReply()}`)
+  })
+
+  await step('a secret written into a project file is caught', async () => {
+    await send(`Create a file named notes.txt whose entire content is this text: ${SECRET}`)
+    await idle(180_000)
+    if (!existsSync(join(project, 'notes.txt'))) throw new Error('Claude did not create the file')
+    await waitFor(`/secret key was written into your project files/.test(document.body.innerText)`, 'the leak banner', 15_000)
+    await click('Dismiss', '.problem-banner button')
+  })
+
+  // -- Claude out of plan: the takeover screens (simulated with a test switch) --
+
+  await step('when Claude is out, Codex takes the request (banner and result)', async () => {
+    writeFileSync(takeoverSwitch, '')
+    await send('Create a file takeover.txt containing the word done.')
+    await waitFor(`/Codex is handling this directly/.test(document.querySelector('.chat-log').innerText)`, 'the takeover banner', 30_000)
+    await idle(600_000)
+    if (!existsSync(join(project, 'takeover.txt'))) throw new Error('Codex did not create the file')
+  })
+
+  await step('with "ask me first", Codex only runs after "Let Codex do it"', async () => {
+    await evaluate(`window.vibe.settings.update({ limitTakeover: 'ask' })`)
+    await type('Create a file second.txt containing ok.')
+    await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Let Codex do it'))`, 'the offer button', 30_000)
+    if (existsSync(join(project, 'second.txt'))) throw new Error('ran before being asked')
+    await click('Let Codex do it')
+    await waitFor(`!!document.querySelector('.chat-stop')`, 'Codex to start', 15_000)
+    await idle(600_000)
+    if (!existsSync(join(project, 'second.txt'))) throw new Error('Codex did not create the file')
+    await evaluate(`window.vibe.settings.update({ limitTakeover: 'auto' })`)
+    rmSync(takeoverSwitch, { force: true })
+  })
+
+  // -- shrinking and stopping --
 
   await step('compacting the conversation shows a notice and keeps working', async () => {
     const result = await evaluate(`window.vibe.chat.compactNow(${JSON.stringify(PROJECT_ID)}, ${JSON.stringify(project)})`)
@@ -241,7 +476,7 @@ try {
     await waitFor(`/Compacted the conversation/.test(document.querySelector('.chat-log').innerText)`, 'the compaction notice', 20_000)
     await send('In one word: which file holds the prices?')
     await idle(180_000)
-    if (!/shop/i.test((await chatText()).slice(-300))) throw new Error('no sensible reply after compacting')
+    if (!/shop/i.test(await lastReply())) throw new Error('no sensible reply after compacting')
   })
 
   await step('Stop ends a running request', async () => {
@@ -252,18 +487,15 @@ try {
     if (!/Stopped/.test((await chatText()).slice(-400))) throw new Error('no Stopped notice')
   })
 
+  // -- other screens --
+
   await step('the Chat tab talks to Claude and then Codex, keeping the conversation', async () => {
     await click('Chat', '.app-nav-tabs button')
     await click('Claude', '.talk-compose .chat-mode-switch button')
-    await send('Remember the word BANANA and reply with just OK.').catch(async () => {
-      // The Chat tab has no Stop button showing while it waits briefly; fall back to plain waiting.
-    })
+    await type('Remember the word BANANA and reply with just OK.')
     await waitFor(`/OK/.test(document.querySelector('.talk-log').innerText)`, "Claude's reply", 120_000)
     await click('Codex', '.talk-compose .chat-mode-switch button')
-    await waitFor(`!document.querySelector('textarea.chat-input').disabled`, 'the message box')
-    await evaluate(`document.querySelector('textarea.chat-input').focus()`)
-    await cdp('Input.insertText', { text: 'What word did I ask you to remember? One word.' })
-    await cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    await type('What word did I ask you to remember? One word.')
     await waitFor(`/Codex[\\s\\S]*BANANA/i.test(document.querySelector('.talk-log').innerText)`, "Codex's reply", 180_000)
   })
 
@@ -291,9 +523,17 @@ try {
     if (auto.length) throw new Error(`saved anyway: ${auto.map((f) => f.text).join(' | ')}`)
   })
 
-  if (pageErrors.length) {
-    results.push({ name: 'no errors in the page', ok: false, error: pageErrors.slice(0, 5).join(' | ') })
-    console.log(`✖ errors in the page: ${pageErrors.slice(0, 5).join(' | ')}`)
+  await step('a project can be removed from the list (keeping its data)', async () => {
+    await click('Projects', '.app-nav-tabs button')
+    await click('', 'button.project-remove')
+    await click('Remove from list', '.remove-choices button')
+    await waitFor(`!/e2e-game/.test(document.body.innerText)`, 'the project to leave the list', 10_000)
+  })
+
+  const errors = [...page.errors, ...(preview?.errors ?? [])].filter((e) => !/e2e boom/.test(e))
+  if (errors.length) {
+    results.push({ name: 'no errors in the app', ok: false, error: errors.slice(0, 5).join(' | ') })
+    console.log(`✖ errors in the app: ${errors.slice(0, 5).join(' | ')}`)
   }
 } catch (err) {
   console.log(`✖ ${err.message}`)
@@ -307,11 +547,8 @@ try {
   app.kill()
   await sleep(1500)
   const failed = results.filter((r) => !r.ok)
-  console.log(`\n${results.length - failed.length}/${results.length} steps passed. Screenshots: ${shots}`)
-  if (failed.length) {
-    writeFileSync(join(shots, 'app-log.txt'), appLog)
-    console.log(`App log saved to ${join(shots, 'app-log.txt')}`)
-  }
+  console.log(`\n${results.length - failed.length}/${results.length} steps passed${packaged ? ' (packaged app)' : ''}. Screenshots: ${shots}`)
+  writeFileSync(join(shots, 'app-log.txt'), appLog)
   for (const dir of [data, project]) {
     try {
       rmSync(dir, { recursive: true, force: true })
