@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node scripts/test.mjs unit",
     "smoke": "node scripts/test.mjs smoke",
+    "e2e": "node tests/e2e/app.e2e.mjs",
     "postinstall": "patch-package && electron-rebuild -f -w node-pty"
   },
   "dependencies": {

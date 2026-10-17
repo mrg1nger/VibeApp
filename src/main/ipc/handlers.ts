@@ -363,6 +363,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         carried,
         // What Codex did on its own while Claude was out.
         takeCatchUpNote(projectId),
+        takeUndoNote(projectId),
         route.note,
         relevant,
         picked ? pickedNote(picked) : undefined,
@@ -379,8 +380,22 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     }
   )
 
-  ipcMain.handle('vibe:chat:undo', (_event, projectPath: string, snapshot: string) =>
-    restoreSnapshot(projectPath, snapshot)
+  ipcMain.handle(
+    'vibe:chat:undo',
+    async (_event, projectPath: string, snapshot: string, projectId?: string, kind?: 'undo' | 'redo', request?: string) => {
+      const result = await restoreSnapshot(projectPath, snapshot)
+      // Memory and Claude would otherwise still believe the undone work exists.
+      if (projectId && result.changedFiles.length) {
+        const files = result.changedFiles.slice(0, 15).join(', ')
+        const what =
+          kind === 'redo'
+            ? `The user pressed Redo: the changes to ${files} are back.`
+            : `The user pressed Undo: ${files} ${result.changedFiles.length === 1 ? 'is' : 'are'} back to how ${result.changedFiles.length === 1 ? 'it was' : 'they were'} before the request${request ? ` "${request.slice(0, 120)}"` : ''}, so the work done in it (and anything after) is gone.`
+        recordUserMessage(projectId, `[${what}]`, kind ?? 'undo')
+        undoNotes.set(projectId, [...(undoNotes.get(projectId) ?? []), what])
+      }
+      return result
+    }
   )
 
   ipcMain.on('vibe:chat:skipReview', (_event, projectId: string) => skipReview(projectId))
@@ -713,6 +728,15 @@ function rotateThreshold(): number {
   return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
 }
 
+/** Undo/Redo presses since Claude last heard from the user, told to it with the next message. */
+const undoNotes = new Map<string, string[]>()
+
+function takeUndoNote(projectId: string): string | undefined {
+  const notes = undoNotes.get(projectId)
+  undoNotes.delete(projectId)
+  return notes?.length ? `[VibeApp note: ${notes.join(' ')} Check the files rather than relying on what was done before.]` : undefined
+}
+
 /** A manually started fresh session's summary, delivered with the next message. */
 const pendingCarry = new Map<string, string>()
 
@@ -730,7 +754,8 @@ const pendingCarry = new Map<string, string>()
 async function saveBeforeShrinking(projectId: string): Promise<void> {
   ensureHistoryImported(projectId)
   try {
-    await runSavePass(projectId)
+    // Only when the user lets VibeApp save memory by itself.
+    if (getSettings().autoMemory) await runSavePass(projectId)
   } catch (err) {
     console.warn('Save pass before shrinking the conversation failed:', (err as Error).message)
   }

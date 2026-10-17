@@ -113,9 +113,12 @@ const vibeApi = {
       ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images, forceBuild),
     undo: (
       projectPath: string,
-      snapshot: string
+      snapshot: string,
+      projectId?: string,
+      kind?: 'undo' | 'redo',
+      request?: string
     ): Promise<{ redoSnapshot: string; changedFiles: string[] }> =>
-      ipcRenderer.invoke('vibe:chat:undo', projectPath, snapshot),
+      ipcRenderer.invoke('vibe:chat:undo', projectPath, snapshot, projectId, kind, request),
     onEvent: (cb: (projectId: string, event: VibeEvent) => void): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,

@@ -328,7 +328,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           case 'compacting':
             return [
               ...prev,
-              { kind: 'notice', text: 'Compacting the conversation to keep it fast (rules, procedures and the project brief were saved to memory first)…' }
+              { kind: 'notice', text: 'Compacting the conversation to keep it fast…' }
             ]
           case 'session_compacted':
             // The real size (summary plus Claude's instructions) is known after the next message.
@@ -631,7 +631,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       if (busy || restoring) return
       setRestoring(true)
       try {
-        const { redoSnapshot, changedFiles } = await window.vibe.chat.undo(project.path, snapshot)
+        const { redoSnapshot, changedFiles } = await window.vibe.chat.undo(project.path, snapshot, project.id, kind, fromText)
         const n = changedFiles.length
         const files = `${n} file${n === 1 ? '' : 's'}`
         const item: ChatItem =

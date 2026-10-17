@@ -68,6 +68,10 @@ function createWindow(): void {
   }
 }
 
+// The end-to-end test runs the app against its own data folder, so it never
+// touches the user's projects, memory or settings.
+if (process.env.VIBEAPP_USER_DATA) app.setPath('userData', process.env.VIBEAPP_USER_DATA)
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.vibeapp')
 

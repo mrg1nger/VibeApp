@@ -20,7 +20,11 @@ const IDENTITY_ENV = {
 }
 
 async function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, {
+  // Snapshots must hold files byte for byte. With core.autocrlf on (the usual
+  // Windows setup) git would store LF and write CRLF back on restore, so Undo
+  // turned every Unix-style file it touched into a Windows-style one (breaking
+  // shell scripts deployed to Linux, and making git show whole-file changes).
+  const { stdout } = await execFileAsync('git', ['-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false', ...args], {
     cwd,
     env: env ? { ...process.env, ...env } : process.env,
     windowsHide: true,
