@@ -53,7 +53,8 @@ import {
   getSession,
   disposeSession,
   setModelForAllSessions,
-  refreshExtensionsForAllSessions
+  refreshExtensionsForAllSessions,
+  type CompactResult
 } from '../orchestrator/session'
 import {
   GLOBAL_SCOPE,
@@ -295,11 +296,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // A fresh session the user started by hand brings its summary along now.
       let carried: string | undefined = pendingCarry.get(projectId)
       pendingCarry.delete(projectId)
-      if (!carried && getSettings().freshSessions && session.contextTokens() > rotateThreshold()) {
+      if (!carried && session.contextTokens() > rotateThreshold()) {
         try {
-          carried = await rotateWithSummary(session, projectId)
+          if (getSettings().autoCompact) await compactWithSafeguards(session, projectId)
+          else if (getSettings().freshSessions) carried = await rotateWithSummary(session, projectId)
         } catch (err) {
-          console.warn('Starting a fresh session failed; continuing in the current one:', (err as Error).message)
+          console.warn('Shrinking the conversation failed; continuing as it is:', (err as Error).message)
         }
       }
 
@@ -382,6 +384,25 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
+  // The user chose "Compact now".
+  ipcMain.handle('vibe:chat:compactNow', async (_event, projectId: string, projectPath: string) => {
+    if (asks.has(projectId) || takeovers.has(projectId)) {
+      return { ok: false, message: 'Wait for the current request to finish first.' }
+    }
+    const project = getProject(projectId)
+    const session = getOrCreateSession(projectId, projectPath, project?.sdkSessionId, project?.goNutzMode ?? false)
+    wireSessionEvents(session, projectId, getSender)
+    try {
+      const result = await compactWithSafeguards(session, projectId)
+      if (!result) {
+        return { ok: false, message: "The conversation couldn't be compacted right now (a request may still be running)." }
+      }
+      return { ok: true, before: result.before, after: result.after }
+    } catch (err) {
+      return { ok: false, message: `Couldn't compact the conversation: ${(err as Error).message}` }
+    }
+  })
+
   // The user chose "Start a fresh session now".
   ipcMain.handle('vibe:chat:rotateNow', async (_event, projectId: string, projectPath: string) => {
     if (asks.has(projectId) || takeovers.has(projectId)) {
@@ -697,18 +718,18 @@ const pendingCarry = new Map<string, string>()
  * summary (only between requests). Returns the note the new session starts
  * with, or undefined if nothing changed (no summary, or a request is running).
  */
-async function rotateWithSummary(
-  session: ReturnType<typeof getOrCreateSession>,
-  projectId: string
-): Promise<string | undefined> {
+/**
+ * The last chance to save what only the conversation knows (procedures,
+ * rules, decisions) and to bring the project brief up to date, before the
+ * conversation is compacted or left behind. Never throws: neither step may
+ * stop the shrinking.
+ */
+async function saveBeforeShrinking(projectId: string): Promise<void> {
   ensureHistoryImported(projectId)
-  // The last chance to save what only this conversation knows (procedures,
-  // rules, decisions), and to bring the project brief up to date, before it
-  // is left behind. Neither may stop the rollover.
   try {
     await runSavePass(projectId)
   } catch (err) {
-    console.warn('Save pass before the fresh session failed:', (err as Error).message)
+    console.warn('Save pass before shrinking the conversation failed:', (err as Error).message)
   }
   const projectPath = getProject(projectId)?.path
   if (projectPath) {
@@ -718,6 +739,26 @@ async function rotateWithSummary(
       console.warn('Project brief refresh failed:', (err as Error).message)
     }
   }
+}
+
+/** What Claude Code's summary must keep when VibeApp compacts a conversation. */
+const COMPACT_INSTRUCTIONS =
+  "Write the summary so the work can continue without the history. Keep, as exactly as possible: the user's standing rules (anything they said never or always to do, files or areas not to touch); how the project is run, tested and deployed, with the commands that worked; servers, services, hosts and environments; decisions made and why; what is in progress and what is next; open questions; the file paths that matter. Drop exploration details, file contents that can be re-read, and attempts that were superseded. The project brief and remembered facts are kept separately, so don't pad the summary with general background."
+
+/** Compacts the conversation in place, after saving what it alone knows. */
+async function compactWithSafeguards(
+  session: ReturnType<typeof getOrCreateSession>,
+  projectId: string
+): Promise<CompactResult | null> {
+  await saveBeforeShrinking(projectId)
+  return session.compact(COMPACT_INSTRUCTIONS)
+}
+
+async function rotateWithSummary(
+  session: ReturnType<typeof getOrCreateSession>,
+  projectId: string
+): Promise<string | undefined> {
+  await saveBeforeShrinking(projectId)
   const summary = await summarizeConversation(projectId)
   if (!summary || !session.rotate(summary)) return undefined
   return `[VibeApp note: this is a fresh session continuing earlier work, started to keep things fast. Summary of the conversation so far:\n${summary}\nTreat the STANDING RULES in it as binding. The history tool (mcp__vibe_memory__history) has the details; check it before assuming something wasn't discussed.]`
@@ -863,6 +904,8 @@ function wireSessionEvents(
 ): void {
   if (wiredSessions.has(session)) return
   wiredSessions.add(session)
+  // If Claude Code compacts on its own (near its limit), save first.
+  session.beforeAutoCompact = () => saveBeforeShrinking(projectId)
 
   session.on('event', (event: VibeEvent) => {
     if (event.type === 'claude_limit') {

@@ -846,6 +846,7 @@ export type UsageKind =
   | 'takeover' // Codex handling a request directly because Claude was out
   | 'chat' // a question answered without building (Ask mode or the Chat tab)
   | 'brief' // Haiku writing the project brief
+  | 'compact' // Claude compacting a long conversation (estimated: the SDK doesn't report it)
 
 export interface UsageRecord {
   projectId?: string

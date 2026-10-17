@@ -8,6 +8,7 @@ const DEFAULTS: AppSettings = {
   limitTakeover: 'auto',
   autoAsk: true,
   rotateAtTokens: 120_000,
+  autoCompact: true,
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',

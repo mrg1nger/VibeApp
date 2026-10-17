@@ -5,7 +5,9 @@ import {
   query,
   type SDKUserMessage,
   type HookCallback,
-  type PreToolUseHookInput
+  type PreCompactHookInput,
+  type PreToolUseHookInput,
+  type SDKCompactBoundaryMessage
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfirmationRequest, QuestionAnswers, UserQuestion, VibeEvent } from '@shared/types'
 import { mapSdkMessage } from './eventSchema'
@@ -22,6 +24,14 @@ import { agentSecretEnv, listSecrets } from '../secrets/vault'
 import type { PreparedImage } from '../attachments/images'
 import type { CodexThread, RequestContext } from '../delegation/codexTool'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
+
+/** A compaction's outcome: conversation size (tokens) before and after. */
+export interface CompactResult {
+  before: number
+  after: number
+  trigger: 'manual' | 'auto'
+  durationMs?: number
+}
 
 function memoryInstructions(autoMemory: boolean): string {
   const saving = autoMemory
@@ -135,6 +145,10 @@ export class ClaudeSession extends EventEmitter {
   private limitResetsAt: number | undefined
   /** The limit has been reported for the current request. */
   private limitReported = false
+  /** Set while a /compact turn runs; resolved when it ends. */
+  private compaction: { resolve: (result: CompactResult | null) => void; result: CompactResult | null } | undefined
+  /** Runs before Claude Code compacts on its own (near its limit), so what only the conversation knew is saved first. */
+  beforeAutoCompact: (() => Promise<void>) | undefined
 
   /** The Codex session this request's hand-offs share (reset by each new request). */
   private codexThread: CodexThread | undefined
@@ -155,6 +169,28 @@ export class ClaudeSession extends EventEmitter {
    * re-reading a very long history on every step. Only between requests;
    * the caller carries the earlier conversation over as a summary.
    */
+  /**
+   * Shrinks the conversation in place: Claude Code summarises it (following
+   * `instructions`) and carries on in the same session. Only between
+   * requests. Resolves with the sizes before and after, or null if it
+   * couldn't run.
+   */
+  compact(instructions: string): Promise<CompactResult | null> {
+    if (this.dead || this.disposed || this.turnsInFlight > 0 || this.compaction) return Promise.resolve(null)
+    return new Promise((resolve) => {
+      this.compaction = { resolve, result: null }
+      this.turnsInFlight++
+      this.emit('event', { type: 'compacting' } satisfies VibeEvent)
+      this.queue.push(`/compact ${instructions}`)
+    })
+  }
+
+  private endCompaction(): void {
+    const running = this.compaction
+    this.compaction = undefined
+    running?.resolve(running.result)
+  }
+
   rotate(summary?: string): boolean {
     if (this.dead || this.disposed || this.turnsInFlight > 0) return false
     const before = this.lastContextTokens
@@ -294,6 +330,17 @@ export class ClaudeSession extends EventEmitter {
       extensions.map((e) => [e.server, { type: 'stdio' as const, command: e.command, args: e.args, env: e.env }])
     )
 
+    const beforeCompact: HookCallback = async (input) => {
+      if (input.hook_event_name === 'PreCompact' && (input as PreCompactHookInput).trigger === 'auto') {
+        try {
+          await this.beforeAutoCompact?.()
+        } catch (err) {
+          console.warn('Saving memory before compaction failed:', (err as Error).message)
+        }
+      }
+      return { continue: true }
+    }
+
     const queue = new MessageQueue()
     this.activeModel = getSettings().claudeModel
     this.queryHandle = query({
@@ -352,7 +399,9 @@ ${extensionInstructions(extensions)}` : ''}`
             : { behavior: 'deny', message: 'The user declined this action.' }
         },
         hooks: {
-          PreToolUse: [{ hooks: [destructiveCommandGate] }]
+          PreToolUse: [{ hooks: [destructiveCommandGate] }],
+          // VibeApp's own compactions save first; this covers Claude Code compacting by itself.
+          PreCompact: [{ hooks: [beforeCompact], timeout: 120 }]
         }
       }
     })
@@ -491,8 +540,37 @@ ${extensionInstructions(extensions)}` : ''}`
           }
           if (message.type === 'result') {
             this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
-            this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
+            if (this.compaction) this.endCompaction()
+            else this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
           }
+          continue
+        }
+        // The conversation was compacted (asked for, or by Claude Code itself near its limit).
+        if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+          const meta = (message as unknown as SDKCompactBoundaryMessage).compact_metadata
+          const result: CompactResult = {
+            before: meta.pre_tokens,
+            after: meta.post_tokens ?? 0,
+            trigger: meta.trigger,
+            durationMs: meta.duration_ms
+          }
+          if (meta.post_tokens) this.lastContextTokens = meta.post_tokens
+          if (this.compaction) this.compaction.result = result
+          // The SDK reports no usage for it; log an estimate (one read of the old context, one summary written).
+          recordUsage(this.projectId, 'compact', 'claude', {
+            fresh: 0,
+            cached: meta.pre_tokens,
+            output: meta.post_tokens ?? 0,
+            steps: 1
+          })
+          this.emit('event', { type: 'session_compacted', ...result } satisfies VibeEvent)
+          continue
+        }
+        // The end of a /compact turn: not a reply, so no usage line and no turn_complete.
+        if (message.type === 'result' && this.compaction) {
+          this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+          this.endCompaction()
+          if (this.reloadPending && this.turnsInFlight === 0) this.reload()
           continue
         }
         if (message.type === 'assistant') {
@@ -544,6 +622,7 @@ ${extensionInstructions(extensions)}` : ''}`
     // current turn so the UI doesn't wait forever.
     this.dead = true
     this.queue.close()
+    this.endCompaction()
     if (this.turnsInFlight > 0 || failure) {
       this.turnsInFlight = 0
       if (failure) this.emit('event', { type: 'error', message: failure } satisfies VibeEvent)

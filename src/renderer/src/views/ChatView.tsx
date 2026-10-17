@@ -320,6 +320,23 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 ].join(' · ')
               }
             ]
+          case 'compacting':
+            return [
+              ...prev,
+              { kind: 'notice', text: 'Compacting the conversation to keep it fast (rules, procedures and the project brief were saved to memory first)…' }
+            ]
+          case 'session_compacted':
+            // The real size (summary plus Claude's instructions) is known after the next message.
+            if (!isReplay) setContextTokens(0)
+            return [
+              ...prev,
+              {
+                kind: 'notice',
+                text: `Compacted the conversation: about ${compactCount(event.before)} tokens of history (with Claude's instructions) became a summary of about ${compactCount(event.after)}${
+                  event.trigger === 'auto' ? ' (Claude Code did this on its own, near its limit; memory was saved first)' : ''
+                }. The full history is still searchable.`
+              }
+            ]
           case 'session_rotated':
             return [
               ...prev,
@@ -482,6 +499,21 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   )
 
   // Moves this chat into a new Claude session seeded with a summary, so it stops re-reading everything.
+  // Shrinks the conversation in place (after saving what only it knows).
+  const handleCompact = useCallback(async () => {
+    setRotating(true)
+    setBusy(true)
+    try {
+      const result = await window.vibe.chat.compactNow(project.id, project.path)
+      if (!result.ok) onError(result.message ?? "Couldn't compact the conversation.")
+    } catch (err) {
+      onError(`Couldn't compact the conversation: ${(err as Error).message}`)
+    } finally {
+      setRotating(false)
+      setBusy(false)
+    }
+  }, [project.id, project.path, onError])
+
   const handleFreshSession = useCallback(async () => {
     if (
       hasChanges &&
@@ -978,8 +1010,12 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             <div className="chat-cost-note">
               <span>
                 💡 This chat has grown to about {compactCount(contextTokens)} tokens, and every Build message re-reads
-                it. Questions are much cheaper in Ask mode; for a new, unrelated task, a fresh chat is cheaper still.
+                it. Compacting shrinks it in place (rules, procedures and the project brief are saved first); questions
+                are cheaper still in Ask mode.
               </span>
+              <button className="chat-inline-action" disabled={rotating} onClick={handleCompact}>
+                {rotating ? 'Working…' : 'Compact now'}
+              </button>
               <button className="chat-inline-action" onClick={() => setAskMode(true)}>
                 Switch to Ask
               </button>
