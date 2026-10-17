@@ -308,7 +308,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // The prompt cache is per model, so dropping to Haiku in a big
       // conversation re-processes all of it, costing more than a quick edit
       // saves. Stay on the current model then.
-      if (route.model === 'haiku' && session.contextTokens() > CACHE_KEEP_TOKENS) {
+      if (
+        route.model === 'haiku' &&
+        (session.contextTokens() > CACHE_KEEP_TOKENS || session.contextSizeUnknown())
+      ) {
         route.model = null
         route.label = undefined
         route.reason = undefined

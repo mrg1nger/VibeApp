@@ -154,6 +154,7 @@ export class ClaudeSession extends EventEmitter {
   private codexThread: CodexThread | undefined
   /** Size of the conversation Claude last saw, in tokens (from its latest API call). */
   private lastContextTokens = 0
+  private sizeUnknown = false
 
   setRequestContext(context: RequestContext | undefined): void {
     this.requestContext = context
@@ -162,6 +163,11 @@ export class ClaudeSession extends EventEmitter {
 
   contextTokens(): number {
     return this.lastContextTokens
+  }
+
+  /** True for a resumed conversation that hasn't replied yet in this run (its size reads as 0 but may be large). */
+  contextSizeUnknown(): boolean {
+    return this.sizeUnknown
   }
 
   /**
@@ -197,6 +203,7 @@ export class ClaudeSession extends EventEmitter {
     const old = this.queue
     this.capturedSessionId = undefined
     this.lastContextTokens = 0
+    this.sizeUnknown = false
     this.queue = this.startQuery(undefined, this.goNutz)
     old.close()
     this.emit('event', { type: 'session_rotated', contextTokens: before, summary } satisfies VibeEvent)
@@ -212,6 +219,8 @@ export class ClaudeSession extends EventEmitter {
     super()
     this.goNutz = initialGoNutz
     this.capturedSessionId = resumeSessionId
+    // A resumed conversation's size isn't known until its first reply.
+    this.sizeUnknown = !!resumeSessionId
     this.queue = this.startQuery(resumeSessionId, initialGoNutz)
     this.watchMcpConfig()
   }
@@ -573,7 +582,8 @@ ${extensionInstructions(extensions)}` : ''}`
           if (this.reloadPending && this.turnsInFlight === 0) this.reload()
           continue
         }
-        if (message.type === 'assistant') {
+        // Helper agents' calls have their own small contexts; only the main conversation's count.
+        if (message.type === 'assistant' && !(message as { parent_tool_use_id?: string | null }).parent_tool_use_id) {
           // Each API call reports how much it read: that's the conversation's size now.
           const u = (
             message.message as {
@@ -583,6 +593,7 @@ ${extensionInstructions(extensions)}` : ''}`
           if (u) {
             this.lastContextTokens =
               (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+            this.sizeUnknown = false
           }
         }
         if (message.type === 'result') {
