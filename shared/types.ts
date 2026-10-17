@@ -47,9 +47,11 @@ export interface UsageSnapshot {
   status: 'ok' | 'unavailable' | 'error'
   plan?: string
   windows: UsageWindow[]
-  /** Why usage isn't shown (status 'unavailable' or 'error'). */
+  /** Why usage isn't shown (status 'unavailable' or 'error'), or why shown numbers are old. */
   message?: string
   fetchedAt: number
+  /** The last real numbers, kept because the latest check failed. */
+  stale?: boolean
 }
 
 export type VibeEvent =

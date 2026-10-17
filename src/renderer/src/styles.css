@@ -2531,3 +2531,7 @@ textarea {
 .substeps li.substep-error {
   color: var(--danger-text, #ff8a8a);
 }
+
+.usage-meter-stale .usage-meter-bars {
+  opacity: 0.55;
+}

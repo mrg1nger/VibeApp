@@ -88,6 +88,7 @@ function UsageMeters({ statuses, balance, onBalanceChange }: UsageMetersProps) {
                 ...snapshot.windows.map(
                   (w) => `${w.label}: ${Math.round(w.usedPercent)}% used, ${formatReset(w.resetsAt)}`
                 ),
+                ...(snapshot.stale && snapshot.message ? [snapshot.message] : []),
                 'Click to refresh'
               ].join('\n')
         return (
@@ -99,7 +100,11 @@ function UsageMeters({ statuses, balance, onBalanceChange }: UsageMetersProps) {
                 onChange={onBalanceChange}
               />
             )}
-          <button className="usage-meter" title={tooltip} onClick={() => refresh(true)}>
+          <button
+            className={`usage-meter${snapshot?.stale ? ' usage-meter-stale' : ''}`}
+            title={tooltip}
+            onClick={() => refresh(true)}
+          >
             <span className="usage-meter-name">{name}</span>
             <span className="usage-meter-bars">
               {snapshot?.status === 'ok' ? (

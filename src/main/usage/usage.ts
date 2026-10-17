@@ -6,19 +6,39 @@ import { killTree, resolveCodexLaunch } from '../cli/codexExec'
 
 const TIMEOUT_MS = 20_000
 /** Repeat requests inside this window get the cached snapshot. */
-const MIN_REFRESH_MS = 30_000
-
-/** How long real numbers keep showing through failed checks. */
-const STALE_OK_MS = 15 * 60_000
+const MIN_REFRESH_MS = 60_000
+/** Even an explicit refresh (a click, a finished turn) waits this long between checks. */
+const MIN_FORCED_REFRESH_MS = 15_000
+/** After failed checks, wait 30s, 1m, 2m ... up to this long before trying again. */
+const MAX_BACKOFF_MS = 10 * 60_000
+/** How long the last real numbers keep showing (marked stale) through failed checks. */
+const STALE_OK_MS = 6 * 60 * 60_000
 
 const cache = new Map<CliName, UsageSnapshot>()
+const lastGood = new Map<CliName, UsageSnapshot>()
+const lastAttempt = new Map<CliName, number>()
+const failures = new Map<CliName, number>()
+const retryAt = new Map<CliName, number>()
 const inFlight = new Map<CliName, Promise<UsageSnapshot>>()
 
+function clock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+// Each Claude check starts a Claude Code process and calls Anthropic's usage
+// service, so checks are spaced out, back off after failures, and a failure
+// never blanks the meter while recent real numbers exist.
 export function getUsage(cli: CliName, force = false): Promise<UsageSnapshot> {
+  const now = Date.now()
   const cached = cache.get(cli)
-  if (!force && cached && Date.now() - cached.fetchedAt < MIN_REFRESH_MS) return Promise.resolve(cached)
   const pending = inFlight.get(cli)
   if (pending) return pending
+  if (cached) {
+    const sinceAttempt = now - (lastAttempt.get(cli) ?? 0)
+    if (sinceAttempt < (force ? MIN_FORCED_REFRESH_MS : MIN_REFRESH_MS)) return Promise.resolve(cached)
+    if (now < (retryAt.get(cli) ?? 0)) return Promise.resolve(cached)
+  }
+  lastAttempt.set(cli, now)
   const fetch = (cli === 'claude' ? fetchClaudeUsage() : fetchCodexUsage())
     .catch((err): UsageSnapshot => ({
       cli,
@@ -29,14 +49,27 @@ export function getUsage(cli: CliName, force = false): Promise<UsageSnapshot> {
     }))
     .then((snapshot) => {
       inFlight.delete(cli)
-      // One failed check (a timeout while the machine is busy, say) shouldn't
-      // blank the meter: keep recent real numbers and try again next time.
-      const previous = cache.get(cli)
-      if (snapshot.status === 'error' && previous?.status === 'ok' && Date.now() - previous.fetchedAt < STALE_OK_MS) {
-        return previous
+      if (snapshot.status !== 'error') {
+        failures.delete(cli)
+        retryAt.delete(cli)
+        if (snapshot.status === 'ok') lastGood.set(cli, snapshot)
+        cache.set(cli, snapshot)
+        return snapshot
       }
-      cache.set(cli, snapshot)
-      return snapshot
+      const count = (failures.get(cli) ?? 0) + 1
+      failures.set(cli, count)
+      retryAt.set(cli, Date.now() + Math.min(MAX_BACKOFF_MS, 30_000 * 2 ** (count - 1)))
+      const good = lastGood.get(cli)
+      const shown: UsageSnapshot =
+        good && Date.now() - good.fetchedAt < STALE_OK_MS
+          ? {
+              ...good,
+              stale: true,
+              message: `Couldn't refresh (${snapshot.message ?? 'unknown error'}); showing the numbers from ${clock(good.fetchedAt)}.`
+            }
+          : snapshot
+      cache.set(cli, shown)
+      return shown
     })
   inFlight.set(cli, fetch)
   return fetch
