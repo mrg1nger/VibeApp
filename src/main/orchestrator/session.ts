@@ -549,6 +549,7 @@ ${extensionInstructions(extensions)}` : ''}`
           }
           if (message.type === 'result') {
             this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+            this.stopping = false
             if (this.compaction) this.endCompaction()
             else this.emit('event', { type: 'turn_complete' } satisfies VibeEvent)
           }
@@ -573,11 +574,17 @@ ${extensionInstructions(extensions)}` : ''}`
             steps: 1
           })
           this.emit('event', { type: 'session_compacted', ...result } satisfies VibeEvent)
+          // Key facts and the project brief are part of Claude's instructions, which are set when a
+          // session starts; restart it (keeping the compacted conversation) so what the save pass
+          // just wrote is in front of Claude. Waits for the current turn to finish.
+          this.requestReload(false)
           continue
         }
         // The end of a /compact turn: not a reply, so no usage line and no turn_complete.
         if (message.type === 'result' && this.compaction) {
           this.turnsInFlight = Math.max(0, this.turnsInFlight - 1)
+          // Stop pressed during it: that's handled now, so the next reply isn't mistaken for a stopped one.
+          this.stopping = false
           this.endCompaction()
           if (this.reloadPending && this.turnsInFlight === 0) this.reload()
           continue

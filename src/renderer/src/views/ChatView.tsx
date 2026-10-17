@@ -53,6 +53,7 @@ type ChatItem =
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
+  | { kind: 'older'; hidden: number }
   | { kind: 'offer'; text: string; resetsAt: number | null; used?: boolean }
   | {
       kind: 'review'
@@ -67,6 +68,8 @@ const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
 const ASK_PREF_KEY = 'vibeapp.askMode'
 /** A Build chat this big (tokens) gets a note about what each message costs. */
 const CONTEXT_NOTE_TOKENS = 60_000
+/** How many of the most recent requests are shown when a chat is opened. */
+const REPLAY_REQUESTS = 40
 
 function describePicked(picked: PickedElement): string {
   const text = picked.text.trim().replace(/\s+/g, ' ').slice(0, 40)
@@ -144,6 +147,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [askMode, setAskMode] = useState(readAskPref)
   // How big this project's Claude conversation is now (tokens re-read on every Build step).
   const [contextTokens, setContextTokens] = useState(0)
+  // Opening a chat shows its recent requests; this loads the whole log.
+  const [showAllHistory, setShowAllHistory] = useState(false)
   const [rotating, setRotating] = useState(false)
   const [refreshToken, setRefreshToken] = useState(0)
   const [picking, setPicking] = useState(false)
@@ -395,8 +400,22 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
 
   useEffect(() => {
     let cancelled = false
-    window.vibe.chat.loadTranscript(project.id).then((entries) => {
+    window.vibe.chat.loadTranscript(project.id).then((all) => {
       if (cancelled) return
+      // A long project's log runs to tens of thousands of entries (every Codex step is saved),
+      // and replaying them all makes the chat slow to open. Show the recent requests, with a
+      // button for the rest.
+      let start = 0
+      let requests = 0
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (!showAllHistory && all[i].direction === 'user' && ++requests > REPLAY_REQUESTS) {
+          start = i + 1
+          break
+        }
+      }
+      const entries = all.slice(start)
+      const hidden = all.slice(0, start).filter((e) => e.direction === 'user').length
+      setItems(start > 0 ? [{ kind: 'older', hidden }] : [])
       for (const entry of entries) {
         if (entry.direction === 'user' && entry.text) {
           const item: ChatItem = {
@@ -424,7 +443,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id])
+  }, [project.id, showAllHistory])
 
   useEffect(() => {
     const unsubEvent = window.vibe.chat.onEvent((projectId, event) => {
@@ -805,6 +824,11 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   />
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
+                {item.kind === 'older' && (
+                  <button className="chat-inline-action" disabled={busy} onClick={() => setShowAllHistory(true)}>
+                    Show {item.hidden} earlier request{item.hidden === 1 ? '' : 's'}
+                  </button>
+                )}
                 {item.kind === 'notice' && (
                   <>
                     <p className="chat-notice">{item.text}</p>

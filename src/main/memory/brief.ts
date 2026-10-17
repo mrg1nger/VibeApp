@@ -1,7 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import { createHash } from 'crypto'
-import { existsSync, readFileSync } from 'fs'
-import { mkdtempSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { detectSecrets } from '@shared/secretPatterns'
@@ -148,7 +147,10 @@ export async function refreshBrief(
     for await (const message of session) {
       if (message.type !== 'result') continue
       recordUsage(projectId, 'brief', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-      if (message.subtype !== 'success') throw new Error(`Writing the project brief failed (${message.subtype}).`)
+      // A refusal (e.g. the plan limit) also arrives as "success", flagged is_error: its text isn't a brief.
+      if (message.subtype !== 'success' || (message as { is_error?: boolean }).is_error) {
+        throw new Error(`Writing the project brief failed (${message.subtype}).`)
+      }
       const text = String(message.result).trim()
       if (!text) return undefined
       // A brief that picked up something secret-looking is dropped, not saved.

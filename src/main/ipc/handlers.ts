@@ -783,6 +783,9 @@ const pendingTakeover = new Map<string, number | null>()
 /** Running questions (Ask mode), and each project's Claude session for follow-ups. */
 const asks = new Map<string, AbortController>()
 const askSessions = new Map<string, string>()
+const askTurns = new Map<string, number>()
+/** Questions answered in one Ask session before the next one starts afresh. */
+const MAX_ASK_TURNS = 6
 /** Running takeovers; aborting one stops Codex. */
 const takeovers = new Map<string, AbortController>()
 
@@ -794,13 +797,18 @@ function runAsk(
   getSender: () => WebContents | undefined,
   auto: boolean
 ): void {
-  if (asks.has(projectId) || takeovers.has(projectId)) return
-  const abort = new AbortController()
-  asks.set(projectId, abort)
   const emit = (event: VibeEvent): void => {
     appendEvent(projectId, event)
     getSender()?.send('vibe:chat:event', projectId, event)
   }
+  if (asks.has(projectId) || takeovers.has(projectId)) {
+    // Say so and end the turn, or the chat would wait for an answer that never comes.
+    emit({ type: 'error', message: 'Still working on the previous request; ask again when it has finished.' })
+    emit({ type: 'turn_complete' })
+    return
+  }
+  const abort = new AbortController()
+  asks.set(projectId, abort)
   appendUserMessage(projectId, text)
   recordUserMessage(projectId, text, 'asked as a question')
   emit(
@@ -835,7 +843,15 @@ function runAsk(
             },
             resume: askSessions.get(projectId)
           })
-          if (answer.sessionId) askSessions.set(projectId, answer.sessionId)
+          // Follow-up questions continue the same session, but only for a few: each one re-reads it all.
+          const asked = (askTurns.get(projectId) ?? 0) + 1
+          if (answer.sessionId && asked < MAX_ASK_TURNS) {
+            askSessions.set(projectId, answer.sessionId)
+            askTurns.set(projectId, asked)
+          } else {
+            askSessions.delete(projectId)
+            askTurns.delete(projectId)
+          }
           recordUsage(projectId, 'chat', 'claude', answer.counts)
         } catch (err) {
           if (!(err instanceof ClaudeLimitError)) throw err

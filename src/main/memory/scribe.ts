@@ -321,7 +321,8 @@ export async function summarizeConversation(projectId: string): Promise<string> 
   for await (const message of session) {
     if (message.type !== 'result') continue
     recordUsage(projectId, 'summary', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-    if (message.subtype === 'success') return message.result.trim()
+    // A refusal (e.g. the plan limit) also arrives as "success", flagged is_error: its text isn't a summary.
+    if (message.subtype === 'success' && !(message as { is_error?: boolean }).is_error) return message.result.trim()
     throw new Error(`Summarising the conversation failed (${message.subtype}).`)
   }
   return ''
