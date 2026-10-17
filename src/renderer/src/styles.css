@@ -1259,7 +1259,8 @@ textarea {
   background: #fff;
 }
 
-.preview-body webview {
+.preview-body webview,
+.preview-body iframe.preview-frame {
   width: 100%;
   height: 100%;
   display: flex;
@@ -2534,4 +2535,139 @@ textarea {
 
 .usage-meter-stale .usage-meter-bars {
   opacity: 0.55;
+}
+
+.preview-body iframe.preview-frame {
+  border: 0;
+  background: #fff;
+}
+
+.folder-path {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--surface, rgba(127, 127, 127, 0.12));
+  margin: 6px 0;
+  word-break: break-all;
+}
+
+.folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.folder-list button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.folder-list button:hover {
+  background: var(--surface, rgba(127, 127, 127, 0.15));
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.remote-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+}
+
+.remote-urls {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+
+.remote-code {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.remote-code code {
+  font-size: 22px;
+  letter-spacing: 0.3em;
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: var(--surface, rgba(127, 127, 127, 0.15));
+}
+
+.remote-code small {
+  flex-basis: 100%;
+}
+
+.remote-command code {
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.remote-devices ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.remote-devices li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.remote-device-name {
+  flex: none;
+}
+
+.remote-devices li small {
+  flex: 1;
+}
+
+.remote-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(127, 127, 127, 0.6);
+  flex: none;
+}
+
+.remote-dot.online {
+  background: #3ecf7a;
+}
+
+.remote-indicator {
+  white-space: nowrap;
+  flex: none;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #3ecf7a;
+  color: #3ecf7a;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-hint {
+  font-size: 12px;
+  opacity: 0.75;
 }

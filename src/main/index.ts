@@ -2,6 +2,9 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpcHandlers } from './ipc/handlers'
+import { broadcaster } from './remote/bus'
+import { registerRemoteHandlers } from './remote/ipc'
+import { applyRemoteSettings, stopRemote } from './remote/server'
 import { stopAllPreviews } from './preview/preview'
 import { requestClassifier } from './orchestrator/classifier'
 import { getSettings } from './settings/store'
@@ -79,7 +82,11 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  registerIpcHandlers(() => currentWindow?.webContents)
+  // Events go to the desktop window and to any Remote access screens.
+  registerIpcHandlers(broadcaster(() => currentWindow?.webContents))
+  registerRemoteHandlers()
+  // Remote access, if the user switched it on.
+  applyRemoteSettings().catch((err) => console.warn('Remote access failed to start:', (err as Error).message))
 
   createWindow()
 
@@ -96,6 +103,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   stopAllPreviews()
+  void stopRemote()
   requestClassifier.dispose()
 })
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
+import RemoteAccessSettings from '../components/RemoteAccessSettings'
 
 interface SettingsViewProps {
   settings: AppSettings
@@ -295,6 +296,11 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
             </small>
           </span>
         </label>
+      </section>
+
+      <section className="settings-section">
+        <h3>Remote access</h3>
+        <RemoteAccessSettings settings={settings} onSettingsChange={onSettingsChange} onError={onError} />
       </section>
 
       <section className="settings-section">

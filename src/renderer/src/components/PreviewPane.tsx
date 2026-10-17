@@ -1,12 +1,74 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PickedElement, PreviewProblem, PreviewState } from '@shared/types'
 
-/** The bits of Electron's <webview> element this pane uses. */
-interface WebviewElement extends HTMLElement {
+/** What this pane needs from the page it shows: Electron's <webview>, or a frame in a browser. */
+interface PreviewSurface {
   reload(): void
   executeJavaScript<T = unknown>(code: string): Promise<T>
   getURL(): string
+  addEventListener(type: string, listener: (event: Event) => void): void
+  removeEventListener(type: string, listener: (event: Event) => void): void
 }
+
+/**
+ * In a browser (Remote access) the preview is relayed from another port into an
+ * <iframe>, so it can't be reached into directly. A helper the relay adds to
+ * the page answers over postMessage: this wraps that to look like a <webview>.
+ */
+class FramePreview extends EventTarget implements PreviewSurface {
+  private nextId = 0
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
+
+  constructor(private readonly frame: HTMLIFrameElement) {
+    super()
+    window.addEventListener('message', this.onMessage)
+  }
+
+  dispose(): void {
+    window.removeEventListener('message', this.onMessage)
+    for (const p of this.pending.values()) p.reject(new Error('The preview closed.'))
+    this.pending.clear()
+  }
+
+  private onMessage = (event: MessageEvent): void => {
+    const data = event.data as { __vibe?: boolean; type?: string; id?: number; result?: unknown; error?: string; level?: string; message?: string }
+    if (event.source !== this.frame.contentWindow || !data?.__vibe) return
+    if (data.type === 'console') {
+      this.dispatchEvent(Object.assign(new Event('console-message'), { level: data.level, message: data.message }))
+    } else if (data.type === 'result' && data.id !== undefined) {
+      const p = this.pending.get(data.id)
+      this.pending.delete(data.id)
+      if (data.error) p?.reject(new Error(data.error))
+      else p?.resolve(data.result)
+    }
+  }
+
+  private post(message: object): void {
+    try {
+      this.frame.contentWindow?.postMessage({ __vibe: true, ...message }, new URL(this.frame.src).origin)
+    } catch {
+      // the frame is navigating
+    }
+  }
+
+  reload(): void {
+    this.post({ type: 'reload' })
+  }
+
+  executeJavaScript<T = unknown>(code: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const id = ++this.nextId
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
+      this.post({ type: 'run', id, code })
+    })
+  }
+
+  getURL(): string {
+    return this.frame.src
+  }
+}
+
+const inBrowser = window.vibe.host === 'browser'
 
 interface PreviewPaneProps {
   projectId: string
@@ -92,7 +154,15 @@ function PreviewPane({
   const [state, setState] = useState<PreviewState>({ status: 'idle' })
   const [log, setLog] = useState('')
   const [showLog, setShowLog] = useState(false)
-  const webviewRef = useRef<WebviewElement | null>(null)
+  const webviewRef = useRef<PreviewSurface | null>(null)
+  // In a browser: the relayed address of the preview, and the frame showing it.
+  const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  const frameRef = useRef<FramePreview | null>(null)
+  const setFrame = useCallback((el: HTMLIFrameElement | null) => {
+    frameRef.current?.dispose()
+    frameRef.current = el ? new FramePreview(el) : null
+    webviewRef.current = frameRef.current
+  }, [])
   const autoStarted = useRef(false)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -160,6 +230,23 @@ function PreviewPane({
 
   // Page errors, straight from the preview's console.
   const running = state.status === 'running'
+  const runningUrl = state.status === 'running' ? state.url : ''
+  useEffect(() => {
+    if (!inBrowser || !runningUrl) {
+      setFrameUrl(null)
+      return
+    }
+    let cancelled = false
+    window.vibe.remote
+      .previewUrl(projectId)
+      .then((r) => {
+        if (!cancelled) setFrameUrl(r ? `${r.secure ? 'https' : 'http'}://${location.hostname}:${r.port}/` : null)
+      })
+      .catch(() => !cancelled && setFrameUrl(null))
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, runningUrl])
   useEffect(() => {
     const webview = webviewRef.current
     if (!webview || !running) return
@@ -171,7 +258,7 @@ function PreviewPane({
     }
     webview.addEventListener('console-message', onConsole)
     return () => webview.removeEventListener('console-message', onConsole)
-  }, [running])
+  }, [running, frameUrl])
 
   // Point-and-ask.
   useEffect(() => {
@@ -198,7 +285,9 @@ function PreviewPane({
 
   const statusText =
     state.status === 'running'
-      ? state.url
+      ? inBrowser
+        ? (frameUrl ?? 'Connecting…')
+        : state.url
       : state.status === 'starting'
         ? `Starting (${state.command})…`
         : state.status === 'crashed'
@@ -232,7 +321,7 @@ function PreviewPane({
           <button onClick={() => window.vibe.preview.stop(projectId)}>Stop</button>
         )}
         {running && (
-          <button onClick={() => window.open(state.url)} title="Open in your web browser">
+          <button onClick={() => window.open(inBrowser ? (frameUrl ?? state.url) : state.url)} title="Open in a new tab">
             ↗
           </button>
         )}
@@ -242,7 +331,20 @@ function PreviewPane({
       </div>
 
       <div className="preview-body">
-        {running && <webview ref={(el) => void (webviewRef.current = el as WebviewElement | null)} src={state.url} partition={`preview-${projectId}`} />}
+        {running &&
+          (inBrowser ? (
+            frameUrl ? (
+              <iframe ref={setFrame} src={frameUrl} title="Preview of your app" className="preview-frame" />
+            ) : (
+              <div className="preview-message">Connecting to the preview…</div>
+            )
+          ) : (
+            <webview
+              ref={(el) => void (webviewRef.current = el as unknown as PreviewSurface | null)}
+              src={state.url}
+              partition={`preview-${projectId}`}
+            />
+          ))}
         {state.status === 'starting' && <div className="preview-message">Starting your app…</div>}
         {state.status === 'none' && <div className="preview-message">{state.message}</div>}
         {state.status === 'crashed' && (

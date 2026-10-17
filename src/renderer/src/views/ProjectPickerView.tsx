@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ProjectRecord } from '@shared/types'
 import Modal from '../components/Modal'
+import FolderBrowser from '../components/FolderBrowser'
+
+// In a browser (Remote access) there are no folder dialogs; folders are browsed on the computer instead.
+const inBrowser = window.vibe.host === 'browser'
 
 interface ProjectPickerViewProps {
   onOpen: (project: ProjectRecord) => void
@@ -13,12 +17,14 @@ function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProp
   const [recent, setRecent] = useState<ProjectRecord[]>([])
   const [busy, setBusy] = useState(false)
   const [removing, setRemoving] = useState<ProjectRecord | null>(null)
+  const [browsing, setBrowsing] = useState<'open' | 'create' | null>(null)
 
   useEffect(() => {
     window.vibe.project.list().then(setRecent)
   }, [])
 
   const handlePickExisting = useCallback(async () => {
+    if (inBrowser) return setBrowsing('open')
     setBusy(true)
     try {
       const project = await window.vibe.project.pickExisting()
@@ -31,6 +37,7 @@ function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProp
   }, [onOpen, onError])
 
   const handleCreateNew = useCallback(async () => {
+    if (inBrowser) return setBrowsing('create')
     setBusy(true)
     try {
       const project = await window.vibe.project.pickNewFolder()
@@ -60,6 +67,19 @@ function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProp
 
   return (
     <div className="project-picker">
+      {browsing && (
+        <FolderBrowser
+          purpose={browsing}
+          onClose={() => setBrowsing(null)}
+          onChoose={async (folder, newName) => {
+            const project = newName
+              ? await window.vibe.project.createFolder(folder, newName)
+              : await window.vibe.project.openFolder(folder)
+            setBrowsing(null)
+            onOpen(project)
+          }}
+        />
+      )}
       <h2>Projects</h2>
       <div className="project-actions">
         <button onClick={handlePickExisting} disabled={busy}>

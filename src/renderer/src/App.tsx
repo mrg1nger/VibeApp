@@ -61,6 +61,21 @@ function App() {
     reloadThemes()
   }, [reloadThemes])
 
+  // Remote access indicator (desktop): on, and how many browsers or tools are connected.
+  const [remoteOnline, setRemoteOnline] = useState<number | null>(null)
+  useEffect(() => {
+    if (window.vibe.host === 'browser') return
+    const check = (): void => {
+      window.vibe.remote
+        .status()
+        .then((s) => setRemoteOnline(s.running ? s.devices.filter((d) => d.online).length : null))
+        .catch(() => undefined)
+    }
+    check()
+    const timer = setInterval(check, 5000)
+    return () => clearInterval(timer)
+  }, [settings?.remoteAccess])
+
   const activeTheme = themes.find((t) => t.id === settings?.themeId) ?? themes[0]
   useEffect(() => {
     if (activeTheme) applyTheme(activeTheme)
@@ -116,6 +131,19 @@ function App() {
             Settings
           </button>
         </div>
+        {window.vibe.host === 'browser' ? (
+          <span className="remote-indicator" title="You're using VibeApp through Remote access">📡 Remote</span>
+        ) : (
+          remoteOnline !== null && (
+            <button
+              className="remote-indicator"
+              onClick={() => setScreen('settings')}
+              title="Remote access is on (Settings, Remote access)"
+            >
+              📡 Remote{remoteOnline ? ` · ${remoteOnline} connected` : ''}
+            </button>
+          )
+        )}
         <UsageMeters
           statuses={statuses}
           balance={settings?.agentBalance ?? 'auto'}

@@ -89,6 +89,30 @@ export type VibeEvent =
   /** A secret key was written into a project file. */
   | { type: 'secret_leak'; leaks: SecretLeak[] }
 
+/** A browser or tool that has been paired for Remote access. */
+export interface RemoteDevice {
+  id: string
+  name: string
+  readOnly: boolean
+  createdAt: string
+  lastSeen: string | null
+  /** Connected right now. */
+  online: boolean
+}
+
+export interface RemoteStatus {
+  running: boolean
+  mode: 'off' | 'local' | 'lan'
+  /** Addresses to open in a browser. */
+  urls: string[]
+  pairingCode: string
+  readOnly: boolean
+  devices: RemoteDevice[]
+  /** The command that adds VibeApp's tools to Claude Code (the MCP server). */
+  mcpCommand: string
+  error?: string
+}
+
 export type TalkAgent = 'claude' | 'codex'
 
 export interface TalkMessage {
@@ -351,6 +375,11 @@ export interface AppSettings {
   rotateAtTokens: number
   /** Compact the conversation automatically once it passes rotateAtTokens. */
   autoCompact: boolean
+  /** Remote access: off, this computer only (browser and API), or the local network too. */
+  remoteAccess: 'off' | 'local' | 'lan'
+  remotePort: number
+  /** Remote screens and the API can look but not act. */
+  remoteReadOnly: boolean
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */

@@ -11,6 +11,32 @@ function bundleMemoryServerPlugin() {
   return {
     name: 'bundle-memory-server',
     closeBundle() {
+      // Remote access: the browser's stand-in for the preload (window.vibe over a WebSocket),
+      // the helper added to relayed preview pages, and VibeApp's MCP server for Claude Code.
+      buildSync({
+        entryPoints: [resolve('src/remote-bridge/bridge.ts')],
+        outfile: resolve('out/main/remote/bridge.js'),
+        bundle: true,
+        platform: 'browser',
+        format: 'iife',
+        target: 'es2020',
+        alias: { '@shared': resolve('shared') },
+        logLevel: 'warning'
+      })
+      buildSync({
+        entryPoints: [resolve('src/remote-bridge/preview-helper.js')],
+        outfile: resolve('out/main/remote/preview-helper.js'),
+        bundle: false,
+        logLevel: 'warning'
+      })
+      buildSync({
+        entryPoints: [resolve('src/main/remote/vibeappMcp.mjs')],
+        outfile: resolve('out/main/remote/vibeapp-mcp.cjs'),
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        logLevel: 'warning'
+      })
       buildSync({
         entryPoints: [resolve('src/main/memory/memoryServer.mjs')],
         outfile: resolve('out/main/memory/memoryServer.cjs'),

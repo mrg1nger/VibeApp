@@ -5,7 +5,9 @@ npm test                    # unit tests: fast, offline, no plan usage
 npm run smoke               # smoke tests against the real Claude Code and Codex CLIs
 npm run smoke -- takeover   # only smoke files whose name contains "takeover"
 npm run e2e                 # the real app, end to end (builds it, opens it, clicks through it)
+npm run e2e:remote          # Remote access: the API, a real browser, the MCP server, HTTPS mode
 ```
+Add `-- --packaged` to either e2e command to test the installed-style build in release/win-unpacked (run `npm run package` first).
 
 - **unit/** checks VibeApp's own logic: question detection, routing and the balance slider, the diff digest, memory rules (the number check, de-duplication, conventions), the Chat tab history, extensions and keys.
 - **smoke/** drives the real CLIs the way the app does: a Claude session, compaction (and Stop during it), helper agents, Claude handing work to Codex, takeovers, Ask mode, the Chat tab's Claude/Codex switch, procedures and the project brief, extensions for both agents, and the usage meters. Both CLIs must be installed and logged in. A full run takes about 10-15 minutes and uses a little of both plans (Claude runs on Haiku).

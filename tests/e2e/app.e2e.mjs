@@ -540,7 +540,7 @@ try {
   results.push({ name: 'setup', ok: false, error: err.message })
 } finally {
   try {
-    await cdp('Browser.close')
+    await Promise.race([cdp('Browser.close'), sleep(2000)])
   } catch {
     // already gone
   }

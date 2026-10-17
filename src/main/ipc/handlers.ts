@@ -1,5 +1,9 @@
-import { ipcMain, dialog, shell, type WebContents } from 'electron'
-import { mkdirSync } from 'fs'
+import { dialog, shell, type WebContents } from 'electron'
+import { ipc } from '../remote/bus'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'fs'
+import { homedir } from 'os'
+import { dirname, join } from 'path'
+import { applyRemoteSettings } from '../remote/server'
 import type {
   AppSettings,
   CliName,
@@ -115,13 +119,13 @@ import {
 } from '../publish/publish'
 
 export function registerIpcHandlers(getSender: () => WebContents | undefined): void {
-  ipcMain.handle('vibe:ping', () => 'pong')
+  ipc.handle('vibe:ping', () => 'pong')
 
-  ipcMain.handle('vibe:auth:check', async (_event, cli: CliName) => {
+  ipc.handle('vibe:auth:check', async (_event, cli: CliName) => {
     return cli === 'claude' ? checkClaudeStatus() : checkCodexStatus()
   })
 
-  ipcMain.handle('vibe:auth:login', async (_event, cli: CliName) => {
+  ipc.handle('vibe:auth:login', async (_event, cli: CliName) => {
     const session = startLoginSession(cli)
 
     session.on('data', (data: string) => {
@@ -134,15 +138,15 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return session.id
   })
 
-  ipcMain.on('vibe:login:write', (_event, sessionId: string, data: string) => {
+  ipc.on('vibe:login:write', (_event, sessionId: string, data: string) => {
     getLoginSession(sessionId)?.write(data)
   })
 
-  ipcMain.on('vibe:login:resize', (_event, sessionId: string, cols: number, rows: number) => {
+  ipc.on('vibe:login:resize', (_event, sessionId: string, cols: number, rows: number) => {
     getLoginSession(sessionId)?.resize(cols, rows)
   })
 
-  ipcMain.on('vibe:login:dispose', (_event, sessionId: string) => {
+  ipc.on('vibe:login:dispose', (_event, sessionId: string) => {
     disposeLoginSession(sessionId)
   })
 
@@ -157,33 +161,33 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return session.id
   }
 
-  ipcMain.handle('vibe:auth:checkNode', () => isCliOnPath('node'))
-  ipcMain.handle('vibe:auth:checkGit', () => isCliOnPath('git'))
+  ipc.handle('vibe:auth:checkNode', () => isCliOnPath('node'))
+  ipc.handle('vibe:auth:checkGit', () => isCliOnPath('git'))
 
-  ipcMain.handle('vibe:auth:installNode', () => wireInstallSession(startNodeInstallSession()))
-  ipcMain.handle('vibe:auth:installGit', () => wireInstallSession(startGitInstallSession()))
+  ipc.handle('vibe:auth:installNode', () => wireInstallSession(startNodeInstallSession()))
+  ipc.handle('vibe:auth:installGit', () => wireInstallSession(startGitInstallSession()))
 
-  ipcMain.handle('vibe:auth:install', (_event, cli: CliName) =>
+  ipc.handle('vibe:auth:install', (_event, cli: CliName) =>
     wireInstallSession(startInstallSession(cli))
   )
 
-  ipcMain.on('vibe:install:write', (_event, sessionId: string, data: string) => {
+  ipc.on('vibe:install:write', (_event, sessionId: string, data: string) => {
     getInstallSession(sessionId)?.write(data)
   })
 
-  ipcMain.on('vibe:install:resize', (_event, sessionId: string, cols: number, rows: number) => {
+  ipc.on('vibe:install:resize', (_event, sessionId: string, cols: number, rows: number) => {
     getInstallSession(sessionId)?.resize(cols, rows)
   })
 
-  ipcMain.on('vibe:install:dispose', (_event, sessionId: string) => {
+  ipc.on('vibe:install:dispose', (_event, sessionId: string) => {
     disposeInstallSession(sessionId)
   })
 
-  ipcMain.handle('vibe:project:list', () => listProjects())
+  ipc.handle('vibe:project:list', () => listProjects())
 
   // Takes a project off the list; its folder is never touched. With erase,
   // VibeApp's own data for it (history, memory, secrets) is deleted too.
-  ipcMain.handle('vibe:project:remove', (_event, projectId: string, erase: boolean) => {
+  ipc.handle('vibe:project:remove', (_event, projectId: string, erase: boolean) => {
     if (!/^[A-Za-z0-9_-]+$/.test(projectId)) throw new Error('Invalid project id.')
     const removed = removeProject(projectId, !erase)
     if (!removed) return listProjects()
@@ -196,7 +200,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return listProjects()
   })
 
-  ipcMain.handle('vibe:project:pickExisting', async () => {
+  ipc.handle('vibe:project:pickExisting', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
     if (result.canceled || result.filePaths.length === 0) return null
     const projectPath = result.filePaths[0]
@@ -204,7 +208,24 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return recordProjectOpened(projectPath)
   })
 
-  ipcMain.handle('vibe:project:pickNewFolder', async () => {
+  // In a browser there are no folder dialogs: the screens browse folders on this computer instead.
+  ipc.handle('vibe:fs:listDirs', (_event, dir?: string) => listDirs(dir))
+  ipc.handle('vibe:project:openFolder', async (_event, folder: string) => {
+    if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) throw new Error("That folder doesn't exist.")
+    await ensureRepo(folder)
+    return recordProjectOpened(folder)
+  })
+  ipc.handle('vibe:project:createFolder', async (_event, parent: string, name: string) => {
+    const clean = String(name ?? '').trim()
+    if (!clean || /[<>:"/\\|?*]/.test(clean)) throw new Error('Use a folder name without < > : " / \\ | ? *')
+    if (!parent || !existsSync(parent)) throw new Error("The place to create it in doesn't exist.")
+    const folder = join(parent, clean)
+    mkdirSync(folder, { recursive: true })
+    await ensureRepo(folder)
+    return recordProjectOpened(folder)
+  })
+
+  ipc.handle('vibe:project:pickNewFolder', async () => {
     const result = await dialog.showSaveDialog({ properties: ['createDirectory'] })
     if (result.canceled || !result.filePath) return null
     mkdirSync(result.filePath, { recursive: true })
@@ -212,7 +233,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return recordProjectOpened(result.filePath)
   })
 
-  ipcMain.handle(
+  ipc.handle(
     'vibe:chat:send',
     async (
       _event,
@@ -380,7 +401,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     }
   )
 
-  ipcMain.handle(
+  ipc.handle(
     'vibe:chat:undo',
     async (_event, projectPath: string, snapshot: string, projectId?: string, kind?: 'undo' | 'redo', request?: string) => {
       const result = await restoreSnapshot(projectPath, snapshot)
@@ -398,12 +419,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     }
   )
 
-  ipcMain.on('vibe:chat:skipReview', (_event, projectId: string) => skipReview(projectId))
+  ipc.on('vibe:chat:skipReview', (_event, projectId: string) => skipReview(projectId))
 
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
   // The user chose "Compact now".
-  ipcMain.handle('vibe:chat:compactNow', async (_event, projectId: string, projectPath: string) => {
+  ipc.handle('vibe:chat:compactNow', async (_event, projectId: string, projectPath: string) => {
     if (asks.has(projectId) || takeovers.has(projectId)) {
       return { ok: false, message: 'Wait for the current request to finish first.' }
     }
@@ -422,7 +443,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   // The user chose "Start a fresh session now".
-  ipcMain.handle('vibe:chat:rotateNow', async (_event, projectId: string, projectPath: string) => {
+  ipc.handle('vibe:chat:rotateNow', async (_event, projectId: string, projectPath: string) => {
     if (asks.has(projectId) || takeovers.has(projectId)) {
       return { ok: false, message: 'Wait for the current request to finish first.' }
     }
@@ -445,9 +466,9 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     }
   })
 
-  ipcMain.handle('vibe:chat:contextSize', (_event, projectId: string) => getSession(projectId)?.contextTokens() ?? 0)
+  ipc.handle('vibe:chat:contextSize', (_event, projectId: string) => getSession(projectId)?.contextTokens() ?? 0)
 
-  ipcMain.handle('vibe:chat:stop', async (_event, projectId: string) => {
+  ipc.handle('vibe:chat:stop', async (_event, projectId: string) => {
     const ask = asks.get(projectId)
     if (ask) {
       ask.abort()
@@ -463,24 +484,24 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   // Ask mode: answer a question about the project without changing anything.
-  ipcMain.handle('vibe:chat:ask', (_event, projectId: string, projectPath: string, text: string) => {
+  ipc.handle('vibe:chat:ask', (_event, projectId: string, projectPath: string, text: string) => {
     runAsk(projectId, projectPath, text, getSender, false)
   })
 
-  ipcMain.handle('vibe:memory:brief', (_event, projectId: string) => getBrief(projectId) ?? null)
-  ipcMain.handle('vibe:memory:refreshBrief', async (_event, projectId: string, projectPath: string) => {
+  ipc.handle('vibe:memory:brief', (_event, projectId: string) => getBrief(projectId) ?? null)
+  ipc.handle('vibe:memory:refreshBrief', async (_event, projectId: string, projectPath: string) => {
     const brief = await refreshBrief(projectId, projectPath, { force: true })
     return brief ?? getBrief(projectId) ?? null
   })
 
-  ipcMain.handle('vibe:talk:list', () => listTalks())
-  ipcMain.handle('vibe:talk:load', (_event, id: string) => getTalk(id) ?? null)
-  ipcMain.handle('vibe:talk:send', (_event, id: string, text: string, agent: TalkAgent) => runTalk(id, text, agent))
-  ipcMain.handle('vibe:talk:stop', (_event, id: string) => stopTalk(id))
-  ipcMain.handle('vibe:talk:delete', (_event, id: string) => deleteTalk(id))
+  ipc.handle('vibe:talk:list', () => listTalks())
+  ipc.handle('vibe:talk:load', (_event, id: string) => getTalk(id) ?? null)
+  ipc.handle('vibe:talk:send', (_event, id: string, text: string, agent: TalkAgent) => runTalk(id, text, agent))
+  ipc.handle('vibe:talk:stop', (_event, id: string) => stopTalk(id))
+  ipc.handle('vibe:talk:delete', (_event, id: string) => deleteTalk(id))
 
   // The user chose "Let Codex do it" after being offered a takeover.
-  ipcMain.handle('vibe:chat:takeover', (_event, projectId: string, projectPath: string) => {
+  ipc.handle('vibe:chat:takeover', (_event, projectId: string, projectPath: string) => {
     const request = lastRequests.get(projectId)
     if (!request) return
     const project = getProject(projectId)
@@ -489,18 +510,18 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     startTakeover(session, projectId, projectPath, request, claudeBlockedUntil())
   })
 
-  ipcMain.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
+  ipc.handle('vibe:chat:setGoNutzMode', async (_event, projectId: string, enabled: boolean) => {
     setGoNutzMode(projectId, enabled)
     await getSession(projectId)?.setGoNutzMode(enabled)
   })
 
-  ipcMain.handle('vibe:chat:isGoNutzMode', (_event, projectId: string) => {
+  ipc.handle('vibe:chat:isGoNutzMode', (_event, projectId: string) => {
     return getSession(projectId)?.isGoNutzMode() ?? getProject(projectId)?.goNutzMode ?? false
   })
 
-  ipcMain.handle('vibe:chat:loadTranscript', (_event, projectId: string) => loadTranscript(projectId))
+  ipc.handle('vibe:chat:loadTranscript', (_event, projectId: string) => loadTranscript(projectId))
 
-  ipcMain.on(
+  ipc.on(
     'vibe:chat:confirmationResponse',
     (_event, projectId: string, confirmationId: string, approved: boolean, answers?: QuestionAnswers) => {
       getSession(projectId)?.resolveConfirmation(confirmationId, approved, answers)
@@ -514,29 +535,29 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     }
   )
 
-  ipcMain.handle('vibe:chat:pendingConfirmations', (_event, projectId: string) =>
+  ipc.handle('vibe:chat:pendingConfirmations', (_event, projectId: string) =>
     getSession(projectId)?.pendingConfirmations() ?? []
   )
 
-  ipcMain.on('vibe:chat:dispose', (_event, projectId: string) => {
+  ipc.on('vibe:chat:dispose', (_event, projectId: string) => {
     disposeSession(projectId)
   })
 
-  ipcMain.handle('vibe:git:hasChanges', (_event, projectPath: string) =>
+  ipc.handle('vibe:git:hasChanges', (_event, projectPath: string) =>
     hasUncommittedChanges(projectPath)
   )
 
-  ipcMain.handle('vibe:git:suggestMessage', (_event, projectPath: string) =>
+  ipc.handle('vibe:git:suggestMessage', (_event, projectPath: string) =>
     suggestCheckpointMessage(projectPath)
   )
 
-  ipcMain.handle('vibe:git:checkpoint', (_event, projectPath: string, message: string) =>
+  ipc.handle('vibe:git:checkpoint', (_event, projectPath: string, message: string) =>
     checkpoint(projectPath, message)
   )
 
-  ipcMain.handle('vibe:git:history', (_event, projectPath: string) => history(projectPath))
+  ipc.handle('vibe:git:history', (_event, projectPath: string) => history(projectPath))
 
-  ipcMain.handle('vibe:git:restore', (_event, projectPath: string, commitHash: string) =>
+  ipc.handle('vibe:git:restore', (_event, projectPath: string, commitHash: string) =>
     restoreCheckpoint(projectPath, commitHash)
   )
 
@@ -544,77 +565,78 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return scope === 'global' ? GLOBAL_SCOPE : projectId
   }
 
-  ipcMain.handle(
+  ipc.handle(
     'vibe:memory:list',
     (_event, projectId: string, scope: MemoryScope, includeForgotten?: boolean) =>
       listFacts(memoryDb(), scopeKey(scope, projectId), !!includeForgotten)
   )
 
-  ipcMain.handle(
+  ipc.handle(
     'vibe:memory:add',
     (_event, projectId: string, scope: MemoryScope, text: string, category?: MemoryCategory, key?: boolean) =>
       rememberFact(memoryDb(), scopeKey(scope, projectId), text, 'user', { category, key }).fact
   )
 
-  ipcMain.handle(
+  ipc.handle(
     'vibe:memory:update',
     (_event, id: string, patch: { text?: string; category?: MemoryCategory; key?: boolean }) =>
       updateFact(memoryDb(), id, patch)
   )
 
-  ipcMain.handle('vibe:memory:forget', (_event, id: string) => forgetFact(memoryDb(), id, 'forgotten by you'))
-  ipcMain.handle('vibe:memory:restore', (_event, id: string) => restoreFact(memoryDb(), id))
-  ipcMain.handle('vibe:memory:delete', (_event, id: string) => deleteFact(memoryDb(), id))
-  ipcMain.handle('vibe:memory:tidy', (_event, projectId: string, scope: MemoryScope) =>
+  ipc.handle('vibe:memory:forget', (_event, id: string) => forgetFact(memoryDb(), id, 'forgotten by you'))
+  ipc.handle('vibe:memory:restore', (_event, id: string) => restoreFact(memoryDb(), id))
+  ipc.handle('vibe:memory:delete', (_event, id: string) => deleteFact(memoryDb(), id))
+  ipc.handle('vibe:memory:tidy', (_event, projectId: string, scope: MemoryScope) =>
     tidyMemory(scopeKey(scope, projectId))
   )
 
-  ipcMain.handle('vibe:extensions:list', async () => ({
+  ipc.handle('vibe:extensions:list', async () => ({
     installed: listExtensions(),
     catalog: CATALOG,
     nodeAvailable: (await findCli('npx')) !== 'missing'
   }))
-  ipcMain.handle('vibe:extensions:add', (_event, draft: ExtensionDraft) => {
+  ipc.handle('vibe:extensions:add', (_event, draft: ExtensionDraft) => {
     const added = addExtension(draft)
     refreshExtensionsForAllSessions()
     return added
   })
-  ipcMain.handle('vibe:extensions:setEnabled', (_event, id: string, enabled: boolean) => {
+  ipc.handle('vibe:extensions:setEnabled', (_event, id: string, enabled: boolean) => {
     setExtensionEnabled(id, enabled)
     refreshExtensionsForAllSessions()
   })
-  ipcMain.handle('vibe:extensions:setEnv', (_event, id: string, env: Record<string, string>) => {
+  ipc.handle('vibe:extensions:setEnv', (_event, id: string, env: Record<string, string>) => {
     setExtensionEnv(id, env)
     refreshExtensionsForAllSessions()
   })
-  ipcMain.handle('vibe:extensions:remove', (_event, id: string) => {
+  ipc.handle('vibe:extensions:remove', (_event, id: string) => {
     removeExtension(id)
     refreshExtensionsForAllSessions()
   })
 
-  ipcMain.handle('vibe:settings:get', () => getSettings())
+  ipc.handle('vibe:settings:get', () => getSettings())
 
-  ipcMain.handle('vibe:settings:update', async (_event, patch: Partial<AppSettings>) => {
+  ipc.handle('vibe:settings:update', async (_event, patch: Partial<AppSettings>) => {
     const before = getSettings()
     const next = updateSettings(patch)
     if ('claudeModel' in patch && next.claudeModel !== before.claudeModel) {
       await setModelForAllSessions(next.claudeModel)
     }
+    if ('remoteAccess' in patch || 'remotePort' in patch) await applyRemoteSettings()
     return next
   })
 
-  ipcMain.handle('vibe:models:claude', () => listClaudeModels())
+  ipc.handle('vibe:models:claude', () => listClaudeModels())
 
-  ipcMain.handle('vibe:themes:list', () => listThemes())
-  ipcMain.handle('vibe:themes:delete', (_event, id: string) => deleteTheme(id))
-  ipcMain.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
-  ipcMain.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
+  ipc.handle('vibe:themes:list', () => listThemes())
+  ipc.handle('vibe:themes:delete', (_event, id: string) => deleteTheme(id))
+  ipc.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
+  ipc.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
 
-  ipcMain.handle('vibe:usage:summary', (_event, days: number) =>
+  ipc.handle('vibe:usage:summary', (_event, days: number) =>
     usageSummary(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString())
   )
 
-  ipcMain.handle('vibe:usage:get',(_event, cli: CliName, force?: boolean) => getUsage(cli, force))
+  ipc.handle('vibe:usage:get',(_event, cli: CliName, force?: boolean) => getUsage(cli, force))
 
   previewEvents.on('state', (projectId: string, state: PreviewState) => {
     getSender()?.send('vibe:preview:state', projectId, state)
@@ -622,15 +644,15 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   previewEvents.on('problem', (projectId: string, problem: PreviewProblem) => {
     getSender()?.send('vibe:preview:problem', projectId, problem)
   })
-  ipcMain.handle('vibe:preview:start', (_event, projectId: string, projectPath: string) =>
+  ipc.handle('vibe:preview:start', (_event, projectId: string, projectPath: string) =>
     getPreview(projectId, projectPath).start()
   )
-  ipcMain.handle('vibe:preview:stop', (_event, projectId: string) => findPreview(projectId)?.stop())
-  ipcMain.handle(
+  ipc.handle('vibe:preview:stop', (_event, projectId: string) => findPreview(projectId)?.stop())
+  ipc.handle(
     'vibe:preview:state',
     (_event, projectId: string): PreviewState => findPreview(projectId)?.getState() ?? { status: 'idle' }
   )
-  ipcMain.handle('vibe:preview:log', (_event, projectId: string) => findPreview(projectId)?.getLog() ?? '')
+  ipc.handle('vibe:preview:log', (_event, projectId: string) => findPreview(projectId)?.getLog() ?? '')
 
   // Changing secrets restarts whatever uses them: Claude's session (after
   // its current turn) and a running preview.
@@ -640,29 +662,29 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     const status = preview?.getState().status
     if (status === 'running' || status === 'starting') preview!.start().catch(() => undefined)
   }
-  ipcMain.handle('vibe:secrets:list', (_event, projectId: string) => listSecrets(projectId))
-  ipcMain.handle('vibe:secrets:set', (_event, projectId: string, name: string, value: string) => {
+  ipc.handle('vibe:secrets:list', (_event, projectId: string) => listSecrets(projectId))
+  ipc.handle('vibe:secrets:set', (_event, projectId: string, name: string, value: string) => {
     const saved = setSecret(projectId, name, value)
     secretsChanged(projectId)
     return saved
   })
-  ipcMain.handle('vibe:secrets:delete', (_event, projectId: string, name: string) => {
+  ipc.handle('vibe:secrets:delete', (_event, projectId: string, name: string) => {
     deleteSecret(projectId, name)
     secretsChanged(projectId)
   })
 
-  ipcMain.handle('vibe:publish:status', (_event, projectId: string, projectPath: string) =>
+  ipc.handle('vibe:publish:status', (_event, projectId: string, projectPath: string) =>
     publishStatus(projectId, projectPath)
   )
-  ipcMain.handle(
+  ipc.handle(
     'vibe:publish:github',
     (_event, projectId: string, projectPath: string, options: { name: string; visibility: 'private' | 'public' }) =>
       publishToGitHub(projectId, projectPath, options)
   )
-  ipcMain.handle('vibe:publish:ghInstall', () => wireInstallSession(startGhInstallSession()))
-  ipcMain.handle('vibe:publish:ghLogin', () => wireInstallSession(startTerminalSession(ghLoginSessionOptions())))
+  ipc.handle('vibe:publish:ghInstall', () => wireInstallSession(startGhInstallSession()))
+  ipc.handle('vibe:publish:ghLogin', () => wireInstallSession(startTerminalSession(ghLoginSessionOptions())))
 
-  ipcMain.handle('vibe:publish:vercelLogin', async () => {
+  ipc.handle('vibe:publish:vercelLogin', async () => {
     const session = startTerminalSession(await vercelLoginSessionOptions())
     // Open the sign-in page for the user instead of making them copy the
     // link out of the terminal.
@@ -681,7 +703,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   const deployResults = new Map<string, string | null>()
-  ipcMain.handle(
+  ipc.handle(
     'vibe:publish:vercel',
     async (_event, projectId: string, projectPath: string, includeSecrets: boolean) => {
       const session = startTerminalSession(await vercelDeploySessionOptions(projectId, projectPath, includeSecrets))
@@ -697,7 +719,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       return wireInstallSession(session)
     }
   )
-  ipcMain.handle('vibe:publish:vercelResult', (_event, sessionId: string) => {
+  ipc.handle('vibe:publish:vercelResult', (_event, sessionId: string) => {
     const url = deployResults.get(sessionId) ?? null
     deployResults.delete(sessionId)
     return url
@@ -721,6 +743,25 @@ function pickedNote(picked: PickedElement): string {
 
 /** Above this conversation size, small requests keep the current model rather than breaking the prompt cache. */
 const CACHE_KEEP_TOKENS = 30_000
+
+/** Folders inside `dir` (or the drives and home folder when no dir is given), for the browser's folder picker. */
+function listDirs(dir?: string): { path: string; parent: string | null; dirs: { name: string; path: string }[] } {
+  if (!dir) {
+    const roots: { name: string; path: string }[] = [{ name: 'Home', path: homedir() }]
+    if (process.platform === 'win32') {
+      for (const letter of 'CDEFGHIJ') if (existsSync(`${letter}:\\`)) roots.push({ name: `${letter}:`, path: `${letter}:\\` })
+    } else roots.push({ name: '/', path: '/' })
+    return { path: '', parent: null, dirs: roots }
+  }
+  const dirs: { name: string; path: string }[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || /^(node_modules|\$Recycle\.Bin|System Volume Information)$/i.test(entry.name)) continue
+    dirs.push({ name: entry.name, path: join(dir, entry.name) })
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name))
+  const parent = dirname(dir)
+  return { path: dir, parent: parent === dir ? '' : parent, dirs: dirs.slice(0, 500) }
+}
 
 /** Context size (tokens) past which a long conversation moves to a fresh session, if that's enabled. */
 function rotateThreshold(): number {
