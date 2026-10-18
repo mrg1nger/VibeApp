@@ -126,6 +126,8 @@ function RemoteAccessSettings({ settings, onSettingsChange, onError }: RemoteAcc
                 </ul>
                 {settings.remoteAccess === 'lan' && (
                   <small className="settings-hint">
+                    Bookmark the first address (this computer's name): it keeps working when the network address
+                    changes, so remembered devices stay connected.{' '}
                     The connection is encrypted with a certificate VibeApp made itself, so the browser warns the first
                     time; choose to continue (Advanced, then Proceed).
                   </small>
@@ -161,6 +163,7 @@ function RemoteAccessSettings({ settings, onSettingsChange, onError }: RemoteAcc
                     <span className={`remote-dot${d.online ? ' online' : ''}`} title={d.online ? 'Connected now' : 'Not connected'} />
                     <span className="remote-device-name">{d.name}</span>
                     <small className="settings-hint">
+                      {d.remember ? 'remembered · ' : 'until its browser closes · '}
                       {d.readOnly ? 'read-only · ' : ''}
                       {d.online ? 'connected now' : `last seen ${ago(d.lastSeen)}`}
                     </small>

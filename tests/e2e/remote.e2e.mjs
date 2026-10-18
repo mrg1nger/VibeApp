@@ -96,11 +96,24 @@ async function attach(port, match) {
       pending.delete(m.id)
     }
   }
-  const send = (method, params = {}) =>
-    new Promise((res) => {
+  // Every command has a time limit, so a browser that stops answering fails the step instead of hanging the run.
+  const send = (method, params = {}, timeoutMs = 30_000) =>
+    new Promise((res, rej) => {
       const id = ++nextId
-      pending.set(id, res)
-      ws.send(JSON.stringify({ id, method, params }))
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        rej(new Error(`The browser did not answer ${method} within ${timeoutMs / 1000}s`))
+      }, timeoutMs)
+      pending.set(id, (m) => {
+        clearTimeout(timer)
+        res(m)
+      })
+      try {
+        ws.send(JSON.stringify({ id, method, params }))
+      } catch (err) {
+        clearTimeout(timer)
+        rej(err)
+      }
     })
   await send('Runtime.enable')
   await send('Page.enable').catch(() => undefined)
@@ -142,10 +155,14 @@ async function until(fn, what, timeoutMs = 30_000) {
 }
 
 const results = []
-async function step(name, fn, page) {
+async function step(name, fn, page, limitMs = 300_000) {
   const start = Date.now()
   try {
-    await fn()
+    let timer
+    await Promise.race([
+      fn(),
+      new Promise((_, rej) => (timer = setTimeout(() => rej(new Error(`step took longer than ${limitMs / 1000}s`)), limitMs)))
+    ]).finally(() => clearTimeout(timer))
     results.push({ name, ok: true })
     console.log(`✔ ${name} (${((Date.now() - start) / 1000).toFixed(1)}s)`)
   } catch (err) {
@@ -231,16 +248,66 @@ try {
     if (!browser) await sleep(500)
   }
 
+  /** Starts a headless browser with a profile folder (kept between restarts, like a real one). */
+  async function openBrowser(dir, port) {
+    const proc = spawn(edge, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--window-size=1400,900', '--no-first-run', 'about:blank'], { stdio: 'ignore' })
+    let page = null
+    for (let i = 0; i < 60 && !page; i++) {
+      page = await attach(port, (t) => t.type === 'page').catch(() => null)
+      if (!page) await sleep(500)
+    }
+    return { proc, page }
+  }
+  /** Closes the browser the way a person would, letting it save its cookies, and waits for it to exit. */
+  async function closeBrowser(b) {
+    const exited = new Promise((r) => b.proc.once('exit', r))
+    await Promise.race([b.page?.send('Browser.close').catch(() => undefined), sleep(3000)])
+    await Promise.race([exited, sleep(20_000)])
+    b.proc.kill()
+    await sleep(1000)
+  }
+  async function pairIn(page, remember, name) {
+    await page.send('Page.navigate', { url: `http://localhost:${PORT}/` })
+    await waitFor(page, `location.pathname === '/login' && !!document.getElementById('code')`, 'the pairing page')
+    await page.evaluate(`document.getElementById('code').value = ${JSON.stringify(code())}; document.getElementById('name').value = ${JSON.stringify(name)}; document.getElementById('remember').checked = ${remember}; document.getElementById('f').requestSubmit(); 1`)
+    await waitFor(page, `window.vibe?.host === 'browser'`, 'the app in the browser', 30_000)
+  }
+
   await step('a browser is sent to the pairing page, pairs, and gets the app', async () => {
+    await pairIn(browser, true, 'Main browser')
+    await waitFor(browser, `[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'the app to be ready', 60_000)
+    await browser.send('Network.enable')
+    const { result } = await browser.send('Network.getCookies', { urls: [`http://localhost:${PORT}/`] })
+    const cookie = result?.cookies?.find((c) => c.name === 'vibeapp_session')
+    if (!cookie || cookie.session || cookie.expires * 1000 < Date.now() + 300 * 86_400_000) {
+      throw new Error(`a remembered device should get a long-lasting cookie: ${JSON.stringify(cookie)}`)
+    }
+  }, browser)
+
+  await step('a remembered browser is still paired after it is closed and opened again', async () => {
+    await closeBrowser({ proc: browserProc, page: browser })
+    ;({ proc: browserProc, page: browser } = await openBrowser(profile, BROWSER_DEBUG))
     await browser.send('Page.navigate', { url: `http://localhost:${PORT}/` })
-    await waitFor(browser, `location.pathname === '/login' && !!document.getElementById('code')`, 'the pairing page')
-    await browser.evaluate(`document.getElementById('code').value = ${JSON.stringify(code())}; document.getElementById('f').requestSubmit(); 1`)
-    await waitFor(browser, `window.vibe?.host === 'browser'`, 'the app in the browser', 30_000)
+    await waitFor(browser, `window.vibe?.host === 'browser' || location.pathname === '/login'`, 'the page to load', 30_000)
+    if (await browser.evaluate(`location.pathname === '/login'`)) throw new Error('it asked for a pairing code again')
     await waitFor(browser, `[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'the app to be ready', 60_000)
   }, browser)
 
+  await step('a browser that was not remembered asks again after a restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeapp-remote-borrowed-'))
+    let other = await openBrowser(dir, BROWSER_DEBUG + 1)
+    await pairIn(other.page, false, 'Borrowed browser')
+    const status = await desktop.evaluate(`window.vibe.remote.status()`)
+    if (status.devices.find((d) => d.name === 'Borrowed browser')?.remember !== false) throw new Error('not marked as "until its browser closes"')
+    await closeBrowser(other)
+    other = await openBrowser(dir, BROWSER_DEBUG + 1)
+    await other.page.send('Page.navigate', { url: `http://localhost:${PORT}/` })
+    await waitFor(other.page, `location.pathname === '/login'`, 'the pairing page', 20_000)
+    await closeBrowser(other)
+  })
+
   await step('the desktop app shows the browser as connected', async () => {
-    await until(async () => (await desktop.evaluate(`window.vibe.remote.status()`)).devices.some((d) => d.online && /browser/i.test(d.name)), 'the device to show as online', 15_000)
+    await until(async () => (await desktop.evaluate(`window.vibe.remote.status()`)).devices.some((d) => d.online && d.name === 'Main browser'), 'the device to show as online', 15_000)
   })
 
   await step('the browser opens the project and shows its live preview', async () => {
@@ -315,7 +382,7 @@ try {
 
   await step('disconnecting the browser in the desktop app sends it back to pairing', async () => {
     const status = await desktop.evaluate(`window.vibe.remote.status()`)
-    const device = status.devices.find((d) => /browser/i.test(d.name))
+    const device = status.devices.find((d) => d.name === 'Main browser')
     await desktop.evaluate(`window.vibe.remote.revoke(${JSON.stringify(device.id)})`)
     await waitFor(browser, `location.pathname === '/login'`, 'the browser to be sent to pairing', 20_000)
   }, browser)

@@ -57,6 +57,14 @@ function tokenFrom(req: IncomingMessage, url?: URL): string | undefined {
   return url?.searchParams.get('token') ?? undefined
 }
 
+/** Browsers cap a cookie at 400 days; a remembered device's is renewed each time VibeApp is opened, so it never runs out. */
+const REMEMBER_SECONDS = 400 * 24 * 60 * 60
+
+/** A remembered device's cookie lasts (and is renewed); otherwise it's a session cookie that ends when the browser closes. */
+function sessionCookie(token: string, remember: boolean, secure: boolean): string {
+  return `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${remember ? `; Max-Age=${REMEMBER_SECONDS}` : ''}${secure ? '; Secure' : ''}`
+}
+
 function usesCookie(req: IncomingMessage): boolean {
   return !req.headers.authorization && new RegExp(`(?:^|;\\s*)${COOKIE}=`).test(req.headers.cookie ?? '')
 }
@@ -172,18 +180,20 @@ h1{font-size:20px;margin:0 0 6px}p{color:#9aa3b2;margin:0 0 18px}label{display:b
 input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #2a2f3a;background:#0f1117;color:inherit;font:inherit}
 #code{letter-spacing:.4em;font-size:22px;text-align:center}button{margin-top:18px;width:100%;padding:11px;border:0;border-radius:8px;background:#4f7cff;color:#fff;font:inherit;font-weight:600;cursor:pointer}
 #err{color:#ff8a8a;min-height:1.5em;margin:10px 0 0;font-size:14px}
+.check{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-size:14px;color:#e6e8ee}.check input{width:auto;margin-top:3px}.check small{display:block;color:#9aa3b2;font-size:12.5px}
 </style></head><body><main>
 <h1>Connect to VibeApp</h1>
 <p>Enter the pairing code shown in VibeApp on your computer (Settings, Remote access).</p>
 <form id="f"><label for="code">Pairing code</label><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus>
 <label for="name">Name this device</label><input id="name" maxlength="60" placeholder="e.g. Laptop browser">
+<label class="check"><input type="checkbox" id="remember" checked><span>Remember this device<small>Stays connected until you disconnect it in VibeApp's Settings. Untick on a computer that isn't yours: it then lasts until this browser closes.</small></span></label>
 <button type="submit">Connect</button><p id="err" role="alert"></p></form></main>
 <script>
 document.getElementById('name').value = (navigator.userAgent.match(/(Firefox|Edg|Chrome|Safari)\\//)?.[1] ?? 'Browser').replace('Edg', 'Edge') + ' browser'
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault()
   const err = document.getElementById('err'); err.textContent = ''
-  const r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: document.getElementById('code').value, name: document.getElementById('name').value }) })
+  const r = await fetch('/api/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: document.getElementById('code').value, name: document.getElementById('name').value, remember: document.getElementById('remember').checked }) })
   const body = await r.json().catch(() => ({}))
   if (r.ok) location.href = '/'
   else err.textContent = body.error || 'That did not work.'
@@ -243,10 +253,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, secure: boolean
 
   if (path === '/api/pair' && req.method === 'POST') {
     try {
-      const body = JSON.parse(await readBody(req, 4096)) as { code?: string; name?: string }
-      const { token, device } = pair(String(body.code ?? ''), String(body.name ?? ''), address(req), getSettings().remoteReadOnly)
-      return send(res, 200, { token, readOnly: device.readOnly, device: device.name }, {
-        'Set-Cookie': `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure ? '; Secure' : ''}`
+      const body = JSON.parse(await readBody(req, 4096)) as { code?: string; name?: string; remember?: boolean }
+      const remember = body.remember !== false
+      const { token, device } = pair(String(body.code ?? ''), String(body.name ?? ''), address(req), getSettings().remoteReadOnly, remember)
+      return send(res, 200, { token, readOnly: device.readOnly, device: device.name, remember }, {
+        'Set-Cookie': sessionCookie(token, remember, secure)
       })
     } catch (err) {
       return send(res, err instanceof PairingError ? err.status : 400, { error: (err as Error).message })
@@ -295,7 +306,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, secure: boolean
   if (path === '/' || path === '/index.html') {
     const page = appPage(req, secure)
     if (!page) return send(res, 503, 'VibeApp has to be built (npm run build) before its screens can be served.')
-    return send(res, 200, page, { 'Content-Security-Policy': "frame-ancestors 'none'" })
+    const renew: Record<string, string> = device.remember && usesCookie(req) ? { 'Set-Cookie': sessionCookie(tokenFrom(req)!, true, secure) } : {}
+    return send(res, 200, page, { 'Content-Security-Policy': "frame-ancestors 'none'", ...renew })
   }
   const file = normalize(join(rendererDir(), decodeURIComponent(path)))
   if (!file.startsWith(resolve(rendererDir()) + sep)) return send(res, 404, { error: 'Not found' })
@@ -498,7 +510,12 @@ export function remoteStatus(): RemoteStatus {
   const urls = !running
     ? []
     : running.mode === 'lan'
-      ? [...lanAddresses().map((ip) => `${scheme}://${ip}:${port}`), `${scheme}://localhost:${port}`]
+      ? [
+          // The computer's name stays the same when its network address changes: best for bookmarks.
+          `${scheme}://${hostname()}:${port}`,
+          ...lanAddresses().map((ip) => `${scheme}://${ip}:${port}`),
+          `${scheme}://localhost:${port}`
+        ]
       : [`${scheme}://localhost:${port}`]
   return {
     running: !!running,

@@ -14,6 +14,8 @@ interface StoredDevice {
   name: string
   tokenHash: string
   readOnly: boolean
+  /** Stays paired until disconnected. Otherwise it lapses after a while unused. (Older entries: remembered.) */
+  remember?: boolean
   createdAt: string
   lastSeen: string | null
 }
@@ -27,6 +29,7 @@ export interface Device {
   id: string
   name: string
   readOnly: boolean
+  remember: boolean
   createdAt: string
   lastSeen: string | null
 }
@@ -34,6 +37,8 @@ export interface Device {
 const MAX_FAILURES = 5
 const FAILURE_WINDOW_MS = 10 * 60_000
 const LOCKOUT_MS = 10 * 60_000
+/** A device that wasn't remembered stops working after this long unused. */
+export const UNREMEMBERED_IDLE_MS = 12 * 60 * 60_000
 
 const authPath = (): string => join(app.getPath('userData'), 'remote.json')
 /** Read by the MCP server, which runs as a separate process on this computer. */
@@ -66,7 +71,7 @@ function write(data: AuthFile): void {
 }
 
 function toDevice(d: StoredDevice): Device {
-  return { id: d.id, name: d.name, readOnly: d.readOnly, createdAt: d.createdAt, lastSeen: d.lastSeen }
+  return { id: d.id, name: d.name, readOnly: d.readOnly, remember: d.remember !== false, createdAt: d.createdAt, lastSeen: d.lastSeen }
 }
 
 export function pairingCode(): string {
@@ -80,8 +85,19 @@ export function rotatePairingCode(): string {
   return data.pairingCode
 }
 
+function lapsed(d: StoredDevice, now = Date.now()): boolean {
+  return d.remember === false && now - Date.parse(d.lastSeen ?? d.createdAt) > UNREMEMBERED_IDLE_MS
+}
+
 export function listDevices(): Device[] {
-  return read().devices.map(toDevice)
+  const data = read()
+  // Devices that weren't remembered and have lapsed are dropped.
+  const live = data.devices.filter((d) => !lapsed(d))
+  if (live.length !== data.devices.length) {
+    data.devices = live
+    write(data)
+  }
+  return live.map(toDevice)
 }
 
 export function revokeDevice(id: string): void {
@@ -109,7 +125,13 @@ export class PairingError extends Error {
 }
 
 /** Exchanges the pairing code for a device token. Throws PairingError on a wrong code or too many tries. */
-export function pair(code: string, name: string, address: string, readOnly: boolean): { token: string; device: Device } {
+export function pair(
+  code: string,
+  name: string,
+  address: string,
+  readOnly: boolean,
+  remember = true
+): { token: string; device: Device } {
   const now = Date.now()
   if ((lockedUntil.get(address) ?? 0) > now) {
     throw new PairingError('Too many wrong codes. Try again in a few minutes.', 429)
@@ -134,6 +156,7 @@ export function pair(code: string, name: string, address: string, readOnly: bool
     name: String(name || 'Browser').slice(0, 60),
     tokenHash: hash(token),
     readOnly,
+    remember,
     createdAt: new Date().toISOString(),
     lastSeen: new Date().toISOString()
   }
@@ -157,6 +180,11 @@ export function deviceForToken(token: string | undefined | null): Device | null 
     return a.length === b.length && timingSafeEqual(a, b)
   })
   if (!found) return null
+  if (lapsed(found)) {
+    data.devices = data.devices.filter((d) => d !== found)
+    write(data)
+    return null
+  }
   if (Date.now() - (lastTouched.get(found.id) ?? 0) > 60_000) {
     lastTouched.set(found.id, Date.now())
     found.lastSeen = new Date().toISOString()
@@ -187,6 +215,7 @@ export function ensureApiToken(url: string, ca?: string): void {
     name: 'Claude Code tools (this computer)',
     tokenHash: hash(token),
     readOnly: false,
+    remember: true,
     createdAt: new Date().toISOString(),
     lastSeen: null
   })

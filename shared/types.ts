@@ -94,6 +94,8 @@ export interface RemoteDevice {
   id: string
   name: string
   readOnly: boolean
+  /** Stays paired until disconnected (otherwise it lapses after 12 hours unused). */
+  remember: boolean
   createdAt: string
   lastSeen: string | null
   /** Connected right now. */

@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { app } from 'electron'
 import {
   checkRemoteCall,
   deviceForToken,
@@ -60,4 +63,20 @@ test('read-only connections can only read; remote settings stay on the computer'
   assert.equal(checkRemoteCall('vibe:remote:previewUrl', ['p'], false).allowed, true)
   const settings = checkRemoteCall('vibe:settings:update', [{ remoteAccess: 'lan', remoteReadOnly: false, autoAsk: false }], false)
   assert.deepEqual(settings.args, [{ autoAsk: false }], 'remote-access keys are stripped')
+})
+
+test('a device that was not remembered lapses after 12 hours unused; a remembered one does not', () => {
+  const temp = pair(pairingCode(), 'Borrowed', '10.0.0.3', false, false)
+  const kept = pair(pairingCode(), 'Mine', '10.0.0.4', false, true)
+  assert.equal(temp.device.remember, false)
+  assert.equal(kept.device.remember, true)
+  // Pretend both were last used 13 hours ago.
+  const file = join(app.getPath('userData'), 'remote.json')
+  const data = JSON.parse(readFileSync(file, 'utf-8'))
+  const old = new Date(Date.now() - 13 * 60 * 60_000).toISOString()
+  for (const d of data.devices) if ([temp.device.id, kept.device.id].includes(d.id)) d.lastSeen = old
+  writeFileSync(file, JSON.stringify(data))
+  assert.equal(deviceForToken(temp.token), null, 'the borrowed browser has lapsed')
+  assert.equal(deviceForToken(kept.token)?.id, kept.device.id, 'the remembered one still works')
+  assert.ok(!listDevices().some((d) => d.id === temp.device.id), 'and it is gone from the list')
 })
