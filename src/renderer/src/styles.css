@@ -2671,3 +2671,288 @@ textarea {
   font-size: 12px;
   opacity: 0.75;
 }
+
+/* ---- Phones (VibeApp in a phone's browser through Remote access) ------------------------
+   One column, a compact top bar whose tabs scroll sideways, the chat and the preview as
+   two panes you switch between, controls large enough to tap, and text inputs at 16px
+   so iPhones don't zoom in when you type. Keep the width in step with lib/usePhone.ts. */
+
+.mobile-pane-switch {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  .app {
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    height: 100dvh;
+  }
+
+  /* Top bar: name, Remote badge and usage on the first line; the tabs on a second, scrolling line. */
+  .app-nav {
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    margin-bottom: 8px;
+  }
+
+  .app-nav h1 {
+    font-size: 1.2rem;
+    margin: 0;
+  }
+
+  .app-nav-tabs {
+    order: 3;
+    flex-basis: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    gap: 4px;
+  }
+
+  .app-nav-tabs::-webkit-scrollbar,
+  .chat-header-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-nav-tabs button {
+    flex: none;
+    padding: 8px 12px;
+  }
+
+  /* The two usage meters share one compact row under the name. */
+  .usage-meters {
+    order: 2;
+    flex-basis: 100%;
+    margin-left: 0;
+    gap: 6px;
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  .usage-meter {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .usage-meter-bars {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .usage-bar {
+    width: auto;
+    flex: 1;
+    min-width: 24px;
+  }
+
+  .balance {
+    display: none;
+  }
+
+  /* Chat screen. */
+  .chat-header {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin-bottom: 8px;
+  }
+
+  .chat-header-actions {
+    margin-left: 0;
+    flex-basis: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+
+  .chat-header-actions > * {
+    flex: none;
+  }
+
+  .go-nutz-banner {
+    font-size: 13px;
+    padding: 6px 10px;
+  }
+
+  .mobile-pane-switch {
+    display: inline-flex;
+    align-self: stretch;
+    margin: 0 0 8px;
+  }
+
+  .mobile-pane-switch button {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+
+  .chat-body {
+    gap: 0;
+  }
+
+  .chat-body.with-preview .chat-main {
+    flex: 1 1 auto;
+  }
+
+  .chat-body.phone-pane-chat .preview-pane,
+  .chat-body.phone-pane-preview .chat-main {
+    display: none;
+  }
+
+  .chat-body.with-preview .chat-item-user_text p,
+  .chat-body.with-preview .chat-item-assistant_text .md,
+  .chat-item-user_text p,
+  .chat-item-assistant_text .md {
+    max-width: 100%;
+  }
+
+  .chat-log {
+    padding-right: 2px;
+  }
+
+  .chat-item pre,
+  .md pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .md table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .chat-input-row .chat-input,
+  .chat-input,
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .chat-cost-note {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .confirmation-banner,
+  .problem-banner {
+    flex-wrap: wrap;
+  }
+
+  .preview-toolbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .preview-status {
+    flex-basis: 100%;
+    order: -1;
+  }
+
+  /* Taps, not clicks: every control at least 36px. */
+  button,
+  select,
+  .chat-inline-action {
+    min-height: 36px;
+  }
+
+  .preview-toolbar button,
+  .picked-chip button,
+  .pending-images button,
+  .chat-attach,
+  .modal-close {
+    min-width: 36px;
+  }
+
+  /* Dialogs fill the screen width. */
+  .modal-overlay {
+    padding: 10px;
+    align-items: flex-start;
+  }
+
+  .modal,
+  .modal-wide {
+    width: 100%;
+    max-height: calc(100dvh - 20px);
+    padding: 1rem;
+  }
+
+  /* Chat tab: the conversation list becomes a strip along the top. */
+  .talk-view {
+    flex-direction: column;
+  }
+
+  .talk-sidebar {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+    padding: 6px 0 8px;
+  }
+
+  .talk-sidebar > * {
+    flex: none;
+    max-width: 60vw;
+  }
+
+  .talk-log {
+    padding: 10px 2px 6px;
+  }
+
+  .talk-compose {
+    padding: 6px 0 4px;
+  }
+
+  /* Settings, Memory, Extensions: one column. */
+  .settings-view,
+  .memory-view {
+    max-width: none;
+  }
+
+  .settings-section {
+    padding: 12px;
+  }
+
+  .settings-toggle {
+    flex-wrap: wrap;
+  }
+
+  .settings-toggle > span {
+    flex: 1 1 200px;
+    min-width: 0;
+  }
+
+  .settings-toggle select {
+    max-width: 100%;
+  }
+
+  .memory-toolbar,
+  .memory-add-row {
+    flex-wrap: wrap;
+  }
+
+  .memory-row-actions {
+    flex-wrap: wrap;
+  }
+
+  .remote-code code {
+    font-size: 18px;
+  }
+
+  .secret-add {
+    flex-wrap: wrap;
+  }
+
+  .secret-add input {
+    flex: 1 1 100%;
+  }
+}

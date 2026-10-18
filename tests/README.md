@@ -6,6 +6,7 @@ npm run smoke               # smoke tests against the real Claude Code and Codex
 npm run smoke -- takeover   # only smoke files whose name contains "takeover"
 npm run e2e                 # the real app, end to end (builds it, opens it, clicks through it)
 npm run e2e:remote          # Remote access: the API, a real browser, the MCP server, HTTPS mode
+npm run e2e:mobile          # every screen on a phone-sized browser: fits the width, controls big enough to tap
 ```
 Add `-- --packaged` to either e2e command to test the installed-style build in release/win-unpacked (run `npm run package` first).
 

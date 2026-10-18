@@ -100,7 +100,7 @@ function App() {
     <div className="app">
       <div className="app-nav">
         <h1>VibeApp</h1>
-        <div className="app-nav-tabs">
+        <div className="app-nav-tabs" data-scroll-x>
           <button
             className={screen === 'accounts' ? 'active' : ''}
             onClick={() => setScreen('accounts')}

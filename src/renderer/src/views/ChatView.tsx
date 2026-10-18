@@ -22,6 +22,7 @@ import { shortenProjectPaths } from '../lib/labels'
 import CodexFeed from '../components/CodexFeed'
 import Markdown from '../components/Markdown'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
+import { usePhone } from '../lib/usePhone'
 
 interface ChatViewProps {
   project: ProjectRecord
@@ -143,6 +144,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [hasChanges, setHasChanges] = useState(false)
   const [goNutz, setGoNutz] = useState(false)
   const [showPreview, setShowPreview] = useState(readPreviewPref)
+  // On a phone there's room for one pane at a time: the chat or the preview.
+  const phone = usePhone()
+  const [phonePane, setPhonePane] = useState<'chat' | 'preview'>('chat')
   // Ask: answer a question without changing anything. Build: the normal coding flow.
   const [askMode, setAskMode] = useState(readAskPref)
   // How big this project's Claude conversation is now (tokens re-read on every Build step).
@@ -680,6 +684,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
 
   const handlePicked = useCallback((element: PickedElement) => {
     setPicked(element)
+    // On a phone the chat is a separate pane: go back to it to type what should change.
+    setPhonePane('chat')
     inputRef.current?.focus()
   }, [])
 
@@ -716,7 +722,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       <div className="chat-header">
         <button onClick={onBack}>&larr; Projects</button>
         <span className="chat-project-name">{project.name}</span>
-        <div className="chat-header-actions">
+        <div className="chat-header-actions" data-scroll-x>
           <button className={showPreview ? 'active' : ''} onClick={togglePreview}>
             Preview
           </button>
@@ -742,7 +748,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         </div>
       )}
 
-      <div className={`chat-body${showPreview ? ' with-preview' : ''}`}>
+      {phone && showPreview && (
+        <div className="mobile-pane-switch chat-mode-switch" role="tablist" aria-label="Show">
+          <button role="tab" aria-selected={phonePane === 'chat'} className={phonePane === 'chat' ? 'active' : ''} onClick={() => setPhonePane('chat')}>
+            💬 Chat
+          </button>
+          <button role="tab" aria-selected={phonePane === 'preview'} className={phonePane === 'preview' ? 'active' : ''} onClick={() => setPhonePane('preview')}>
+            👁 Preview
+          </button>
+        </div>
+      )}
+
+      <div className={`chat-body${showPreview ? ' with-preview' : ''}${phone ? ` phone-pane-${showPreview ? phonePane : 'chat'}` : ''}`}>
         <div
           className={`chat-main${dragging ? ' dragging' : ''}`}
           onDragOver={(e) => {

@@ -16,6 +16,7 @@
     "smoke": "node scripts/test.mjs smoke",
     "e2e": "node tests/e2e/app.e2e.mjs",
     "e2e:remote": "node tests/e2e/remote.e2e.mjs",
+    "e2e:mobile": "node tests/e2e/mobile.e2e.mjs",
     "postinstall": "patch-package && electron-rebuild -f -w node-pty"
   },
   "dependencies": {
