@@ -63,7 +63,11 @@ type ChatItem =
       status: 'pending' | 'approved' | 'revised' | 'cancelled'
       /** While it's being built: each step's progress (by step number). */
       progress: Record<number, 'doing' | 'done'>
+      by?: 'claude' | 'codex'
+      /** Its build ended: how many steps were reported along the way. */
+      finished?: { total: number; tracked: number; stopped: boolean }
     }
+  | { kind: 'plan_suggestion'; text: string; used?: boolean }
   | { kind: 'older'; hidden: number }
   | { kind: 'offer'; text: string; resetsAt: number | null; used?: boolean }
   | {
@@ -362,7 +366,25 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               }
             ]
           case 'plan_proposed':
-            return [...prev, { kind: 'plan', toolUseId: event.toolUseId, plan: event.plan, steps: event.steps, status: 'pending', progress: {} }]
+            return [
+              ...prev,
+              { kind: 'plan', toolUseId: event.toolUseId, plan: event.plan, steps: event.steps, status: 'pending', progress: {}, by: event.by }
+            ]
+          case 'plan_finished': {
+            const at = prev.findLastIndex((item) => item.kind === 'plan' && item.status === 'approved')
+            if (at === -1) return prev
+            const finished = { total: event.total, tracked: event.tracked, stopped: event.stopped }
+            return prev.map((item, i) => (i === at && item.kind === 'plan' ? { ...item, finished } : item))
+          }
+          case 'plan_suggested': {
+            // Only meaningful at the moment it's asked; the question isn't repeated when the chat is reopened.
+            if (isReplay) return prev
+            setBusy(false)
+            // The message will be added again by whichever answer is picked.
+            const last = prev.findLastIndex((item) => item.kind === 'user_text' && item.text === event.text)
+            const without = last === -1 ? prev : prev.filter((_, i) => i !== last)
+            return [...without, { kind: 'plan_suggestion', text: event.text }]
+          }
           case 'plan_decided':
             return prev.map((item) =>
               item.kind === 'plan' && item.toolUseId === event.toolUseId ? { ...item, status: event.decision } : item
@@ -901,6 +923,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     steps={item.steps}
                     status={item.status}
                     progress={item.progress}
+                    by={item.by}
+                    finished={item.finished}
                     busy={busy}
                     onApprove={() => {
                       void window.vibe.chat.planDecided(project.id, item.toolUseId, 'approved')
@@ -912,6 +936,37 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     }}
                     onCancel={() => void window.vibe.chat.planDecided(project.id, item.toolUseId, 'cancelled')}
                   />
+                )}
+                {item.kind === 'plan_suggestion' && (
+                  <div className="plan-suggestion">
+                    <p>
+                      📋 <strong>This looks like a big request. Plan it first?</strong> Claude will look around and show you
+                      a plan to approve before anything changes.
+                    </p>
+                    <p className="plan-suggestion-text">“{item.text.length > 220 ? `${item.text.slice(0, 220)}…` : item.text}”</p>
+                    <div className="plan-actions">
+                      <button
+                        className="plan-approve"
+                        disabled={busy || item.used}
+                        onClick={() => {
+                          setItems((prev) => prev.map((it, idx) => (idx === i && it.kind === 'plan_suggestion' ? { ...it, used: true } : it)))
+                          sendMessage(item.text, undefined, [], true, { mode: 'plan' })
+                        }}
+                      >
+                        📋 Plan it
+                      </button>
+                      <button
+                        disabled={busy || item.used}
+                        onClick={() => {
+                          setItems((prev) => prev.map((it, idx) => (idx === i && it.kind === 'plan_suggestion' ? { ...it, used: true } : it)))
+                          sendMessage(item.text, undefined, [], true)
+                        }}
+                      >
+                        🔨 Just build
+                      </button>
+                    </div>
+                    <small className="settings-hint">You can change this in Settings (big requests).</small>
+                  </div>
                 )}
                 {item.kind === 'older' && (
                   <button className="chat-inline-action" disabled={busy} onClick={() => setShowAllHistory(true)}>

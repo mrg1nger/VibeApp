@@ -404,6 +404,44 @@ try {
     writeFileSync(join(project, 'shop.js'), originalShop)
   })
 
+  await step('if Claude skips the progress tool, the plan still ticks off or finishes honestly', async () => {
+    const noProgress = join(data, 'test-no-plan-progress')
+    writeFileSync(noProgress, '')
+    try {
+      await click('Plan', '.chat-mode-switch button')
+      await send('Add a function discount(item, percent) to shop.js that returns the price minus that percent, rounded down, and export it alongside the prices.')
+      await waitFor(`!!document.querySelector('.plan-card-pending')`, 'a proposed plan', 300_000)
+      await idle(120_000)
+      await click('Approve and build', '.plan-card-pending button')
+      await waitFor(`!!document.querySelector('.chat-stop')`, 'building to start', 15_000)
+      await idle(600_000)
+      if (!/discount/.test(readFileSync(join(project, 'shop.js'), 'utf-8'))) throw new Error('discount was not added')
+      const card = await evaluate(`(() => { const c = [...document.querySelectorAll('.plan-card-approved')].at(-1); return c ? { done: c.querySelectorAll('.plan-step-done').length, steps: c.querySelectorAll('.plan-step').length, status: c.querySelector('.plan-card-status').innerText } : null })()`)
+      if (!card) throw new Error('no approved plan card')
+      console.log(`  (${card.done} of ${card.steps} ticked; status "${card.status}")`)
+      if (!/finished|stopped/i.test(card.status)) throw new Error(`the card never says the build ended: ${card.status}`)
+      if (card.done < card.steps && !/weren't reported/.test(card.status)) throw new Error('untracked steps are not admitted')
+    } finally {
+      rmSync(noProgress, { force: true })
+      await click('Build', '.chat-mode-switch button').catch(() => undefined)
+      writeFileSync(join(project, 'shop.js'), originalShop)
+    }
+  })
+
+  await step('a big request in Build asks "Plan it first?"', async () => {
+    const before = readFileSync(join(project, 'shop.js'), 'utf-8')
+    await type('Please make these changes to shop.js:\n- add a shield costing 60 gold\n- add a bow costing 90 gold\n- add an arrow costing 2 gold\n- add a comment listing every item')
+    await waitFor(`!!document.querySelector('.plan-suggestion')`, 'the "Plan it first?" card', 60_000)
+    await idle(30_000)
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== before) throw new Error('shop.js changed before choosing')
+    await click('Plan it', '.plan-suggestion button')
+    await waitFor(`!!document.querySelector('.plan-card-pending')`, 'a proposed plan', 300_000)
+    await idle(120_000)
+    await click('Cancel', '.plan-card-pending button')
+    await waitFor(`!document.querySelector('.plan-card-pending')`, 'the plan to be cancelled', 10_000)
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== before) throw new Error('shop.js changed')
+  })
+
   // -- asking --
 
   await step('Ask mode answers without changing anything', async () => {
@@ -505,6 +543,28 @@ try {
     await waitFor(`/Codex is handling this directly/.test(document.querySelector('.chat-log').innerText)`, 'the takeover banner', 30_000)
     await idle(600_000)
     if (!existsSync(join(project, 'takeover.txt'))) throw new Error('Codex did not create the file')
+  })
+
+  await step('when Claude is out, Codex makes the plan and builds it once approved', async () => {
+    writeFileSync(takeoverSwitch, '')
+    const before = readFileSync(join(project, 'shop.js'), 'utf-8')
+    try {
+      await click('Plan', '.chat-mode-switch button')
+      await send('Add a function taxPrice(item) to shop.js that returns the price plus 5%, rounded up, and export it alongside the prices.')
+      await waitFor(`/by Codex/.test(document.querySelector('.plan-card-pending .plan-card-header')?.innerText ?? '')`, 'a plan by Codex', 600_000)
+      await idle(60_000)
+      if (readFileSync(join(project, 'shop.js'), 'utf-8') !== before) throw new Error('shop.js changed while planning')
+      await click('Approve and build', '.plan-card-pending button')
+      await waitFor(`!!document.querySelector('.chat-stop')`, 'building to start', 15_000)
+      await idle(600_000)
+      if (!/taxPrice/.test(readFileSync(join(project, 'shop.js'), 'utf-8'))) throw new Error('taxPrice was not added')
+      const card = await evaluate(`(() => { const c = [...document.querySelectorAll('.plan-card-approved')].at(-1); return c ? { done: c.querySelectorAll('.plan-step-done').length, steps: c.querySelectorAll('.plan-step').length, status: c.querySelector('.plan-card-status').innerText } : null })()`)
+      if (!card) throw new Error('no approved plan card')
+      console.log(`  (${card.done} of ${card.steps} ticked; status "${card.status}")`)
+      if (!/finished|stopped/i.test(card.status)) throw new Error(`the card never says the build ended: ${card.status}`)
+    } finally {
+      await click('Build', '.chat-mode-switch button').catch(() => undefined)
+    }
   })
 
   await step('with "ask me first", Codex only runs after "Let Codex do it"', async () => {

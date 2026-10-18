@@ -183,6 +183,27 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
         </label>
 
         <label className="settings-toggle">
+          <span>
+            Big requests
+            <small>
+              When a request sent in Build looks big (several parts, or judged complex), VibeApp can ask whether to plan
+              it first: Claude looks around and shows a plan to approve before anything changes. Small requests are never
+              interrupted.
+            </small>
+          </span>
+          <select
+            value={settings.planBigRequests}
+            onChange={(e) =>
+              onSettingsChange({ planBigRequests: e.target.value as typeof settings.planBigRequests }).catch(() => undefined)
+            }
+          >
+            <option value="ask">Ask me to plan first</option>
+            <option value="always">Always plan them first</option>
+            <option value="off">Just build</option>
+          </select>
+        </label>
+
+        <label className="settings-toggle">
           <input
             type="checkbox"
             checked={settings.autoAsk}

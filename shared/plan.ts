@@ -44,3 +44,57 @@ export function approvedPlanNote(plan: string): string {
 Approved plan:
 ${plan}`
 }
+
+const STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'into', 'from', 'then', 'add', 'make', 'file', 'files'])
+
+function words(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []).filter((w) => !STOP_WORDS.has(w)))
+}
+
+/**
+ * Claude's own to-do list, read as progress on the plan's steps: same number
+ * of items means one each, in order; otherwise each step takes the to-do item
+ * sharing most of its words (if enough do).
+ */
+export function matchTodosToSteps(
+  todos: { content: string; status: string }[],
+  steps: PlanStep[]
+): ('doing' | 'done' | undefined)[] {
+  const status = (s: string): 'doing' | 'done' | undefined => (s === 'completed' ? 'done' : s === 'in_progress' ? 'doing' : undefined)
+  if (todos.length === steps.length) return todos.map((t) => status(t.status))
+  return steps.map((step) => {
+    const want = words(step.text)
+    let best: { score: number; todo?: { content: string; status: string } } = { score: 0 }
+    for (const todo of todos) {
+      const have = words(todo.content)
+      let shared = 0
+      for (const w of want) if (have.has(w)) shared++
+      const score = want.size ? shared / Math.min(want.size, Math.max(have.size, 1)) : 0
+      if (score > best.score) best = { score, todo }
+    }
+    return best.todo && best.score >= 0.4 ? status(best.todo.status) : undefined
+  })
+}
+
+/** "STEP 2: done" lines (how Codex reports progress on a plan), in order. */
+export function progressMarkers(text: string): { step: number; status: 'doing' | 'done' }[] {
+  const out: { step: number; status: 'doing' | 'done' }[] = []
+  for (const m of text.matchAll(/\bSTEP\s+(\d{1,2})\s*[:\-–]\s*(doing|done)\b/gi)) {
+    out.push({ step: Number(m[1]), status: m[2].toLowerCase() as 'doing' | 'done' })
+  }
+  return out
+}
+
+/** A request long or many-parted enough that planning it first is likely worth it. */
+export function looksBig(text: string): boolean {
+  const items = (text.match(/^\s*(?:[-*•]|\d+[.)])\s+\S/gm) ?? []).length
+  return text.trim().length > 700 || items >= 4
+}
+
+/** What Codex is told when it builds a plan the user approved (it can't call VibeApp's progress tool). */
+export function codexPlanBuildNote(plan: string): string {
+  return `The user approved the plan below; build it now, following its steps in order (all of them, including any marked for Claude: Claude isn't available right now). Before you start each step, write a line on its own saying "STEP <number>: doing", and when it's finished "STEP <number>: done", so the user can follow along.
+
+Approved plan:
+${plan}`
+}

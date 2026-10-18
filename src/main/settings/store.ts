@@ -12,6 +12,7 @@ const DEFAULTS: AppSettings = {
   remoteAccess: 'off',
   remotePort: 7428,
   remoteReadOnly: false,
+  planBigRequests: 'ask',
   claudeModel: null,
   codexModel: null,
   themeId: 'midnight',

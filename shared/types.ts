@@ -79,7 +79,11 @@ export type VibeEvent =
   /** The conversation was moved into a fresh Claude session to keep it fast. */
   /** The conversation is being compacted (shrunk in place) to keep it fast. */
   /** Plan mode: Claude proposed a plan, waiting for the user to approve, change or cancel it. */
-  | { type: 'plan_proposed'; toolUseId: string; plan: string; steps: { text: string; who?: 'claude' | 'codex' }[] }
+  | { type: 'plan_proposed'; toolUseId: string; plan: string; steps: { text: string; who?: 'claude' | 'codex' }[]; by?: 'claude' | 'codex' }
+  /** Building an approved plan ended: how many of its steps were reported, and whether it was stopped. */
+  | { type: 'plan_finished'; total: number; tracked: number; stopped: boolean }
+  /** A big request was sent in Build: VibeApp asks whether to plan it first. */
+  | { type: 'plan_suggested'; text: string }
   /** What the user decided about a proposed plan (kept so the chat shows it after reopening). */
   | { type: 'plan_decided'; toolUseId: string; decision: 'approved' | 'revised' | 'cancelled' }
   /** Building an approved plan: a step started or finished. */
@@ -388,6 +392,8 @@ export interface AppSettings {
   remotePort: number
   /** Remote screens and the API can look but not act. */
   remoteReadOnly: boolean
+  /** Big requests sent in Build: ask whether to plan them first, always plan them, or just build. */
+  planBigRequests: 'ask' | 'always' | 'off'
   /** null = whatever the Claude Code account/settings default to. */
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */

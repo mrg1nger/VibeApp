@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { approvedPlanNote, parsePlanSteps } from '@shared/plan'
+import { approvedPlanNote, looksBig, matchTodosToSteps, parsePlanSteps, progressMarkers } from '@shared/plan'
 
 test("a plan's steps are read from its Steps section, with who does each", () => {
   const plan = `Add a sell price to the shop.
@@ -30,4 +30,46 @@ test('the build note tells Claude to report progress and hand Codex steps to Cod
   assert.match(note, /plan_progress/)
   assert.match(note, /run_codex_subtask/)
   assert.match(note, /1\. \(Codex\) Build it/)
+})
+
+test("Claude's to-do list counts as progress on the plan steps", () => {
+  const steps = parsePlanSteps('## Steps\n1. Add sellPrice to shop.js\n2. Write tests in shop.test.js\n3. Update the README')
+  // Same number of items: one each, in order.
+  assert.deepEqual(
+    matchTodosToSteps(
+      [
+        { content: 'a', status: 'completed' },
+        { content: 'b', status: 'in_progress' },
+        { content: 'c', status: 'pending' }
+      ],
+      steps
+    ),
+    ['done', 'doing', undefined]
+  )
+  // Different number: matched by shared words.
+  assert.deepEqual(
+    matchTodosToSteps(
+      [
+        { content: 'Write the shop.test.js tests', status: 'in_progress' },
+        { content: 'Add sellPrice to shop.js', status: 'completed' }
+      ],
+      steps
+    ),
+    ['done', 'doing', undefined]
+  )
+})
+
+test('STEP markers are read from what Codex says', () => {
+  assert.deepEqual(progressMarkers('ok\nSTEP 1: doing\nworking...\nSTEP 1: done\nstep 2 - doing'), [
+    { step: 1, status: 'doing' },
+    { step: 1, status: 'done' },
+    { step: 2, status: 'doing' }
+  ])
+  assert.deepEqual(progressMarkers('No steps mentioned here, just step 3 of the work.'), [])
+})
+
+test('big requests are noticed; small ones are not', () => {
+  assert.equal(looksBig('Fix the typo on the home page'), false)
+  assert.equal(looksBig('Please:\n- add login\n- add signup\n- add a profile page\n- add settings'), true)
+  assert.equal(looksBig('x'.repeat(701)), true)
 })

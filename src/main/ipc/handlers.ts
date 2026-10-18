@@ -90,7 +90,10 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
-import { approvedPlanNote, parsePlanSteps } from '@shared/plan'
+import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
+import { briefBlock } from '../memory/brief'
+import { runCodexExec } from '../cli/codexExec'
+import { countsFromCodexEvents } from '../usage/tokens'
 import { isPlainQuestion } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
 import { runTalk, stopTalk, getTalk } from '../chat/talk'
@@ -247,7 +250,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       /** Plan mode (propose a plan, change nothing), or building a plan the user approved. */
       extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
     ) => {
-      const planning = extra?.mode === 'plan'
+      let planning = extra?.mode === 'plan'
       // A plain question doesn't need the full coding session (and its whole
       // conversation re-read on every step): answer it the cheap way.
       if (
@@ -281,11 +284,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       const blockedUntil = claudeBlockedUntil()
       const takeoverMode = getSettings().limitTakeover
       if (planning && blockedUntil !== null) {
-        // Planning needs Claude; Codex taking over would build without the approval step.
+        // Claude is out: Codex makes the plan instead, read-only. Nothing is built until it's approved.
         appendUserMessage(projectId, text)
-        const say = (event: VibeEvent): void => void session.emit('event', event)
-        say({ type: 'error', message: `Claude is out until ${new Date(blockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, and Plan mode needs Claude. Switch to Build to let Codex do it now, or plan once Claude is back.` })
-        say({ type: 'turn_complete' })
+        recordUserMessage(projectId, text, 'plan (by Codex)')
+        void runCodexPlan(session, projectId, projectPath, text)
         return { snapshot: undefined, thumbnails: [] as string[] }
       }
       if (blockedUntil !== null && takeoverMode !== 'off' && !process.env.VIBEAPP_SKIP_PREEMPTIVE) {
@@ -304,8 +306,17 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
             .filter(Boolean)
             .join('; ')
         )
-        const request: LastRequest = { text, element, images: prepared.map((p) => p.savedPath), snapshot }
+        const request: LastRequest = {
+          text: extra?.approvedPlan ? codexPlanBuildNote(extra.approvedPlan) : text,
+          element,
+          images: prepared.map((p) => p.savedPath),
+          snapshot
+        }
         lastRequests.set(projectId, request)
+        if (extra?.approvedPlan) {
+          rememberApprovedPlan(projectId, extra.approvedPlan)
+          startPlanBuild(projectId, extra.approvedPlan)
+        }
         if (takeoverMode === 'ask') {
           session.emit('event', { type: 'takeover_offer', text, resetsAt: blockedUntil } satisfies VibeEvent)
         } else {
@@ -324,6 +335,17 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         }),
         routeMessage(text, getSettings(), { images: prepared.length, pointedAt: !!picked, projectId })
       ])
+
+      // A big request sent in Build: offer to plan it first (or just plan it, if that's the setting).
+      const bigAsk = getSettings().planBigRequests
+      if (!planning && !extra && !forceBuild && bigAsk !== 'off' && (route.size === 'complex' || looksBig(text))) {
+        if (bigAsk === 'always') {
+          planning = true
+        } else {
+          session.emit('event', { type: 'plan_suggested', text } satisfies VibeEvent)
+          return { snapshot: undefined, thumbnails: [] as string[] }
+        }
+      }
 
       // A very long conversation is re-read on every step. When enabled,
       // continue it in a fresh session seeded with a summary instead (the
@@ -417,7 +439,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       } catch (err) {
         console.warn('Switching plan mode failed:', (err as Error).message)
       }
-      if (extra?.approvedPlan) rememberApprovedPlan(projectId, extra.approvedPlan)
+      if (extra?.approvedPlan) {
+        rememberApprovedPlan(projectId, extra.approvedPlan)
+        startPlanBuild(projectId, extra.approvedPlan)
+      }
       session.send(
         message,
         prepared.map((p) => p.block)
@@ -803,6 +828,94 @@ function rotateThreshold(): number {
   return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
 }
 
+// ---- plan progress ------------------------------------------------------------------
+
+/** Per project: the plan being built, and how far each step has got. */
+const buildingPlans = new Map<string, { steps: ReturnType<typeof parsePlanSteps>; state: ('doing' | 'done' | undefined)[]; stopped?: boolean }>()
+/** Per project: the last plan proposed, so "Change it" can revise it even when Codex made it. */
+const lastPlans = new Map<string, string>()
+
+function startPlanBuild(projectId: string, plan: string): void {
+  const steps = parsePlanSteps(plan)
+  buildingPlans.set(projectId, { steps, state: steps.map(() => undefined) })
+}
+
+/** Records a step's progress; returns true if it moved forward (so it's worth showing). */
+function noteStep(projectId: string, step: number, status: 'doing' | 'done'): boolean {
+  const plan = buildingPlans.get(projectId)
+  if (!plan || step < 1 || step > plan.steps.length) return false
+  const was = plan.state[step - 1]
+  if (was === 'done' || was === status) return false
+  plan.state[step - 1] = status
+  return true
+}
+
+/** Codex makes the plan (read-only) when Claude is out; it's shown like Claude's, marked as Codex's. */
+async function runCodexPlan(
+  session: ReturnType<typeof getOrCreateSession>,
+  projectId: string,
+  projectPath: string,
+  text: string
+): Promise<void> {
+  const emit = (event: VibeEvent): void => void session.emit('event', event)
+  const abort = new AbortController()
+  takeovers.set(projectId, abort)
+  const toolUseId = `codex-plan-${Date.now()}`
+  try {
+    emit({ type: 'route', label: 'Planned by Codex', reason: 'Claude is out right now; nothing changes until you approve' })
+    emit({
+      type: 'tool_call',
+      toolUseId,
+      name: 'mcp__vibe_tools__run_codex_subtask',
+      input: { prompt: text },
+      friendlyLabel: 'Codex is planning (looking only, changing nothing)'
+    })
+    const previous = lastPlans.get(projectId)
+    let facts = ''
+    try {
+      facts = keyFactsBlock(memoryDb(), projectId)
+    } catch {
+      // memory unavailable: plan without it
+    }
+    const brief = briefBlock(projectId)
+    const prompt = [
+      PLAN_INSTRUCTIONS,
+      'You can read the project but must not change anything. Reply with the plan only, in Markdown.',
+      facts ? `Key facts about the project:\n${facts}` : '',
+      brief ? `Project brief:\n${brief}` : '',
+      previous ? `The previous plan (the user has asked for changes to it):\n${previous}` : '',
+      `The user's request:\n${text}`
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    const result = await runCodexExec(
+      {
+        prompt,
+        cwd: projectPath,
+        readOnly: true,
+        ephemeral: true,
+        model: getSettings().codexModel ?? undefined,
+        timeoutMs: 10 * 60_000,
+        signal: abort.signal
+      },
+      undefined,
+      (activity) => emit({ type: 'delegation_activity', activity })
+    )
+    recordUsage(projectId, 'takeover', 'codex', countsFromCodexEvents(result.events))
+    const plan = result.finalMessage.trim()
+    emit({ type: 'tool_result', toolUseId, ok: !!plan, summary: plan ? 'Plan ready.' : 'Codex returned no plan.', raw: null })
+    if (!plan) throw new Error('Codex returned no plan.')
+    lastPlans.set(projectId, plan)
+    emit({ type: 'plan_proposed', toolUseId: `${toolUseId}-plan`, plan, steps: parsePlanSteps(plan), by: 'codex' })
+  } catch (err) {
+    if (abort.signal.aborted) emit({ type: 'stopped' })
+    else emit({ type: 'error', message: `Codex couldn't make a plan: ${(err as Error).message}` })
+  } finally {
+    takeovers.delete(projectId)
+    emit({ type: 'turn_complete' })
+  }
+}
+
 /** Keeps an approved plan's steps in memory, so a compaction or a fresh session knows what was agreed. */
 function rememberApprovedPlan(projectId: string, plan: string): void {
   try {
@@ -1058,6 +1171,30 @@ function wireSessionEvents(
       getSender()?.send('vibe:chat:event', projectId, forwarded)
       if (forwarded.type === 'assistant_text') recordAssistantMessage(projectId, forwarded.text)
 
+      // Plans: remember the latest one, and while one is being built, keep its checklist
+      // moving from whichever signal arrives: the progress tool, Claude's own to-do list,
+      // or "STEP 2: done" lines (how Codex reports).
+      if (forwarded.type === 'plan_proposed') lastPlans.set(projectId, forwarded.plan)
+      const building = buildingPlans.get(projectId)
+      if (building) {
+        const updates: { step: number; status: 'doing' | 'done' }[] = []
+        if (forwarded.type === 'plan_progress') {
+          noteStep(projectId, forwarded.step, forwarded.status)
+        } else if (forwarded.type === 'tool_call' && forwarded.name === 'TodoWrite') {
+          const todos = (forwarded.input as { todos?: { content: string; status: string }[] } | undefined)?.todos ?? []
+          matchTodosToSteps(todos, building.steps).forEach((status, i) => status && updates.push({ step: i + 1, status }))
+        } else if (forwarded.type === 'delegation_activity' && forwarded.activity.step === 'say') {
+          updates.push(...progressMarkers(forwarded.activity.text))
+        } else if (forwarded.type === 'assistant_text') {
+          updates.push(...progressMarkers(forwarded.text))
+        } else if (forwarded.type === 'stopped' || forwarded.type === 'error') {
+          building.stopped = true
+        }
+        for (const u of updates) {
+          if (noteStep(projectId, u.step, u.status)) session.emit('event', { type: 'plan_progress', ...u } satisfies VibeEvent)
+        }
+      }
+
       // What happened this request, for the scribe.
       const record = turnRecords.get(projectId)
       if (record) {
@@ -1087,6 +1224,17 @@ function wireSessionEvents(
         const path = getProject(projectId)?.path
         const finished = turnRecords.get(projectId)
         turnRecords.delete(projectId)
+        // A plan's build is over: say honestly how many of its steps were reported.
+        const built = buildingPlans.get(projectId)
+        if (built) {
+          buildingPlans.delete(projectId)
+          session.emit('event', {
+            type: 'plan_finished',
+            total: built.steps.length,
+            tracked: built.state.filter((s) => s === 'done').length,
+            stopped: !!(built.stopped || finished?.stopped || finished?.hadError)
+          } satisfies VibeEvent)
+        }
         if (finished && getSettings().autoMemory && claudeHelpersAllowed()) {
           runScribe(projectId, finished)
             .catch((err: Error) => console.warn('Saving memory failed:', err.message))

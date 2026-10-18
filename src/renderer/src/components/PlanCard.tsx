@@ -6,6 +6,9 @@ interface PlanCardProps {
   steps: { text: string; who?: 'claude' | 'codex' }[]
   status: 'pending' | 'approved' | 'revised' | 'cancelled'
   progress: Record<number, 'doing' | 'done'>
+  /** Codex made it (Claude was out). */
+  by?: 'claude' | 'codex'
+  finished?: { total: number; tracked: number; stopped: boolean }
   busy: boolean
   onApprove: () => void
   onRevise: (feedback: string) => void
@@ -20,7 +23,7 @@ const STATUS_LABEL: Record<PlanCardProps['status'], string> = {
 }
 
 /** A plan Claude proposed in Plan mode: approve it to build, ask for changes, or cancel. */
-function PlanCard({ plan, steps, status, progress, busy, onApprove, onRevise, onCancel }: PlanCardProps) {
+function PlanCard({ plan, steps, status, progress, by, finished, busy, onApprove, onRevise, onCancel }: PlanCardProps) {
   const [changing, setChanging] = useState(false)
   const [feedback, setFeedback] = useState('')
   // The steps are listed above; the full text is there for anyone who wants it.
@@ -30,10 +33,18 @@ function PlanCard({ plan, steps, status, progress, busy, onApprove, onRevise, on
   return (
     <div className={`plan-card plan-card-${status}`}>
       <div className="plan-card-header">
-        <span>📋 Plan</span>
+        <span>📋 Plan{by === 'codex' ? ' · by Codex' : ''}</span>
         <span className="plan-card-status">
           {STATUS_LABEL[status]}
-          {status === 'approved' && steps.length > 0 ? ` · ${done} of ${steps.length} done` : ''}
+          {status === 'approved' && finished
+            ? finished.stopped
+              ? ' · stopped before the end'
+              : finished.tracked < finished.total
+                ? ` · finished (${finished.total - finished.tracked} of ${finished.total} steps weren't reported step by step)`
+                : ' · finished'
+            : status === 'approved' && steps.length > 0
+              ? ` · ${done} of ${steps.length} done`
+              : ''}
         </span>
       </div>
 

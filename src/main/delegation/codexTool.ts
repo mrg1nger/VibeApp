@@ -1,5 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
+import { app } from 'electron'
 import { existsSync } from 'fs'
+import { join } from 'path'
 import * as z from 'zod/v4'
 import { runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
 import { getSettings } from '../settings/store'
@@ -104,6 +106,10 @@ export function createCodexDelegationServer(
           status: z.enum(['doing', 'done'])
         },
         async (args) => {
+          // The end-to-end test switches the tool off to check VibeApp's backups (to-do list, honest finish).
+          if (process.env.VIBEAPP_TEST_HOOKS === '1' && existsSync(join(app.getPath('userData'), 'test-no-plan-progress'))) {
+            return { content: [{ type: 'text' as const, text: 'Progress reporting is not available right now; carry on.' }] }
+          }
           onPlanProgress?.(args.step, args.status)
           return { content: [{ type: 'text' as const, text: `Step ${args.step}: ${args.status}.` }] }
         }

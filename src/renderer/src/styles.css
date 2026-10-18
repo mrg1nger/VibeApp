@@ -3068,3 +3068,21 @@ textarea {
   color: inherit;
   margin-bottom: 8px;
 }
+
+.plan-suggestion {
+  border: 1px dashed var(--accent, #4f8cff);
+  border-radius: calc(var(--radius, 8px) + 2px);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-suggestion p {
+  margin: 0;
+}
+
+.plan-suggestion-text {
+  color: var(--text-muted);
+  font-size: 13px;
+}
