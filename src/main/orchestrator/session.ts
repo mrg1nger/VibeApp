@@ -17,6 +17,7 @@ import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { installExtensionForAgent } from '../extensions/install'
 import { buildSubagents } from './subagents'
 import { staysInProject } from './commandScope'
+import { PLAN_INSTRUCTIONS } from '@shared/plan'
 import { briefBlock } from '../memory/brief'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
@@ -146,6 +147,8 @@ export class ClaudeSession extends EventEmitter {
   private limitResetsAt: number | undefined
   /** The limit has been reported for the current request. */
   private limitReported = false
+  /** Plan mode is on for the next request. */
+  private planning = false
   /** Set while a /compact turn runs; resolved when it ends. */
   private compaction: { resolve: (result: CompactResult | null) => void; result: CompactResult | null } | undefined
   /** Runs before Claude Code compacts on its own (near its limit), so what only the conversation knew is saved first. */
@@ -262,6 +265,10 @@ export class ClaudeSession extends EventEmitter {
         const event: VibeEvent = { type: 'delegation_activity', activity }
         this.emit('event', event)
       },
+      (step, status) => {
+        const event: VibeEvent = { type: 'plan_progress', step, status }
+        this.emit('event', event)
+      },
       async (req) => {
         const result = await installExtensionForAgent(req, this.projectPath, ({ reason, input }) =>
           this.requestConfirmation('install_extension', input, reason)
@@ -365,12 +372,13 @@ export class ClaudeSession extends EventEmitter {
         // turn done (and reviewed a half-finished change).
         env: { ...process.env, ...agentSecretEnv(this.projectId), CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
         agents: buildSubagents(this.projectPath),
-        permissionMode: goNutz ? 'bypassPermissions' : 'acceptEdits',
+        permissionMode: this.planning ? 'plan' : goNutz ? 'bypassPermissions' : 'acceptEdits',
         // Always set so setPermissionMode('bypassPermissions') can be used
         // later to enter Go Nutz mode without recreating the session -- this
         // flag only takes effect once that mode is actually switched to.
         allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
+        planModeInstructions: PLAN_INSTRUCTIONS,
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
@@ -383,6 +391,15 @@ ${extensionInstructions(extensions)}` : ''}`
         // like .mcp.json, paths outside the project). With no handler those
         // requests were silently denied.
         canUseTool: async (toolName, input, options) => {
+          // Plan mode: the plan is now on the user's screen as a card to approve, change or cancel
+          // (see eventSchema). Letting the tool through would start building without that approval.
+          if (toolName === 'ExitPlanMode') {
+            return {
+              behavior: 'deny',
+              message:
+                "VibeApp is showing this plan to the user to approve, change or cancel. End your turn now with one short line (for example \"Here's the plan.\") and do nothing else until they reply."
+            }
+          }
           // Claude asking the user something comes through here too. The
           // answers go back to it inside the tool's input.
           if (toolName === 'AskUserQuestion') {
@@ -527,7 +544,14 @@ ${extensionInstructions(extensions)}` : ''}`
 
   async setGoNutzMode(enabled: boolean): Promise<void> {
     this.goNutz = enabled
-    await this.queryHandle.setPermissionMode(enabled ? 'bypassPermissions' : 'acceptEdits')
+    if (!this.planning) await this.queryHandle.setPermissionMode(enabled ? 'bypassPermissions' : 'acceptEdits')
+  }
+
+  /** Plan mode: Claude may only look around and propose a plan. Off again for building (or Go Nutz). */
+  async setPlanning(on: boolean): Promise<void> {
+    if (this.dead || this.disposed || on === this.planning) return
+    this.planning = on
+    await this.queryHandle.setPermissionMode(on ? 'plan' : this.goNutz ? 'bypassPermissions' : 'acceptEdits')
   }
 
   private async consume(): Promise<void> {

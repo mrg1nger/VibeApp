@@ -158,6 +158,15 @@ function describe(result) {
       case 'route':
         lines.push(`(${event.label}: ${event.reason})`)
         break
+      case 'plan_proposed':
+        lines.push(`PLAN PROPOSED (plan id ${event.toolUseId}):
+${event.plan}
+
+To build it call approve_plan; to change it call send_message with mode "plan" and what should change.`)
+        break
+      case 'plan_progress':
+        lines.push(`(Step ${event.step}: ${event.status})`)
+        break
       case 'review_result':
         lines.push(`(Codex review: ${event.summary})`)
         break
@@ -225,11 +234,11 @@ server.registerTool(
   'send_message',
   {
     description:
-      "Send a message to a project's chat in VibeApp, as if typed there, and wait for the reply. VibeApp's Claude (working with Codex) does the work in that project; the desktop window shows it live. mode: 'build' (make changes), 'ask' (answer only, change nothing) or 'auto' (VibeApp decides; plain questions are answered as Ask).",
+      "Send a message to a project's chat in VibeApp, as if typed there, and wait for the reply. VibeApp's Claude (working with Codex) does the work in that project; the desktop window shows it live. mode: 'build' (make changes), 'plan' (Claude proposes a plan and changes nothing; then call approve_plan to build it), 'ask' (answer only, change nothing) or 'auto' (VibeApp decides; plain questions are answered as Ask).",
     inputSchema: {
       project: z.string().describe('Project name or id'),
       message: z.string(),
-      mode: z.enum(['auto', 'build', 'ask']).optional(),
+      mode: z.enum(['auto', 'build', 'plan', 'ask']).optional(),
       timeout_seconds: z.number().optional().describe('How long to wait for the reply (default 600).')
     }
   },
@@ -238,6 +247,7 @@ server.registerTool(
     await ensureStream()
     buffers.set(p.id, [])
     if (mode === 'ask') await invoke('vibe:chat:ask', p.id, p.path, message)
+    else if (mode === 'plan') await invoke('vibe:chat:send', p.id, p.path, message, undefined, undefined, true, { mode: 'plan' })
     else await invoke('vibe:chat:send', p.id, p.path, message, undefined, undefined, mode === 'build')
     return text(describe(await collect(p.id, timeout_seconds * 1000)))
   })
@@ -252,6 +262,26 @@ server.registerTool(
   guard(async ({ project, timeout_seconds = 600 }) => {
     const p = await findProject(project)
     await ensureStream()
+    return text(describe(await collect(p.id, timeout_seconds * 1000)))
+  })
+)
+
+server.registerTool(
+  'approve_plan',
+  {
+    description: "Approve the plan VibeApp's Claude proposed for a project (after send_message with mode 'plan'), so it gets built, and wait for the result.",
+    inputSchema: { project: z.string(), timeout_seconds: z.number().optional() }
+  },
+  guard(async ({ project, timeout_seconds = 600 }) => {
+    const p = await findProject(project)
+    const entries = await invoke('vibe:chat:loadTranscript', p.id)
+    const decided = new Set(entries.filter((e) => e.event?.type === 'plan_decided').map((e) => e.event.toolUseId))
+    const pending = entries.filter((e) => e.event?.type === 'plan_proposed' && !decided.has(e.event.toolUseId)).at(-1)?.event
+    if (!pending) return text('There is no plan waiting for approval in that project.')
+    await ensureStream()
+    buffers.set(p.id, [])
+    await invoke('vibe:chat:planDecided', p.id, pending.toolUseId, 'approved')
+    await invoke('vibe:chat:send', p.id, p.path, 'Approved the plan. Go ahead and build it.', undefined, undefined, true, { approvedPlan: pending.plan })
     return text(describe(await collect(p.id, timeout_seconds * 1000)))
   })
 )

@@ -77,6 +77,8 @@ export function createCodexDelegationServer(
   codexThread?: { get: () => CodexThread | undefined; set: (thread: CodexThread | undefined) => void },
   /** Each step Codex takes, for the live feed in the chat. */
   onActivity?: (activity: DelegationActivity) => void,
+  /** Building an approved plan: Claude reports each step starting and finishing. */
+  onPlanProgress?: (step: number, status: 'doing' | 'done') => void,
   /** Registers an MCP server the agent built as an extension (asks the user first). */
   installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>
 ): ReturnType<typeof createSdkMcpServer> {
@@ -94,6 +96,18 @@ export function createCodexDelegationServer(
     name: 'vibe_tools',
     version: '1.0.0',
     tools: [
+      tool(
+        'plan_progress',
+        'While building a plan the user approved: report that a step (by its number in the plan) has started ("doing") or is finished ("done"). The user sees the plan as a checklist that ticks off as you go.',
+        {
+          step: z.number().int().min(1).describe('The step number in the approved plan.'),
+          status: z.enum(['doing', 'done'])
+        },
+        async (args) => {
+          onPlanProgress?.(args.step, args.status)
+          return { content: [{ type: 'text' as const, text: `Step ${args.step}: ${args.status}.` }] }
+        }
+      ),
       tool(
         'install_extension',
         "Install an MCP server (a set of tools) for the user, available to you and to Codex in every project, switchable in VibeApp's Extensions screen. Use it after you have built an MCP server in the project, or when the user asks to add one. The user is asked to confirm and the server is started once to check it works. Put the server's code in a project folder and pass it as sourceDir: the folder is copied into VibeApp's data so it outlives the project, and \"{{dir}}\" in args becomes that copy's path (for example command \"node\", args [\"{{dir}}/index.js\"]). If it needs API keys, list their names in keys and read them from environment variables; never ask the user to paste a key into the chat.",

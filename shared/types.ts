@@ -78,6 +78,12 @@ export type VibeEvent =
   | { type: 'usage'; steps: number; fresh: number; cached: number; output: number; model?: string }
   /** The conversation was moved into a fresh Claude session to keep it fast. */
   /** The conversation is being compacted (shrunk in place) to keep it fast. */
+  /** Plan mode: Claude proposed a plan, waiting for the user to approve, change or cancel it. */
+  | { type: 'plan_proposed'; toolUseId: string; plan: string; steps: { text: string; who?: 'claude' | 'codex' }[] }
+  /** What the user decided about a proposed plan (kept so the chat shows it after reopening). */
+  | { type: 'plan_decided'; toolUseId: string; decision: 'approved' | 'revised' | 'cancelled' }
+  /** Building an approved plan: a step started or finished. */
+  | { type: 'plan_progress'; step: number; status: 'doing' | 'done' }
   | { type: 'compacting' }
   | { type: 'session_compacted'; before: number; after: number; trigger: 'manual' | 'auto'; durationMs?: number }
   | { type: 'session_rotated'; contextTokens: number; /** What was carried into the new session. */ summary?: string }

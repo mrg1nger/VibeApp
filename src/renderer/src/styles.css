@@ -2956,3 +2956,115 @@ textarea {
     flex: 1 1 100%;
   }
 }
+
+.plan-card {
+  border: 1px solid var(--accent, #4f8cff);
+  border-radius: calc(var(--radius, 8px) + 2px);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.plan-card-cancelled,
+.plan-card-revised {
+  border-color: var(--border);
+  opacity: 0.75;
+}
+
+.plan-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+
+.plan-card-status {
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-step {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.plan-step-mark {
+  flex: none;
+  width: 1.2em;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.plan-step-done .plan-step-mark {
+  color: var(--success-text, #3ecf7a);
+}
+
+.plan-step-done .plan-step-text {
+  color: var(--text-muted);
+}
+
+.plan-step-doing .plan-step-mark {
+  color: var(--accent, #4f8cff);
+}
+
+.plan-who {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+}
+
+.plan-who-codex {
+  color: var(--delegation-text, #b48cff);
+  border-color: currentColor;
+}
+
+.plan-who-claude {
+  color: var(--accent, #4f8cff);
+  border-color: currentColor;
+}
+
+.plan-full summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plan-actions .plan-approve {
+  background: var(--accent, #4f8cff);
+  color: var(--accent-text, #fff);
+  border-color: transparent;
+}
+
+.plan-change textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  padding: 8px;
+  border-radius: var(--radius, 8px);
+  border: 1px solid var(--border);
+  background: var(--bg, transparent);
+  color: inherit;
+  margin-bottom: 8px;
+}

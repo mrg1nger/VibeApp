@@ -352,6 +352,58 @@ try {
     await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat again', 10_000)
   })
 
+  // -- plan mode --
+
+  const planCards = () => evaluate(`[...document.querySelectorAll('.plan-card')].map((c) => ({ status: c.className, text: c.innerText }))`)
+
+  await step('Plan mode proposes a plan and changes nothing', async () => {
+    await click('Plan', '.chat-mode-switch button')
+    await send('Add a function buyPrice(item) to shop.js that returns the item\'s price plus 10%, rounded up, and export it alongside the prices.')
+    await waitFor(`!!document.querySelector('.plan-card-pending')`, 'a proposed plan', 300_000)
+    await idle(120_000)
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed before the plan was approved')
+    const steps = await evaluate(`document.querySelectorAll('.plan-card-pending .plan-step').length`)
+    console.log(`  (plan with ${steps} steps)`)
+    if (steps < 1) throw new Error('the plan has no steps')
+  })
+
+  await step('"Change it" sends feedback and Claude revises the plan', async () => {
+    await click('Change it', '.plan-card-pending button')
+    await waitFor(`!!document.querySelector('.plan-change textarea')`, 'the feedback box', 5000)
+    await fill('.plan-change textarea', 'Also add a one-line comment above the function saying what it does.')
+    await click('Revise the plan', '.plan-change button')
+    await waitFor(`document.querySelectorAll('.plan-card').length >= 2 && !!document.querySelector('.plan-card-pending')`, 'the revised plan', 300_000)
+    await idle(120_000)
+    const cards = await planCards()
+    if (!/plan-card-revised/.test(cards[0].status)) throw new Error('the first plan is not marked as revised')
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed before approval')
+  })
+
+  await step('"Approve and build" builds the plan and ticks its steps off', async () => {
+    await click('Approve and build', '.plan-card-pending button')
+    await waitFor(`!!document.querySelector('.chat-stop')`, 'building to start', 15_000)
+    await idle(600_000)
+    const shop = readFileSync(join(project, 'shop.js'), 'utf-8')
+    if (!/buyPrice/.test(shop)) throw new Error('buyPrice was not added')
+    const card = await evaluate(`(() => { const c = [...document.querySelectorAll('.plan-card-approved')].at(-1); return c ? { done: c.querySelectorAll('.plan-step-done').length, steps: c.querySelectorAll('.plan-step').length } : null })()`)
+    if (!card) throw new Error('no approved plan card')
+    console.log(`  (${card.done} of ${card.steps} steps ticked off)`)
+    if (card.done < 1) throw new Error('no steps were ticked off while building')
+  })
+
+  await step('a cancelled plan changes nothing', async () => {
+    const before = readFileSync(join(project, 'shop.js'), 'utf-8')
+    await send('Rename the potion to elixir everywhere in shop.js.')
+    await waitFor(`!!document.querySelector('.plan-card-pending')`, 'a proposed plan', 300_000)
+    await idle(120_000)
+    await click('Cancel', '.plan-card-pending button')
+    await waitFor(`!document.querySelector('.plan-card-pending') && [...document.querySelectorAll('.plan-card-cancelled')].length > 0`, 'the plan to show as cancelled', 10_000)
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== before) throw new Error('shop.js changed')
+    await click('Build', '.chat-mode-switch button')
+    // Back to how the rest of the test expects the file.
+    writeFileSync(join(project, 'shop.js'), originalShop)
+  })
+
   // -- asking --
 
   await step('Ask mode answers without changing anything', async () => {

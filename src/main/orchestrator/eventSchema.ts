@@ -1,5 +1,6 @@
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { VibeEvent } from '@shared/types'
+import { parsePlanSteps } from '@shared/plan'
 
 interface ContentBlockLike {
   type: string
@@ -98,6 +99,10 @@ export function mapSdkMessage(message: SDKMessage): VibeEvent[] {
       for (const block of blocks) {
         if (block.type === 'text' && block.text) {
           events.push({ type: 'assistant_text', text: block.text, partial: false })
+        } else if (block.type === 'tool_use' && block.name === 'ExitPlanMode' && block.id && !parent) {
+          // Plan mode: the plan itself, for the user to approve.
+          const plan = String((block.input as { plan?: string })?.plan ?? '').trim()
+          events.push({ type: 'plan_proposed', toolUseId: block.id, plan, steps: parsePlanSteps(plan) })
         } else if (block.type === 'tool_use' && block.name && block.id) {
           events.push({
             type: 'tool_call',

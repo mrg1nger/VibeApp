@@ -23,6 +23,7 @@ import CodexFeed from '../components/CodexFeed'
 import Markdown from '../components/Markdown'
 import { detectSecrets, type DetectedSecret } from '@shared/secretPatterns'
 import { usePhone } from '../lib/usePhone'
+import PlanCard from '../components/PlanCard'
 
 interface ChatViewProps {
   project: ProjectRecord
@@ -54,6 +55,15 @@ type ChatItem =
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
+  | {
+      kind: 'plan'
+      toolUseId: string
+      plan: string
+      steps: { text: string; who?: 'claude' | 'codex' }[]
+      status: 'pending' | 'approved' | 'revised' | 'cancelled'
+      /** While it's being built: each step's progress (by step number). */
+      progress: Record<number, 'doing' | 'done'>
+    }
   | { kind: 'older'; hidden: number }
   | { kind: 'offer'; text: string; resetsAt: number | null; used?: boolean }
   | {
@@ -67,6 +77,7 @@ type ChatItem =
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
 const ASK_PREF_KEY = 'vibeapp.askMode'
+const MODE_PREF_KEY = 'vibeapp.chatMode'
 /** A Build chat this big (tokens) gets a note about what each message costs. */
 const CONTEXT_NOTE_TOKENS = 60_000
 /** How many of the most recent requests are shown when a chat is opened. */
@@ -117,11 +128,15 @@ function formatClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
 
-function readAskPref(): boolean {
+type ChatMode = 'build' | 'plan' | 'ask'
+
+function readModePref(): ChatMode {
   try {
-    return localStorage.getItem(ASK_PREF_KEY) === 'true'
+    const saved = localStorage.getItem(MODE_PREF_KEY)
+    if (saved === 'build' || saved === 'plan' || saved === 'ask') return saved
+    return localStorage.getItem(ASK_PREF_KEY) === 'true' ? 'ask' : 'build'
   } catch {
-    return false
+    return 'build'
   }
 }
 
@@ -148,7 +163,17 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const phone = usePhone()
   const [phonePane, setPhonePane] = useState<'chat' | 'preview'>('chat')
   // Ask: answer a question without changing anything. Build: the normal coding flow.
-  const [askMode, setAskMode] = useState(readAskPref)
+  // Build: work on the project. Plan: propose a plan to approve first. Ask: answer, change nothing.
+  const [mode, setModeState] = useState<ChatMode>(readModePref)
+  const askMode = mode === 'ask'
+  const setMode = useCallback((next: ChatMode) => {
+    setModeState(next)
+    try {
+      localStorage.setItem(MODE_PREF_KEY, next)
+    } catch {
+      // a remembered preference only
+    }
+  }, [])
   // How big this project's Claude conversation is now (tokens re-read on every Build step).
   const [contextTokens, setContextTokens] = useState(0)
   // Opening a chat shows its recent requests; this loads the whole log.
@@ -217,6 +242,13 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           case 'assistant_text':
             return [...prev, { kind: 'assistant_text', text: event.text }]
           case 'tool_call':
+            // Plan bookkeeping isn't work on the project: the plan card shows it.
+            if (
+              event.name === 'mcp__vibe_tools__plan_progress' ||
+              (event.name === 'Write' && /[\\/]\.claude[\\/]plans[\\/]/.test(String((event.input as { file_path?: string })?.file_path ?? '')))
+            ) {
+              return prev
+            }
             if (event.parentToolUseId) {
               // A helper agent's step: shown inside the card that started it.
               return prev.map((item) =>
@@ -329,6 +361,19 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                 ].join(' · ')
               }
             ]
+          case 'plan_proposed':
+            return [...prev, { kind: 'plan', toolUseId: event.toolUseId, plan: event.plan, steps: event.steps, status: 'pending', progress: {} }]
+          case 'plan_decided':
+            return prev.map((item) =>
+              item.kind === 'plan' && item.toolUseId === event.toolUseId ? { ...item, status: event.decision } : item
+            )
+          case 'plan_progress': {
+            const at = prev.findLastIndex((item) => item.kind === 'plan' && item.status === 'approved')
+            if (at === -1) return prev
+            return prev.map((item, i) =>
+              i === at && item.kind === 'plan' ? { ...item, progress: { ...item.progress, [event.step]: event.status } } : item
+            )
+          }
           case 'compacting':
             return [
               ...prev,
@@ -471,7 +516,15 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   }, [items])
 
   const sendMessage = useCallback(
-    async (text: string, element?: PickedElement, images: PendingImage[] = [], forceBuild = false) => {
+    async (
+      text: string,
+      element?: PickedElement,
+      images: PendingImage[] = [],
+      forceBuild = false,
+      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
+    ) => {
+      // Plan mode (unless this is an answer to a plan, which says what it is itself).
+      const sendExtra = extra ?? (mode === 'plan' && !forceBuild ? { mode: 'plan' as const } : undefined)
       const index = { value: -1 }
       setItems((prev) => {
         index.value = prev.length
@@ -487,7 +540,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       })
       setBusy(true)
       setProblem(null)
-      if (askMode && !forceBuild && !element && images.length === 0) {
+      if (askMode && !forceBuild && !extra && !element && images.length === 0) {
         try {
           await window.vibe.chat.ask(project.id, project.path, text)
         } catch (err) {
@@ -503,7 +556,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           text,
           element,
           images.map(toAttachment),
-          forceBuild
+          forceBuild || !!sendExtra,
+          sendExtra
         )
         // Swap the full-size local previews for the small saved thumbnails.
         setItems((prev) =>
@@ -518,7 +572,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         onError(`Failed to send message: ${(err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')}`)
       }
     },
-    [project, onError, askMode]
+    [project, onError, askMode, mode]
   )
 
   // Moves this chat into a new Claude session seeded with a summary, so it stops re-reading everything.
@@ -841,6 +895,24 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   />
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}
+                {item.kind === 'plan' && (
+                  <PlanCard
+                    plan={item.plan}
+                    steps={item.steps}
+                    status={item.status}
+                    progress={item.progress}
+                    busy={busy}
+                    onApprove={() => {
+                      void window.vibe.chat.planDecided(project.id, item.toolUseId, 'approved')
+                      sendMessage('✅ Approved the plan. Go ahead and build it.', undefined, [], true, { approvedPlan: item.plan })
+                    }}
+                    onRevise={(feedback) => {
+                      void window.vibe.chat.planDecided(project.id, item.toolUseId, 'revised')
+                      sendMessage(`Change the plan: ${feedback}`, undefined, [], true, { mode: 'plan' })
+                    }}
+                    onCancel={() => void window.vibe.chat.planDecided(project.id, item.toolUseId, 'cancelled')}
+                  />
+                )}
                 {item.kind === 'older' && (
                   <button className="chat-inline-action" disabled={busy} onClick={() => setShowAllHistory(true)}>
                     Show {item.hidden} earlier request{item.hidden === 1 ? '' : 's'}
@@ -1057,7 +1129,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               <button className="chat-inline-action" disabled={rotating} onClick={handleCompact}>
                 {rotating ? 'Working…' : 'Compact now'}
               </button>
-              <button className="chat-inline-action" onClick={() => setAskMode(true)}>
+              <button className="chat-inline-action" onClick={() => setMode('ask')}>
                 Switch to Ask
               </button>
               <button className="chat-inline-action" disabled={rotating} onClick={handleFreshSession}>
@@ -1068,24 +1140,26 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
 
           <div className="chat-mode-switch" role="group" aria-label="Message type">
             <button
-              className={!askMode ? 'active' : ''}
+              className={mode === 'build' ? 'active' : ''}
               disabled={busy}
               title="Build: Claude and Codex work on your project"
-              onClick={() => {
-                setAskMode(false)
-                try { localStorage.setItem(ASK_PREF_KEY, 'false') } catch { /* a remembered preference only */ }
-              }}
+              onClick={() => setMode('build')}
             >
               🔨 Build
             </button>
             <button
-              className={askMode ? 'active' : ''}
+              className={mode === 'plan' ? 'active' : ''}
+              disabled={busy}
+              title="Plan: Claude looks around and proposes a plan; nothing changes until you approve it"
+              onClick={() => setMode('plan')}
+            >
+              📋 Plan
+            </button>
+            <button
+              className={mode === 'ask' ? 'active' : ''}
               disabled={busy}
               title="Ask: get an answer about your project without changing any files"
-              onClick={() => {
-                setAskMode(true)
-                try { localStorage.setItem(ASK_PREF_KEY, 'true') } catch { /* a remembered preference only */ }
-              }}
+              onClick={() => setMode('ask')}
             >
               💬 Ask
             </button>
@@ -1135,6 +1209,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               placeholder={
                 askMode
                   ? 'Ask a question about your project…'
+                  : mode === 'plan'
+                  ? 'What do you want to build? Claude will plan it first…'
                   : picked
                   ? 'What should change about this?'
                   : pendingImages.length

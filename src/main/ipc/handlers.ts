@@ -90,6 +90,7 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
+import { approvedPlanNote, parsePlanSteps } from '@shared/plan'
 import { isPlainQuestion } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
 import { runTalk, stopTalk, getTalk } from '../chat/talk'
@@ -242,12 +243,17 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       text: string,
       picked?: PickedElement,
       images?: ImageAttachment[],
-      forceBuild?: boolean
+      forceBuild?: boolean,
+      /** Plan mode (propose a plan, change nothing), or building a plan the user approved. */
+      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
     ) => {
+      const planning = extra?.mode === 'plan'
       // A plain question doesn't need the full coding session (and its whole
       // conversation re-read on every step): answer it the cheap way.
       if (
         !forceBuild &&
+        !planning &&
+        !extra?.approvedPlan &&
         !picked &&
         !images?.length &&
         getSettings().autoAsk &&
@@ -274,6 +280,14 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // rejected; Codex takes the request (or the user is asked).
       const blockedUntil = claudeBlockedUntil()
       const takeoverMode = getSettings().limitTakeover
+      if (planning && blockedUntil !== null) {
+        // Planning needs Claude; Codex taking over would build without the approval step.
+        appendUserMessage(projectId, text)
+        const say = (event: VibeEvent): void => void session.emit('event', event)
+        say({ type: 'error', message: `Claude is out until ${new Date(blockedUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}, and Plan mode needs Claude. Switch to Build to let Codex do it now, or plan once Claude is back.` })
+        say({ type: 'turn_complete' })
+        return { snapshot: undefined, thumbnails: [] as string[] }
+      }
       if (blockedUntil !== null && takeoverMode !== 'off' && !process.env.VIBEAPP_SKIP_PREEMPTIVE) {
         const snapshot = await takeSnapshot(projectPath, text).catch(() => undefined)
         const thumbnails = prepared.map((p) => p.thumbnail)
@@ -346,7 +360,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       }
 
       // Quick edits skip the Codex review: it would take longer than the edit.
-      beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.skipReview })
+      // Planning changes nothing, so there's nothing to review.
+      beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.skipReview || planning })
       const thumbnails = prepared.map((p) => p.thumbnail)
       appendUserMessage(projectId, text, {
         snapshot,
@@ -386,6 +401,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         takeCatchUpNote(projectId),
         takeUndoNote(projectId),
         route.note,
+        planning
+          ? '[VibeApp note: Plan mode. Explore and propose a plan for the user to approve; change nothing yet.]'
+          : undefined,
+        extra?.approvedPlan ? approvedPlanNote(extra.approvedPlan) : undefined,
         relevant,
         picked ? pickedNote(picked) : undefined,
         prepared.length ? imagesNote(prepared) : undefined,
@@ -393,6 +412,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       ]
         .filter(Boolean)
         .join('\n\n')
+      try {
+        await session.setPlanning(planning)
+      } catch (err) {
+        console.warn('Switching plan mode failed:', (err as Error).message)
+      }
+      if (extra?.approvedPlan) rememberApprovedPlan(projectId, extra.approvedPlan)
       session.send(
         message,
         prepared.map((p) => p.block)
@@ -423,6 +448,15 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
 
   // Stop: while Codex is reviewing, Claude is already done, so just skip the
   // review; otherwise interrupt Claude (and any Codex hand-off it's waiting on).
+  // The user approved, asked to change, or cancelled a proposed plan: keep that in the chat (for
+  // every screen, and for when it's reopened), and leave plan mode when it's cancelled.
+  ipc.handle('vibe:chat:planDecided', async (_event, projectId: string, toolUseId: string, decision: 'approved' | 'revised' | 'cancelled') => {
+    const event: VibeEvent = { type: 'plan_decided', toolUseId, decision }
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+    if (decision === 'cancelled') await getSession(projectId)?.setPlanning(false)
+  })
+
   // The user chose "Compact now".
   ipc.handle('vibe:chat:compactNow', async (_event, projectId: string, projectPath: string) => {
     if (asks.has(projectId) || takeovers.has(projectId)) {
@@ -767,6 +801,19 @@ function listDirs(dir?: string): { path: string; parent: string | null; dirs: { 
 function rotateThreshold(): number {
   // The override is for testing; Claude Code's own prompt is ~40k of this.
   return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
+}
+
+/** Keeps an approved plan's steps in memory, so a compaction or a fresh session knows what was agreed. */
+function rememberApprovedPlan(projectId: string, plan: string): void {
+  try {
+    const steps = parsePlanSteps(plan)
+    const summary = steps.length
+      ? steps.map((s, i) => `${i + 1}. ${s.who ? `(${s.who}) ` : ''}${s.text}`).join(' ')
+      : plan.replace(/s+/g, ' ')
+    rememberFact(memoryDb(), projectId, `Plan the user approved: ${summary}`.slice(0, 950), 'user', { category: 'decision' })
+  } catch (err) {
+    console.warn('Saving the approved plan failed:', (err as Error).message)
+  }
 }
 
 /** Undo/Redo presses since Claude last heard from the user, told to it with the next message. */

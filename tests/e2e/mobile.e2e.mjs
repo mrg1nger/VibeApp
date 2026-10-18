@@ -182,6 +182,16 @@ try {
     await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
     await waitFor(browser, `document.querySelectorAll('.chat-item-assistant_text').length > 0 && !document.querySelector('.chat-stop')`, 'the answer', 180_000)
   })
+  await screen('05b-plan-card', async () => {
+    await click('Plan', '.chat-mode-switch button')
+    await browser.evaluate(`document.querySelector('textarea.chat-input').focus()`)
+    await browser.send('Input.insertText', { text: 'Add a function sellPrice(item) to shop.js that returns half the price, rounded down.' })
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
+    await waitFor(browser, `!!document.querySelector('.plan-card-pending') && !document.querySelector('.chat-stop')`, 'a proposed plan', 300_000)
+    await browser.evaluate(`document.querySelector('.plan-card-pending').scrollIntoView({ block: 'end' })`)
+  })
+  await click('Cancel', '.plan-card-pending button')
+  await click('Ask', '.chat-mode-switch button')
   await screen('06-preview', async () => {
     const tab = await browser.evaluate(`[...document.querySelectorAll('button')].some((b) => b.offsetParent && /^(👁 )?Preview$/.test(b.textContent.trim()) && b.closest('.mobile-pane-switch'))`)
     if (tab) await click('Preview', '.mobile-pane-switch button')

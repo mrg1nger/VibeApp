@@ -146,9 +146,12 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         text: string,
         picked?: PickedElement,
         images?: ImageAttachment[],
-        forceBuild?: boolean
+        forceBuild?: boolean,
+        extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
       ): Promise<{ snapshot?: string; thumbnails: string[] }> =>
-        ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images, forceBuild),
+        ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images, forceBuild, extra),
+      planDecided: (projectId: string, toolUseId: string, decision: 'approved' | 'revised' | 'cancelled'): Promise<void> =>
+        ipcRenderer.invoke('vibe:chat:planDecided', projectId, toolUseId, decision),
       undo: (
         projectPath: string,
         snapshot: string,
