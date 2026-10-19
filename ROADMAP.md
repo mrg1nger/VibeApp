@@ -10,11 +10,9 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Bigger features
 
-- [ ] **Bake-off mode** (#4). Claude and Codex each build the same request in their own copy of the project; you compare the two previews and keep the one you like.
 - [ ] **Cline as a third agent (ClinePass).** Add the Cline CLI alongside Claude and Codex, signed in with a ClinePass subscription ($9.99/month flat, open-weight models such as Qwen, GLM, Kimi and DeepSeek, its own 5-hour/weekly/monthly limits, separate from the Claude and Codex plans). What it would add:
   - a cheap place for straightforward implementation work Claude would otherwise spend its own plan on;
   - a more independent second reviewer (a different model family from Claude and Codex);
-  - a third contestant for bake-off mode;
   - a fallback when Claude's limit is reached (order: Claude, then Codex, then Cline).
 
   Start with a trial before building anything (needs `npm i -g cline` and the user's own ClinePass sign-in): run it on real tasks with `--json`, and check three unknowns:
@@ -52,6 +50,7 @@ From the OpenClaw comparison. Worth revisiting only if VibeApp grows beyond codi
 Dropped:
 
 - Voice input (the other half of #10). Not needed.
+- Bake-off mode (#4), for now: Claude and Codex each build the same request in their own copy of the project, and you compare the two previews and keep the one you like.
 
 ## Done
 
