@@ -215,6 +215,7 @@ export function createCodexDelegationServer(
                   timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
                   unsandboxed,
                   model: getSettings().codexModel ?? undefined,
+                  effort: getSettings().codexEffort ?? undefined,
                   images,
                   resumeThreadId,
                   // Read fresh at hand-off time: Claude may have just saved some.

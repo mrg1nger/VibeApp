@@ -398,6 +398,8 @@ export interface AppSettings {
   claudeModel: string | null
   /** null = whatever ~/.codex/config.toml defaults to. */
   codexModel: string | null
+  /** How hard Codex thinks (low … max); null = whatever ~/.codex/config.toml defaults to. */
+  codexEffort: string | null
   themeId: string
   /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
   smartRouting: boolean
@@ -430,4 +432,17 @@ export interface ModelOption {
   value: string
   displayName: string
   description: string
+}
+
+export interface CodexModelOption extends ModelOption {
+  /** The thinking efforts this model supports (e.g. low, medium, high). */
+  efforts: { value: string; description: string }[]
+  defaultEffort?: string
+}
+
+export interface CodexModelList {
+  models: CodexModelOption[]
+  /** What the user's own Codex config uses when VibeApp doesn't say. */
+  defaultModel?: string
+  defaultEffort?: string
 }

@@ -152,6 +152,7 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
           timeoutMs: TIMEOUT_MS,
           unsandboxed: req.unsandboxed,
           model: getSettings().codexModel ?? undefined,
+          effort: getSettings().codexEffort ?? undefined,
           images: req.images.filter((p) => existsSync(p)),
           resumeThreadId,
           memory,

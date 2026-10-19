@@ -106,6 +106,7 @@ export interface AskCodexOptions {
   prompt: string
   cwd?: string
   model?: string
+  effort?: string
   abort: AbortController
 }
 
@@ -116,6 +117,7 @@ export async function askCodex(opts: AskCodexOptions): Promise<AskResult> {
     readOnly: true,
     ephemeral: true,
     model: opts.model,
+    effort: opts.effort,
     timeoutMs: 5 * 60_000,
     signal: opts.abort.signal
   })

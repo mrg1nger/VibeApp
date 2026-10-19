@@ -15,6 +15,7 @@ const DEFAULTS: AppSettings = {
   planBigRequests: 'ask',
   claudeModel: null,
   codexModel: null,
+  codexEffort: null,
   themeId: 'midnight',
   smartRouting: true,
   aiRouting: true,

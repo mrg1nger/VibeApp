@@ -85,6 +85,7 @@ import { syncAgentsFile } from '../memory/agentsFile'
 import { keyFactsBlock, usageSummary } from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
+import { listCodexModels } from '../cli/codexModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
 import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
@@ -685,6 +686,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   ipc.handle('vibe:models:claude', () => listClaudeModels())
+  ipc.handle('vibe:models:codex', () => listCodexModels())
 
   ipc.handle('vibe:themes:list', () => listThemes())
   ipc.handle('vibe:themes:delete', (_event, id: string) => deleteTheme(id))
@@ -895,6 +897,7 @@ async function runCodexPlan(
         readOnly: true,
         ephemeral: true,
         model: getSettings().codexModel ?? undefined,
+        effort: getSettings().codexEffort ?? undefined,
         timeoutMs: 10 * 60_000,
         signal: abort.signal
       },
@@ -1092,6 +1095,7 @@ function runAsk(
 ${prompt}`,
           cwd: projectPath,
           model: getSettings().codexModel ?? undefined,
+          effort: getSettings().codexEffort ?? undefined,
           abort
         })
         recordUsage(projectId, 'chat', 'codex', answer.counts)

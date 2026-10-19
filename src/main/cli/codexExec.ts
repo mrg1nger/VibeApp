@@ -107,6 +107,8 @@ export interface CodexExecArgs {
   unsandboxed?: boolean
   /** Codex model override; omitted means Codex's own configured default. */
   model?: string
+  /** How hard Codex thinks (low, medium, high, ...); omitted means Codex's own configured default. */
+  effort?: string
   /** Look but don't touch: read-only sandbox (overrides the other sandbox options). */
   readOnly?: boolean
   /** Don't keep a Codex session file for this run. */
@@ -219,6 +221,10 @@ ${args.prompt}`
   }
   if (args.model) {
     cliArgs.push('-m', args.model)
+  }
+  // A plain word only: it goes into a TOML override.
+  if (args.effort && /^[a-z]+$/.test(args.effort)) {
+    cliArgs.push('-c', `model_reasoning_effort="${args.effort}"`)
   }
   if (args.ephemeral) {
     cliArgs.push('--ephemeral')

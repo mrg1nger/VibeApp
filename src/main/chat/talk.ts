@@ -64,6 +64,7 @@ export async function runTalk(id: string, text: string, agent: TalkAgent): Promi
         prompt: `${SYSTEM}\n\n${prompt}`,
         cwd: scratchDir(),
         model: getSettings().codexModel ?? undefined,
+        effort: getSettings().codexEffort ?? undefined,
         abort
       })
     }

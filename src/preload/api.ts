@@ -10,6 +10,7 @@ import type {
   MemoryScope,
   MemoryTidyResult,
   ModelOption,
+  CodexModelList,
   PickedElement,
   PreviewProblem,
   PreviewState,
@@ -252,7 +253,8 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
     },
 
     models: {
-      claude: (): Promise<ModelOption[]> => ipcRenderer.invoke('vibe:models:claude')
+      claude: (): Promise<ModelOption[]> => ipcRenderer.invoke('vibe:models:claude'),
+      codex: (): Promise<CodexModelList> => ipcRenderer.invoke('vibe:models:codex')
     },
 
     themes: {

@@ -74,6 +74,7 @@ export async function reviewChanges(
     ephemeral: true,
     outputSchema: REVIEW_SCHEMA,
     model: getSettings().codexModel ?? undefined,
+    effort: getSettings().codexEffort ?? undefined,
     timeoutMs: 300_000
   })
   recordUsage(projectId, 'review', 'codex', countsFromCodexEvents(result.events))

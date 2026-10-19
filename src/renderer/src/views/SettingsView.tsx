@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { AppSettings, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
+import type { AppSettings, CodexModelList, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
 import RemoteAccessSettings from '../components/RemoteAccessSettings'
 
 interface SettingsViewProps {
@@ -16,6 +16,8 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
   const [models, setModels] = useState<ModelOption[] | null>(null)
   const [modelsError, setModelsError] = useState(false)
   const [codexModel, setCodexModel] = useState(settings.codexModel ?? '')
+  const [codexList, setCodexList] = useState<CodexModelList | null>(null)
+  const [codexListError, setCodexListError] = useState(false)
   const [themePrompt, setThemePrompt] = useState('')
   const [generating, setGenerating] = useState(false)
   const [usageRows, setUsageRows] = useState<UsageSummaryRow[] | null>(null)
@@ -32,6 +34,10 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
       .claude()
       .then(setModels)
       .catch(() => setModelsError(true))
+    window.vibe.models
+      .codex()
+      .then(setCodexList)
+      .catch(() => setCodexListError(true))
   }, [])
 
   const saveCodexModel = useCallback(() => {
@@ -74,6 +80,24 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
       ? [...models, { value: settings.claudeModel, displayName: settings.claudeModel, description: '' }]
       : (models ?? [])
 
+  // Same for Codex; the efforts offered are the ones the model in use supports.
+  const codexOptions =
+    codexList && settings.codexModel && !codexList.models.some((m) => m.value === settings.codexModel)
+      ? [...codexList.models, { value: settings.codexModel, displayName: settings.codexModel, description: '', efforts: [] }]
+      : (codexList?.models ?? [])
+  const codexInUse = codexOptions.find((m) => m.value === (settings.codexModel ?? codexList?.defaultModel))
+  const effortOptions = codexInUse?.efforts.length
+    ? codexInUse.efforts
+    : ['low', 'medium', 'high', 'xhigh'].map((value) => ({ value, description: '' }))
+  const effortChoices =
+    settings.codexEffort && !effortOptions.some((e) => e.value === settings.codexEffort)
+      ? [...effortOptions, { value: settings.codexEffort, description: "(not listed for this model)" }]
+      : effortOptions
+  const defaultModelName = codexList?.defaultModel
+    ? (codexOptions.find((m) => m.value === codexList.defaultModel)?.displayName ?? codexList.defaultModel)
+    : undefined
+  const defaultEffort = codexList?.defaultEffort ?? codexInUse?.defaultEffort
+
   return (
     <div className="settings-view">
       <h2>Settings</h2>
@@ -102,16 +126,59 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
 
         <label className="settings-field">
           <span>Codex (helper for delegated tasks)</span>
-          <input
-            value={codexModel}
-            onChange={(e) => setCodexModel(e.target.value)}
-            onBlur={saveCodexModel}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveCodexModel()
-            }}
-            placeholder="Default (from your Codex config)"
-          />
-          <small>A Codex model name like gpt-5-codex. Leave blank for Codex's default.</small>
+          {codexListError ? (
+            <>
+              <input
+                value={codexModel}
+                onChange={(e) => setCodexModel(e.target.value)}
+                onBlur={saveCodexModel}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveCodexModel()
+                }}
+                placeholder="Default (from your Codex config)"
+              />
+              <small>Couldn't load Codex's model list, so type a model name. Leave blank for Codex's default.</small>
+            </>
+          ) : (
+            <select
+              value={settings.codexModel ?? ''}
+              onChange={(e) => {
+                const value = e.target.value || null
+                // An effort the new model doesn't support goes back to Codex's default.
+                const efforts = codexOptions.find((m) => m.value === (value ?? codexList?.defaultModel))?.efforts
+                const keepEffort = !settings.codexEffort || !efforts?.length || efforts.some((x) => x.value === settings.codexEffort)
+                onSettingsChange(keepEffort ? { codexModel: value } : { codexModel: value, codexEffort: null }).catch(() => undefined)
+              }}
+              disabled={!codexList}
+            >
+              <option value="">Codex's default{defaultModelName ? ` (${defaultModelName})` : ''}</option>
+              {codexOptions.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.displayName}
+                  {m.description ? ` — ${m.description}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          {!codexList && !codexListError && <small>Loading models…</small>}
+          <small>Used for hand-offs, reviews, and whenever Codex takes over.</small>
+        </label>
+
+        <label className="settings-field">
+          <span>Codex thinking effort</span>
+          <select
+            value={settings.codexEffort ?? ''}
+            onChange={(e) => onSettingsChange({ codexEffort: e.target.value || null }).catch(() => undefined)}
+          >
+            <option value="">Codex's default{defaultEffort ? ` (${defaultEffort})` : ''}</option>
+            {effortChoices.map((e) => (
+              <option key={e.value} value={e.value}>
+                {e.value}
+                {e.description ? ` — ${e.description}` : ''}
+              </option>
+            ))}
+          </select>
+          <small>Higher thinks harder: better on tricky work, but slower and uses more of your Codex plan.</small>
         </label>
 
         <label className="settings-toggle">

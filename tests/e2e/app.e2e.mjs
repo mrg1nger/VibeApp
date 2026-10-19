@@ -619,6 +619,30 @@ try {
     if (saved.autoAsk !== false) throw new Error(`autoAsk is ${saved.autoAsk}`)
   })
 
+  await step("the Codex model and effort menus list Codex's own choices and save", async () => {
+    const selectFor = (label) =>
+      `[...document.querySelectorAll('.settings-field')].find((f) => f.querySelector('span')?.textContent.startsWith(${JSON.stringify(label)}))?.querySelector('select')`
+    await waitFor(`(${selectFor('Codex (')})?.options.length > 1 && !(${selectFor('Codex (')}).disabled`, 'the Codex model list', 30_000)
+    const models = await evaluate(`[...(${selectFor('Codex (')}).options].map((o) => o.value).filter(Boolean)`)
+    console.log(`  (Codex models: ${models.join(', ')})`)
+    const choose = (label, value) =>
+      evaluate(`(() => { const s = ${selectFor(label)}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ${JSON.stringify(value)}); s.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+    await choose('Codex (', models[0])
+    await sleep(500)
+    const efforts = await evaluate(`[...(${selectFor('Codex thinking')}).options].map((o) => o.value).filter(Boolean)`)
+    if (!efforts.length) throw new Error('no effort choices')
+    await choose('Codex thinking', efforts[0])
+    await sleep(800)
+    const saved = JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8'))
+    if (saved.codexModel !== models[0] || saved.codexEffort !== efforts[0]) {
+      throw new Error(`saved ${saved.codexModel} / ${saved.codexEffort}`)
+    }
+    // Back to Codex's defaults for anything after this.
+    await choose('Codex (', '')
+    await choose('Codex thinking', '')
+    await sleep(500)
+  })
+
   await step('the Extensions screen lists tools to install', async () => {
     await click('Extensions', '.app-nav-tabs button')
     await waitFor(`/Up-to-date docs/.test(document.body.innerText)`, 'the catalog', 15_000)
