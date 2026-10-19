@@ -173,16 +173,58 @@ export function launcher(command: string, args: string[]): { command: string; ar
   return { command, args }
 }
 
+const firstExisting = (paths: (string | undefined)[]): string | undefined =>
+  paths.find((p): p is string => !!p && existsSync(p))
+
+function windowsBrowser(vendorPath: string): string | undefined {
+  return firstExisting(
+    [process.env.LOCALAPPDATA, process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)']].map((root) =>
+      root ? join(root, vendorPath) : undefined
+    )
+  )
+}
+
+/**
+ * The Playwright tool server, adjusted to work on this computer: it looks for
+ * Google Chrome by default and fails outright without it, so use Microsoft
+ * Edge (part of Windows) when Chrome isn't there; a fresh profile each run, so
+ * Claude and Codex can't lock each other out of a shared one; and its
+ * screenshots and page snapshots kept out of the user's project.
+ */
+export function withBrowserFixes(args: string[]): string[] {
+  if (!args.some((a) => /@playwright\/mcp\b/.test(a))) return args
+  const out = [...args]
+  const has = (flag: string): boolean => out.some((a) => a === flag || a.startsWith(`${flag}=`))
+  if (process.platform === 'win32' && !has('--browser')) {
+    const chrome = windowsBrowser(join('Google', 'Chrome', 'Application', 'chrome.exe'))
+    const edge = windowsBrowser(join('Microsoft', 'Edge', 'Application', 'msedge.exe'))
+    if (!chrome && edge) out.push('--browser', 'msedge')
+  }
+  if (!has('--isolated') && !has('--user-data-dir')) out.push('--isolated')
+  if (!has('--output-dir')) out.push('--output-dir', join(app.getPath('temp'), 'vibeapp-playwright').replace(/\\/g, '/'))
+  return out
+}
+
+function toActive(e: StoredExtension): ActiveExtension {
+  return {
+    server: `ext_${e.id}`,
+    name: e.name,
+    ...launcher(e.command, withBrowserFixes(e.args)),
+    env: decryptEnv(e.env),
+    instructions: e.instructions
+  }
+}
+
 export function activeExtensions(): ActiveExtension[] {
   return readAll()
     .filter((e) => e.enabled)
-    .map((e) => ({
-      server: `ext_${e.id}`,
-      name: e.name,
-      ...launcher(e.command, e.args),
-      env: decryptEnv(e.env),
-      instructions: e.instructions
-    }))
+    .map(toActive)
+}
+
+/** One installed extension, ready to start, whether or not it's switched on (for checking it). */
+export function extensionLaunch(id: string): ActiveExtension | undefined {
+  const found = readAll().find((e) => e.id === id)
+  return found ? toActive(found) : undefined
 }
 
 /** The part of the agents' instructions that describes the installed extensions. */

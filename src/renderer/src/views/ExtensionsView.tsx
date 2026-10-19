@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ExtensionCatalogItem, ExtensionInfo } from '@shared/types'
+import type { ExtensionCatalogItem, ExtensionCheck, ExtensionInfo } from '@shared/types'
 
 interface ExtensionsViewProps {
   onError: (message: string) => void
@@ -25,6 +25,18 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
   const [showCustom, setShowCustom] = useState(false)
   // Keys typed in for installed extensions that are waiting for them.
   const [keyInputs, setKeyInputs] = useState<Record<string, Record<string, string>>>({})
+  // The last "does it work?" check of each installed extension (this visit).
+  const [checks, setChecks] = useState<Record<string, ExtensionCheck | 'checking'>>({})
+
+  const check = useCallback(async (id: string) => {
+    setChecks((c) => ({ ...c, [id]: 'checking' }))
+    try {
+      const result = await window.vibe.extensions.check(id)
+      setChecks((c) => ({ ...c, [id]: result }))
+    } catch (err) {
+      setChecks((c) => ({ ...c, [id]: { ok: false, error: (err as Error).message } }))
+    }
+  }, [])
 
   const reload = useCallback(async () => {
     try {
@@ -55,7 +67,7 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
 
   const install = (item: ExtensionCatalogItem, env: Record<string, string>): Promise<void> =>
     run(item.id, async () => {
-      await window.vibe.extensions.add({
+      const added = await window.vibe.extensions.add({
         name: item.name,
         description: item.description,
         command: item.command,
@@ -65,6 +77,8 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
         catalogId: item.id
       })
       setPending(null)
+      // Downloads it now and shows whether it works, instead of the first agent finding out.
+      if (added.enabled) void check(added.id)
     })
 
   const addCustom = (): Promise<void> =>
@@ -74,7 +88,7 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
         const at = line.indexOf('=')
         if (at > 0) env[line.slice(0, at).trim()] = line.slice(at + 1).trim()
       }
-      await window.vibe.extensions.add({
+      const added = await window.vibe.extensions.add({
         name: custom.name,
         command: custom.command,
         args: splitArgs(custom.args),
@@ -83,6 +97,7 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
       })
       setCustom({ name: '', command: '', args: '', instructions: '', env: '' })
       setShowCustom(false)
+      void check(added.id)
     })
 
   if (!listing) return <div className="settings-view"><p className="review-muted">Loading…</p></div>
@@ -126,6 +141,7 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
                 </small>
               </span>
             </label>
+            <ExtensionStatus result={checks[ext.id]} />
             {ext.needsKeys.length > 0 && (
               <div className="extension-form">
                 <span className="review-muted">Switched off until you add {ext.needsKeys.length === 1 ? 'this key' : 'these keys'}:</span>
@@ -154,6 +170,13 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
                 </button>
               </div>
             )}
+            <button
+              className="chat-inline-action"
+              disabled={busyId === ext.id || checks[ext.id] === 'checking' || ext.needsKeys.length > 0}
+              onClick={() => void check(ext.id)}
+            >
+              Check
+            </button>
             <button
               className="chat-inline-action"
               disabled={busyId === ext.id}
@@ -264,6 +287,21 @@ function ExtensionsView({ onError }: ExtensionsViewProps) {
       </section>
     </div>
   )
+}
+
+function ExtensionStatus({ result }: { result: ExtensionCheck | 'checking' | undefined }) {
+  if (!result) return null
+  if (result === 'checking') {
+    return <small className="extension-status review-muted">Checking… (the first time can take a minute while it downloads)</small>
+  }
+  if (result.ok) {
+    return (
+      <small className="extension-status extension-status-ok">
+        ✓ Works · {result.tools} tool{result.tools === 1 ? '' : 's'} ready for Claude and Codex
+      </small>
+    )
+  }
+  return <small className="extension-status extension-status-bad">✗ Not working: {result.error}</small>
 }
 
 export default ExtensionsView

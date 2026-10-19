@@ -15,7 +15,7 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { deflateSync } from 'node:zlib'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -646,6 +646,65 @@ try {
   await step('the Extensions screen lists tools to install', async () => {
     await click('Extensions', '.app-nav-tabs button')
     await waitFor(`/Up-to-date docs/.test(document.body.innerText)`, 'the catalog', 15_000)
+  })
+
+  // -- extensions really work (not just install) --
+
+  const transcriptText = () =>
+    readdirSync(join(data, 'transcripts'))
+      .map((f) => readFileSync(join(data, 'transcripts', f), 'utf-8'))
+      .join('\n')
+
+  await step('the listed extensions install and pass their check (Playwright opens a page)', async () => {
+    await click('Extensions', '.app-nav-tabs button')
+    for (const name of ['Browser testing (Playwright)', 'Up-to-date docs (Context7)', 'Step-by-step thinking']) {
+      const rowWith = `[...document.querySelectorAll('.extension-row')].find((r) => r.textContent.includes(${JSON.stringify(name)}) && !!r.querySelector('.extension-status'))`
+      const installed = await evaluate(`(() => {
+        const row = [...document.querySelectorAll('.extension-row')].find((r) => r.textContent.includes(${JSON.stringify(name)}) && [...r.querySelectorAll('button')].some((b) => b.textContent === 'Install'))
+        if (!row) return false
+        ;[...row.querySelectorAll('button')].find((b) => b.textContent === 'Install').click()
+        return true
+      })()`)
+      if (!installed) throw new Error(`no Install button for ${name}`)
+      await waitFor(`/✓ Works|✗ Not working/.test((${rowWith})?.textContent ?? '')`, `${name} to be checked`, 180_000)
+      const status = await evaluate(`(${rowWith}).querySelector('.extension-status').textContent`)
+      console.log(`  (${name}: ${status.slice(0, 160)})`)
+      if (!/✓ Works/.test(status)) throw new Error(`${name}: ${status}`)
+    }
+  })
+
+  let previewUrl = ''
+  await step('Claude uses the Playwright extension to open the preview', async () => {
+    await click('Projects', '.app-nav-tabs button')
+    await click('e2e-game', 'button.project-row')
+    await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat')
+    await waitFor(`window.vibe.preview.state(${JSON.stringify(PROJECT_ID)}).then((s) => s.status === 'running')`, 'the preview', 60_000)
+    previewUrl = (await evaluate(`window.vibe.preview.state(${JSON.stringify(PROJECT_ID)})`)).url
+    await send(`Use the Playwright browser tools to open ${previewUrl} and tell me the page's exact title. Use the browser, not the files, and don't change anything.`)
+    await idle(300_000)
+    if (!/E2E Shop/.test(await lastReply())) throw new Error(`no title in the reply: ${(await lastReply()).slice(0, 200)}`)
+    if (!/mcp__ext_browser_testing_playwrig__browser_navigate/.test(transcriptText())) throw new Error('Claude did not use the Playwright tools')
+    if (existsSync(join(project, '.playwright-mcp'))) throw new Error('Playwright left files in the project')
+  })
+
+  await step('Codex uses the Playwright extension too', async () => {
+    if (!previewUrl) throw new Error('no preview address')
+    // Straight to Codex (as when Claude is out), so Claude can't answer it itself.
+    writeFileSync(takeoverSwitch, '')
+    try {
+      await send(`Use the Playwright browser tools to open ${previewUrl} and tell me the page's exact heading text. Use the browser, not the files, and change nothing.`)
+      await idle(600_000)
+    } finally {
+      rmSync(takeoverSwitch, { force: true })
+    }
+    if (!/ext_browser_testing_playwrig: browser_navigate/.test(transcriptText())) throw new Error('Codex did not use the Playwright tools')
+    const text = await chatText()
+    const after = text.slice(text.lastIndexOf('exact heading text'))
+    if (!/E2E Shop/.test(after)) throw new Error(`no heading reported: ${after.slice(0, 300)}`)
+    if (existsSync(join(project, '.playwright-mcp'))) throw new Error('Playwright left files in the project')
+    for (const ext of (await evaluate('window.vibe.extensions.list()')).installed) {
+      await evaluate(`window.vibe.extensions.remove(${JSON.stringify(ext.id)})`)
+    }
   })
 
   await step('the Memory screen shows the project brief section', async () => {

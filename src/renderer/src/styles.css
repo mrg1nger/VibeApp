@@ -3086,3 +3086,17 @@ textarea {
   color: var(--text-muted);
   font-size: 13px;
 }
+
+.extension-status {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.extension-status-ok {
+  color: var(--success-text);
+}
+
+.extension-status-bad {
+  color: var(--danger);
+}

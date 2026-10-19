@@ -3,18 +3,28 @@ import { killTree } from '../cli/codexExec'
 
 export type SelfTestResult = { ok: true; tools: string[] } | { ok: false; error: string }
 
-const TIMEOUT_MS = 60_000 // the first npx run may have to download the package
+/** A tool call that proves the server really works, not just that it starts. */
+export interface SelfTestProbe {
+  tool: string
+  arguments: Record<string, unknown>
+  /** What the check is doing, for the error message. */
+  doing: string
+}
+
+const TIMEOUT_MS = 90_000 // the first npx run may have to download the package (and a browser check is slower)
 
 /**
  * Starts an MCP server the way the agents will, asks it for its tool list,
- * and stops it again. Catches a server that won't start, crashes at once, or
- * doesn't speak MCP, before anything depends on it.
+ * optionally calls one tool, and stops it again. Catches a server that won't
+ * start, crashes at once, doesn't speak MCP, or fails at its actual job,
+ * before anything depends on it.
  */
 export function selfTestServer(
   command: string,
   args: string[],
   env: Record<string, string>,
-  cwd?: string
+  cwd?: string,
+  probe?: SelfTestProbe
 ): Promise<SelfTestResult> {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -26,6 +36,7 @@ export function selfTestServer(
     let buffer = ''
     let stderr = ''
     let finished = false
+    let tools: string[] = []
     const finish = (result: SelfTestResult): void => {
       if (finished) return
       finished = true
@@ -46,7 +57,11 @@ export function selfTestServer(
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        let message: { id?: number; result?: { tools?: { name: string }[] }; error?: { message?: string } }
+        let message: {
+          id?: number
+          result?: { tools?: { name: string }[]; isError?: boolean; content?: { type: string; text?: string }[] }
+          error?: { message?: string }
+        }
         try {
           message = JSON.parse(line)
         } catch {
@@ -57,7 +72,19 @@ export function selfTestServer(
           send({ jsonrpc: '2.0', method: 'notifications/initialized' })
           send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
         } else if (message.id === 2) {
-          finish({ ok: true, tools: (message.result?.tools ?? []).map((t) => t.name) })
+          tools = (message.result?.tools ?? []).map((t) => t.name)
+          if (probe && tools.includes(probe.tool)) {
+            send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: probe.tool, arguments: probe.arguments } })
+          } else {
+            finish({ ok: true, tools })
+          }
+        } else if (message.id === 3) {
+          if (message.result?.isError) {
+            const text = (message.result.content ?? []).map((c) => c.text ?? '').join(' ').replace(/^###\s*Error\s*/i, '')
+            finish({ ok: false, error: `It started, but ${probe?.doing ?? 'its test call'} failed: ${text.trim().slice(0, 600)}` })
+          } else {
+            finish({ ok: true, tools })
+          }
         }
       }
     })

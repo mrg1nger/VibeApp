@@ -1,13 +1,14 @@
 import { dialog, shell, type WebContents } from 'electron'
 import { ipc } from '../remote/bus'
 import { existsSync, mkdirSync, readdirSync, statSync } from 'fs'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { applyRemoteSettings } from '../remote/server'
 import type {
   AppSettings,
   CliName,
   ConfirmationRequest,
+  ExtensionCheck,
   ExtensionDraft,
   ImageAttachment,
   MemoryCategory,
@@ -103,11 +104,13 @@ import { recordUsage } from '../usage/tokens'
 import { CATALOG } from '../extensions/catalog'
 import {
   addExtension,
+  extensionLaunch,
   listExtensions,
   removeExtension,
   setExtensionEnabled,
   setExtensionEnv
 } from '../extensions/store'
+import { selfTestServer, type SelfTestProbe } from '../extensions/selftest'
 import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
@@ -667,6 +670,22 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:extensions:setEnv', (_event, id: string, env: Record<string, string>) => {
     setExtensionEnv(id, env)
     refreshExtensionsForAllSessions()
+  })
+  // Starts an installed extension the way the agents do and makes sure it really works.
+  // (Also run right after installing, so the first agent to use it doesn't wait for the download.)
+  ipc.handle('vibe:extensions:check', async (_event, id: string): Promise<ExtensionCheck> => {
+    const ext = extensionLaunch(id)
+    if (!ext) return { ok: false, error: "That extension isn't installed any more." }
+    // Playwright starts fine without a usable browser, so open a page to be sure.
+    const probe: SelfTestProbe | undefined = ext.args.some((a) => /@playwright\/mcp\b/.test(a))
+      ? {
+          tool: 'browser_navigate',
+          arguments: { url: 'data:text/html,<title>VibeApp check</title><p>ok</p>' },
+          doing: 'opening a test page in the browser'
+        }
+      : undefined
+    const result = await selfTestServer(ext.command, ext.args, ext.env, tmpdir(), probe)
+    return result.ok ? { ok: true, tools: result.tools.length } : { ok: false, error: result.error }
   })
   ipc.handle('vibe:extensions:remove', (_event, id: string) => {
     removeExtension(id)

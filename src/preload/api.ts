@@ -11,6 +11,7 @@ import type {
   MemoryTidyResult,
   ModelOption,
   CodexModelList,
+  ExtensionCheck,
   PickedElement,
   PreviewProblem,
   PreviewState,
@@ -317,7 +318,8 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         ipcRenderer.invoke('vibe:extensions:setEnabled', id, enabled),
       setEnv: (id: string, env: Record<string, string>): Promise<void> =>
         ipcRenderer.invoke('vibe:extensions:setEnv', id, env),
-      remove: (id: string): Promise<void> => ipcRenderer.invoke('vibe:extensions:remove', id)
+      remove: (id: string): Promise<void> => ipcRenderer.invoke('vibe:extensions:remove', id),
+      check: (id: string): Promise<ExtensionCheck> => ipcRenderer.invoke('vibe:extensions:check', id)
     },
 
     publish: {

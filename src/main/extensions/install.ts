@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, rmSync, statSync } from 'fs'
 import { basename, join, resolve, sep } from 'path'
-import { addExtension, extensionsDir, freeId, launcher } from './store'
+import { addExtension, extensionsDir, freeId, launcher, withBrowserFixes } from './store'
 import { selfTestServer } from './selftest'
 
 export interface AgentInstallRequest {
@@ -81,7 +81,7 @@ export async function installExtensionForAgent(
   const args = req.args.map((a) => (folder ? a.split('{{dir}}').join(folder.replace(/\\/g, '/')) : a))
 
   // Start it once, the way the agents will, with stand-in values for any keys.
-  const launch = launcher(command, args)
+  const launch = launcher(command, withBrowserFixes(args))
   const dummyEnv = Object.fromEntries(keys.map((k) => [k, 'test']))
   const test = await selfTestServer(launch.command, launch.args, dummyEnv, projectPath)
   if (!test.ok && keys.length === 0) {

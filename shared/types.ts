@@ -150,6 +150,9 @@ export interface TalkSummary {
 }
 
 /** A tool (an MCP server plus instructions) installed once and offered to Claude and Codex in every project. */
+/** The result of starting an installed extension to see that it works. */
+export type ExtensionCheck = { ok: true; tools: number } | { ok: false; error: string }
+
 export interface ExtensionInfo {
   id: string
   name: string

@@ -269,6 +269,11 @@ ${args.prompt}`
       if (names.length) cliArgs.push('-c', `mcp_servers.${ext.server}.env_vars=${JSON.stringify(names)}`)
       Object.assign(extensionEnv, ext.env)
     }
+    // Codex starts working without waiting for tool servers, so one that
+    // takes a couple of seconds to start (any npx one, e.g. Playwright) was
+    // simply missing and Codex improvised instead. Wait for them, up to a
+    // limit (verified: it only waits as long as the servers take).
+    if (extensions.length) cliArgs.push('-c', 'mcp_optional_startup_grace_ms=20000')
   }
 
   // Resuming: the shared flags go before the subcommand (verified against the CLI).
