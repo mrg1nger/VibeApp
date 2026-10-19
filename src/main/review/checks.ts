@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process'
 import { existsSync, readFileSync, statSync } from 'fs'
 import { extname, join } from 'path'
 import { promisify } from 'util'
+import { trackChild } from '../cli/codexExec'
 
 const execFileAsync = promisify(execFile)
 
@@ -88,11 +89,13 @@ function runProjectTests(projectPath: string): Promise<{ passed: boolean; tail: 
   return new Promise((resolve) => {
     const isWin = process.platform === 'win32'
     // A fixed command line, never built from project or user text.
-    const child = spawn(isWin ? 'cmd.exe' : 'sh', isWin ? ['/d', '/s', '/c', 'npm test'] : ['-c', 'npm test'], {
-      cwd: projectPath,
-      windowsHide: true,
-      env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }
-    })
+    const child = trackChild(
+      spawn(isWin ? 'cmd.exe' : 'sh', isWin ? ['/d', '/s', '/c', 'npm test'] : ['-c', 'npm test'], {
+        cwd: projectPath,
+        windowsHide: true,
+        env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }
+      })
+    )
     let output = ''
     let done = false
     const finish = (passed: boolean, timedOut: boolean): void => {

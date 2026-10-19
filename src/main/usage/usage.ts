@@ -5,7 +5,7 @@ import { join } from 'path'
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { CliName, UsageSnapshot, UsageWindow } from '@shared/types'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
-import { killTree, resolveCodexLaunch } from '../cli/codexExec'
+import { killTree, resolveCodexLaunch, trackChild } from '../cli/codexExec'
 
 const TIMEOUT_MS = 20_000
 /** Repeat requests inside this window get the cached snapshot. */
@@ -161,7 +161,7 @@ function windowLabel(mins: number | null, fallback: string): string {
 /** Codex plan usage via the app-server's account/rateLimits/read request. */
 async function fetchCodexUsage(): Promise<UsageSnapshot> {
   const launch = await resolveCodexLaunch()
-  const child = spawn(launch.file, [...launch.prefixArgs, 'app-server'], { windowsHide: true, env: launch.env })
+  const child = trackChild(spawn(launch.file, [...launch.prefixArgs, 'app-server'], { windowsHide: true, env: launch.env }))
   const send = (message: object): void => {
     child.stdin.write(JSON.stringify(message) + '\n')
   }

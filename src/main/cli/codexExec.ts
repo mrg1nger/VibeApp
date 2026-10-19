@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'child_process'
+import { execFile, execFileSync, spawn, type ChildProcess } from 'child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
@@ -85,6 +85,39 @@ export async function resolveCodexLaunch(): Promise<CodexLaunch> {
   // Last resort. The prompt goes over stdin, so only app-controlled paths
   // pass through cmd.exe here.
   return { file: 'cmd.exe', prefixArgs: ['/d', '/s', '/c', 'codex'] }
+}
+
+// Every Codex (and tool-check) process VibeApp has running, so quitting can
+// stop them: otherwise a hand-off or review in progress kept running, and
+// changing files, after VibeApp closed.
+const running = new Set<ChildProcess>()
+
+/** Keeps track of a child process until it exits, so stopAllChildren can end it. */
+export function trackChild<T extends ChildProcess>(child: T): T {
+  running.add(child)
+  child.once('exit', () => running.delete(child))
+  child.once('error', () => running.delete(child))
+  return child
+}
+
+/**
+ * Ends every tracked process and everything it started. Synchronous on
+ * Windows: the app exits before an async taskkill would get to run.
+ */
+export function stopAllChildren(): void {
+  for (const child of running) {
+    if (!child.pid || child.exitCode !== null) continue
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 10_000 })
+      } catch {
+        // already gone
+      }
+    } else {
+      child.kill()
+    }
+  }
+  running.clear()
 }
 
 export function killTree(child: ChildProcess): void {
@@ -284,10 +317,12 @@ ${args.prompt}`
   const events: CodexJsonEvent[] = []
 
   const exitCode = await new Promise<number>((resolve, reject) => {
-    const child = spawn(launch.file, [...launch.prefixArgs, ...cliArgs], {
-      windowsHide: true,
-      env: { ...launch.env, ...extensionEnv }
-    })
+    const child = trackChild(
+      spawn(launch.file, [...launch.prefixArgs, ...cliArgs], {
+        windowsHide: true,
+        env: { ...launch.env, ...extensionEnv }
+      })
+    )
     let stdoutBuffer = ''
     let stderrOutput = ''
 

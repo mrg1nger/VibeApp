@@ -262,7 +262,8 @@ async function step(name, fn) {
       await idle(60_000).catch(() => undefined)
     }
   }
-  await shot(name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()).catch(() => undefined)
+  // With a time limit: after the app has closed, the screenshot request would never be answered.
+  await Promise.race([shot(name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()).catch(() => undefined), sleep(5000)])
 }
 
 const takeoverSwitch = join(data, 'test-claude-out')
@@ -723,6 +724,49 @@ try {
     await click('', 'button.project-remove')
     await click('Remove from list', '.remove-choices button')
     await waitFor(`!/e2e-game/.test(document.body.innerText)`, 'the project to leave the list', 10_000)
+  })
+
+  // Last, since it closes the app.
+  await step('closing VibeApp in the middle of a Codex job leaves nothing running', async () => {
+    if (process.platform !== 'win32') return
+    // Every process the app started, and theirs (with start times, so a reused process id isn't mistaken for one).
+    const tree = () =>
+      JSON.parse(
+        execFileSync('powershell', [
+          '-NoProfile',
+          '-Command',
+          `$all = Get-CimInstance Win32_Process; $ids = @(${app.pid}); $out = @(); do { $next = @($all | Where-Object { $ids -contains $_.ParentProcessId -and $out.ProcessId -notcontains $_.ProcessId }); $out += $next; $ids = @($next.ProcessId) } while ($next.Count); ConvertTo-Json -Compress @($out | ForEach-Object { @{ id = $_.ProcessId; name = $_.Name; started = $_.CreationDate.ToString('o') } })`
+        ]).toString() || '[]'
+      )
+    // The app is gone by then, so each process is looked up directly.
+    const alive = (procs) => {
+      const live = JSON.parse(
+        execFileSync('powershell', [
+          '-NoProfile',
+          '-Command',
+          `ConvertTo-Json -Compress @(Get-CimInstance Win32_Process | ForEach-Object { @{ id = $_.ProcessId; started = $_.CreationDate.ToString('o') } })`
+        ]).toString()
+      )
+      return procs.filter((p) => live.some((l) => l.id === p.id && l.started === p.started))
+    }
+    await click('Chat', '.app-nav-tabs button')
+    await click('Codex', '.talk-compose .chat-mode-switch button')
+    await type('Run the command "ping -n 120 127.0.0.1" and tell me its last line.')
+    let before = []
+    for (let i = 0; i < 60 && !before.some((p) => /^codex/i.test(p.name)); i++) {
+      await sleep(1000)
+      before = tree()
+    }
+    if (!before.some((p) => /^codex/i.test(p.name))) throw new Error('Codex never started')
+    await sleep(4000) // let it get going (its own helpers, the command)
+    before = tree()
+    console.log(`  (closing with ${before.length} processes running: ${[...new Set(before.map((p) => p.name))].join(', ')})`)
+    const exited = new Promise((resolve) => app.once('exit', resolve))
+    await Promise.race([cdp('Browser.close'), sleep(3000)]).catch(() => undefined)
+    if ((await Promise.race([exited.then(() => true), sleep(20_000).then(() => false)])) !== true) throw new Error('VibeApp did not close')
+    await sleep(3000)
+    const left = alive(before)
+    if (left.length) throw new Error(`still running after closing: ${left.map((p) => `${p.name} (${p.id})`).join(', ')}`)
   })
 
   const errors = [...page.errors, ...(preview?.errors ?? [])].filter((e) => !/e2e boom/.test(e))

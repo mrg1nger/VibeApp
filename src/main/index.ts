@@ -6,6 +6,7 @@ import { broadcaster } from './remote/bus'
 import { registerRemoteHandlers } from './remote/ipc'
 import { applyRemoteSettings, stopRemote } from './remote/server'
 import { stopAllPreviews } from './preview/preview'
+import { stopAllChildren } from './cli/codexExec'
 import { requestClassifier } from './orchestrator/classifier'
 import { getSettings } from './settings/store'
 
@@ -103,6 +104,8 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   stopAllPreviews()
+  // Codex jobs, test runs and tool checks still going: nothing keeps working after VibeApp is closed.
+  stopAllChildren()
   void stopRemote()
   requestClassifier.dispose()
 })

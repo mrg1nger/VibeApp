@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { killTree } from '../cli/codexExec'
+import { killTree, trackChild } from '../cli/codexExec'
 
 export type SelfTestResult = { ok: true; tools: string[] } | { ok: false; error: string }
 
@@ -27,12 +27,14 @@ export function selfTestServer(
   probe?: SelfTestProbe
 ): Promise<SelfTestResult> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd,
-      env: { ...process.env, ...env },
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const child = trackChild(
+      spawn(command, args, {
+        cwd,
+        env: { ...process.env, ...env },
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    )
     let buffer = ''
     let stderr = ''
     let finished = false
