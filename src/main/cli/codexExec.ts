@@ -404,6 +404,30 @@ ${args.prompt}`
   return { finalMessage, exitCode, events, threadId: typeof threadId === 'string' ? threadId : undefined }
 }
 
+/**
+ * Why a Codex run failed, in plain words, from its own error events (for
+ * example its plan being used up), or undefined if it didn't report one.
+ */
+export function codexFailure(result: Pick<CodexExecResult, 'events'>): string | undefined {
+  const failed = [...result.events].reverse().find((e) => e.type === 'turn.failed' || e.type === 'error')
+  if (!failed) return undefined
+  const raw = failed.type === 'turn.failed' ? (failed.error as { message?: string } | undefined)?.message : failed.message
+  const message = typeof raw === 'string' ? raw.trim() : ''
+  if (/usage limit|hit your limit/i.test(message)) {
+    return `Codex's plan limit has been reached (it said: "${message.slice(0, 160)}"). It works again once the limit resets; the Codex meter at the top shows when.`
+  }
+  if (/\b429\b|too many requests|rate limit/i.test(message)) {
+    // Not necessarily the plan limit: OpenAI also turns requests away for a while when too many arrive at once.
+    return `OpenAI's servers turned Codex away just now ("${message.slice(0, 160)}"): too many requests in a short time, or the plan limit. Try again in a few minutes; if the Codex meter at the top is nearly full, it's the plan limit.`
+  }
+  return message ? `Codex stopped with an error: ${message.slice(0, 400)}` : undefined
+}
+
+/** A Codex run's report: its final message, or why it had none. */
+export function codexReport(result: Pick<CodexExecResult, 'events' | 'finalMessage'>): string {
+  return result.finalMessage || codexFailure(result) || '(Codex finished with no final message.)'
+}
+
 interface AgentMessageEvent extends CodexJsonEvent {
   item: { type: 'agent_message'; text: string }
 }

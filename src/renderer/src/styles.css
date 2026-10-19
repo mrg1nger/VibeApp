@@ -2801,6 +2801,7 @@ textarea {
   }
 
   .chat-body.phone-pane-chat .preview-pane,
+  .chat-body.phone-pane-chat .notes-pane,
   .chat-body.phone-pane-preview .chat-main {
     display: none;
   }
@@ -3099,4 +3100,172 @@ textarea {
 
 .extension-status-bad {
   color: var(--danger);
+}
+
+/* ---- the Notes tab: to-do list and notes ---- */
+
+.notes-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--surface);
+  overflow-y: auto;
+}
+
+.notes-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.todo-add {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.todo-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.todo-item.dragging {
+  opacity: 0.5;
+}
+
+.todo-item input[type='checkbox'] {
+  flex: none;
+}
+
+.todo-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+.todo-text .plan-who {
+  margin-left: 0.4rem;
+}
+
+.todo-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-item-done .todo-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  cursor: default;
+}
+
+.todo-build {
+  flex: none;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.todo-remove {
+  flex: none;
+}
+
+.todo-done {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.todo-done .todo-list {
+  align-self: stretch;
+}
+
+.notes-free {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 12rem;
+}
+
+.notes-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.notes-heading h3 {
+  flex: 1;
+}
+
+.notes-save-state {
+  font-size: 0.8rem;
+}
+
+.notes-text {
+  flex: 1;
+  min-height: 12rem;
+  resize: vertical;
+  font: inherit;
+}
+
+.notes-view {
+  flex: 1;
+  cursor: text;
+}
+
+.notes-secret-warning {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 760px) {
+  .notes-pane {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .todo-item {
+    flex-wrap: wrap;
+  }
+
+  .todo-text {
+    flex-basis: calc(100% - 2.5rem);
+  }
+
+  .todo-build {
+    margin-left: 1.75rem;
+    min-height: 36px;
+  }
+
+  .todo-remove {
+    margin-left: auto;
+    min-width: 36px;
+    min-height: 36px;
+  }
 }

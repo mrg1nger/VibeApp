@@ -182,7 +182,13 @@ export function describeActivity(event: { type: string; item?: unknown }): Deleg
     default: {
       // A tool call (for example, the shared memory tools).
       if (/mcp|tool/i.test(item.type)) {
-        const name = [item.server, item.tool ?? item.name].filter(Boolean).join(': ')
+        const friendly =
+          item.server === 'vibe_memory'
+            ? { todos: 'Checked your to-do list', add_todo: 'Added to your to-do list', complete_todo: 'Ticked off a to-do', notes: 'Read your notes' }[
+                String(item.tool ?? item.name)
+              ]
+            : undefined
+        const name = friendly ?? [item.server, item.tool ?? item.name].filter(Boolean).join(': ')
         if (!name) return null
         return { id, step: 'tool', text: name, done, ok: done ? item.status !== 'failed' : undefined }
       }

@@ -368,6 +368,78 @@ server.registerTool(
 )
 
 server.registerTool(
+  'todos',
+  {
+    description:
+      "A project's to-do list in VibeApp (its Notes tab), and optionally change it: add an item, tick one off (done), or put one back (undone). Items are matched by their id or their text.",
+    inputSchema: {
+      project: z.string(),
+      add: z.string().optional().describe('A new to-do, as one short line.'),
+      done: z.string().optional().describe('The id or text of an item to tick off.'),
+      undone: z.string().optional().describe('The id or text of a finished item to put back on the list.')
+    }
+  },
+  guard(async ({ project, add, done, undone }) => {
+    const p = await findProject(project)
+    let list = await invoke('vibe:todos:list', p.id)
+    const find = (key, wantDone) => {
+      const k = key.trim().toLowerCase()
+      const pool = list.filter((t) => t.done === wantDone)
+      return pool.find((t) => t.id === key.trim()) ?? pool.find((t) => t.text.toLowerCase() === k) ?? pool.find((t) => t.text.toLowerCase().includes(k))
+    }
+    const changes = []
+    if (add?.trim()) {
+      list = await invoke('vibe:todos:add', p.id, add)
+      changes.push(`Added: ${add.trim()}`)
+    }
+    for (const [key, wantDone] of [
+      [done, false],
+      [undone, true]
+    ]) {
+      if (!key?.trim()) continue
+      const item = find(key, wantDone)
+      if (!item) throw new Error(`No ${wantDone ? 'finished' : 'open'} to-do matches "${key}".`)
+      list = await invoke('vibe:todos:update', p.id, item.id, { done: !wantDone })
+      changes.push(`${wantDone ? 'Put back' : 'Ticked off'}: ${item.text}`)
+    }
+    const open = list.filter((t) => !t.done)
+    const finished = list.filter((t) => t.done)
+    return text(
+      [
+        ...changes,
+        changes.length ? '' : undefined,
+        `OPEN (${open.length})`,
+        ...open.map((t) => `- ${t.text} (id ${t.id}${t.source !== 'user' ? `, from ${t.source}` : ''})`),
+        finished.length ? `\nDONE (${finished.length})` : undefined,
+        ...finished.slice(0, 10).map((t) => `- ${t.text}`)
+      ]
+        .filter((l) => l !== undefined)
+        .join('\n')
+    )
+  })
+)
+
+server.registerTool(
+  'notes',
+  {
+    description: "Read a project's notes in VibeApp (its Notes tab), or replace them with new text.",
+    inputSchema: {
+      project: z.string(),
+      replace_with: z.string().optional().describe('New text for the whole notes page (replaces what is there).')
+    }
+  },
+  guard(async ({ project, replace_with }) => {
+    const p = await findProject(project)
+    if (replace_with !== undefined) {
+      await invoke('vibe:notes:set', p.id, replace_with)
+      return text('Notes saved.')
+    }
+    const notes = await invoke('vibe:notes:get', p.id)
+    return text(notes.text.trim() ? notes.text : '(No notes yet.)')
+  })
+)
+
+server.registerTool(
   'usage',
   { description: 'How much of the Claude and Codex plans is left, as VibeApp shows it.', inputSchema: {} },
   guard(async () => {

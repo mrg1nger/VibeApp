@@ -3,7 +3,7 @@ import { mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
-import { runCodexExec } from '../cli/codexExec'
+import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents, countsFromSdkResult, type TokenCounts } from '../usage/tokens'
 
 // Answering a question without building anything: one read-only call to
@@ -121,7 +121,7 @@ export async function askCodex(opts: AskCodexOptions): Promise<AskResult> {
     timeoutMs: 5 * 60_000,
     signal: opts.abort.signal
   })
-  if (result.exitCode !== 0 && !result.finalMessage) throw new Error('Codex could not answer that.')
+  if (result.exitCode !== 0 && !result.finalMessage) throw new Error(codexFailure(result) ?? 'Codex could not answer that.')
   return {
     text: result.finalMessage || '(Codex returned no answer.)',
     counts: countsFromCodexEvents(result.events)

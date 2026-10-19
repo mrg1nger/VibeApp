@@ -1,8 +1,8 @@
 import { dialog, shell, type WebContents } from 'electron'
 import { ipc } from '../remote/bus'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs'
 import { homedir, tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { dirname, join, resolve, sep } from 'path'
 import { applyRemoteSettings } from '../remote/server'
 import type {
   AppSettings,
@@ -84,6 +84,17 @@ import { getBrief, maybeRefreshBrief, refreshBrief } from '../memory/brief'
 import { cleanCommand, isNotableCommand } from '../memory/commands'
 import { syncAgentsFile } from '../memory/agentsFile'
 import { keyFactsBlock, usageSummary } from '../memory/store'
+import {
+  addTodo,
+  clearDoneTodos,
+  deleteTodo,
+  getNotes,
+  listTodos,
+  reorderTodos,
+  setNotes,
+  todosSignature,
+  updateTodo
+} from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listCodexModels } from '../cli/codexModels'
@@ -94,7 +105,7 @@ import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
 import { briefBlock } from '../memory/brief'
-import { runCodexExec } from '../cli/codexExec'
+import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents } from '../usage/tokens'
 import { isPlainQuestion } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
@@ -252,9 +263,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       images?: ImageAttachment[],
       forceBuild?: boolean,
       /** Plan mode (propose a plan, change nothing), or building a plan the user approved. */
-      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
+      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string; todoId?: string }
     ) => {
       let planning = extra?.mode === 'plan'
+      // "Build this" on a to-do: tick it off when this request finishes (a plan's, once it's built).
+      if (extra?.todoId && !planning) turnTodos.set(projectId, { id: String(extra.todoId) })
+      else turnTodos.delete(projectId)
       // A plain question doesn't need the full coding session (and its whole
       // conversation re-read on every step): answer it the cheap way.
       if (
@@ -483,7 +497,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     const event: VibeEvent = { type: 'plan_decided', toolUseId, decision }
     appendEvent(projectId, event)
     getSender()?.send('vibe:chat:event', projectId, event)
-    if (decision === 'cancelled') await getSession(projectId)?.setPlanning(false)
+    if (decision === 'cancelled') {
+      await getSession(projectId)?.setPlanning(false)
+      clearPlanFile(projectId)
+    }
   })
 
   // The user chose "Compact now".
@@ -671,6 +688,42 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     setExtensionEnv(id, env)
     refreshExtensionsForAllSessions()
   })
+  // The project's to-do list and notes (its Notes tab).
+  sendTodosChanged = (projectId) => getSender()?.send('vibe:todos:changed', projectId)
+  watchTodos()
+  ipc.handle('vibe:todos:list', (_event, projectId: string) => listTodos(memoryDb(), projectId))
+  ipc.handle('vibe:todos:add', (_event, projectId: string, text: string, top?: boolean) => {
+    addTodo(memoryDb(), projectId, text, 'user', { top: !!top })
+    todosChanged(projectId)
+    return listTodos(memoryDb(), projectId)
+  })
+  ipc.handle('vibe:todos:update', (_event, projectId: string, id: string, patch: { text?: string; done?: boolean }) => {
+    updateTodo(memoryDb(), projectId, id, { text: patch?.text, done: patch?.done })
+    todosChanged(projectId)
+    return listTodos(memoryDb(), projectId)
+  })
+  ipc.handle('vibe:todos:remove', (_event, projectId: string, id: string) => {
+    deleteTodo(memoryDb(), projectId, id)
+    todosChanged(projectId)
+    return listTodos(memoryDb(), projectId)
+  })
+  ipc.handle('vibe:todos:clearDone', (_event, projectId: string) => {
+    clearDoneTodos(memoryDb(), projectId)
+    todosChanged(projectId)
+    return listTodos(memoryDb(), projectId)
+  })
+  ipc.handle('vibe:todos:reorder', (_event, projectId: string, ids: string[]) => {
+    reorderTodos(memoryDb(), projectId, Array.isArray(ids) ? ids.map(String) : [])
+    todosChanged(projectId)
+    return listTodos(memoryDb(), projectId)
+  })
+  ipc.handle('vibe:notes:get', (_event, projectId: string) => getNotes(memoryDb(), projectId))
+  ipc.handle('vibe:notes:set', (_event, projectId: string, text: string) => {
+    const updatedAt = setNotes(memoryDb(), projectId, String(text ?? ''))
+    getSender()?.send('vibe:notes:changed', projectId, updatedAt)
+    return { updatedAt }
+  })
+
   // Starts an installed extension the way the agents do and makes sure it really works.
   // (Also run right after installing, so the first agent to use it doesn't wait for the download.)
   ipc.handle('vibe:extensions:check', async (_event, id: string): Promise<ExtensionCheck> => {
@@ -849,12 +902,67 @@ function rotateThreshold(): number {
   return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
 }
 
+// ---- the to-do list and notes ------------------------------------------------------
+
+/** Per project: the to-do being worked on by the current request ("Build this"). */
+const turnTodos = new Map<string, { id: string; failed?: boolean; carried?: boolean }>()
+let sendTodosChanged: (projectId: string) => void = () => undefined
+
+/** Tells every window (and remote browser) that a project's to-do list changed. */
+function todosChanged(projectId: string): void {
+  sendTodosChanged(projectId)
+}
+
+/**
+ * The agents add and tick off to-dos from their own memory-tool processes,
+ * which share the database but not this process: notice their changes too.
+ */
+function watchTodos(): void {
+  let last = todosSignature(memoryDb())
+  setInterval(() => {
+    try {
+      const next = todosSignature(memoryDb())
+      for (const id of new Set([...last.keys(), ...next.keys()])) if (last.get(id) !== next.get(id)) todosChanged(id)
+      last = next
+    } catch (err) {
+      console.warn('Checking the to-do lists failed:', (err as Error).message)
+    }
+  }, 2_000).unref()
+}
+
 // ---- plan progress ------------------------------------------------------------------
 
 /** Per project: the plan being built, and how far each step has got. */
 const buildingPlans = new Map<string, { steps: ReturnType<typeof parsePlanSteps>; state: ('doing' | 'done' | undefined)[]; stopped?: boolean }>()
 /** Per project: the last plan proposed, so "Change it" can revise it even when Codex made it. */
 const lastPlans = new Map<string, string>()
+
+/** Per project: the plan file Claude Code wrote this conversation's plan to. */
+const planFiles = new Map<string, string>()
+
+/** A file in Claude Code's own plans folder (the only kind VibeApp ever deletes). */
+function isPlanFile(file: string): boolean {
+  const dir = resolve(homedir(), '.claude', 'plans')
+  const full = resolve(file)
+  return full.toLowerCase().startsWith(`${dir.toLowerCase()}${sep}`) && full.toLowerCase().endsWith('.md')
+}
+
+/**
+ * Claude Code keeps one plan file per conversation and has Claude read it
+ * before every new plan. Once a plan is built or cancelled the old text is
+ * only in the way ("this is a stale plan..."), so remove it: the next plan
+ * starts from a clean slate.
+ */
+function clearPlanFile(projectId: string): void {
+  const file = planFiles.get(projectId)
+  planFiles.delete(projectId)
+  if (!file || !isPlanFile(file)) return
+  try {
+    rmSync(file, { force: true })
+  } catch (err) {
+    console.warn('Clearing the old plan failed:', (err as Error).message)
+  }
+}
 
 function startPlanBuild(projectId: string, plan: string): void {
   const steps = parsePlanSteps(plan)
@@ -926,7 +1034,7 @@ async function runCodexPlan(
     recordUsage(projectId, 'takeover', 'codex', countsFromCodexEvents(result.events))
     const plan = result.finalMessage.trim()
     emit({ type: 'tool_result', toolUseId, ok: !!plan, summary: plan ? 'Plan ready.' : 'Codex returned no plan.', raw: null })
-    if (!plan) throw new Error('Codex returned no plan.')
+    if (!plan) throw new Error(codexFailure(result) ?? 'Codex returned no plan.')
     lastPlans.set(projectId, plan)
     emit({ type: 'plan_proposed', toolUseId: `${toolUseId}-plan`, plan, steps: parsePlanSteps(plan), by: 'codex' })
   } catch (err) {
@@ -1177,6 +1285,8 @@ function wireSessionEvents(
 
   session.on('event', (event: VibeEvent) => {
     if (event.type === 'claude_limit') {
+      const todo = turnTodos.get(projectId)
+      if (todo) todo.carried = true
       // Remember it so later requests go straight to Codex, and keep the
       // failed turn from being reviewed. What follows happens at its turn_complete.
       noteClaudeLimit(event.resetsAt)
@@ -1198,6 +1308,11 @@ function wireSessionEvents(
       // moving from whichever signal arrives: the progress tool, Claude's own to-do list,
       // or "STEP 2: done" lines (how Codex reports).
       if (forwarded.type === 'plan_proposed') lastPlans.set(projectId, forwarded.plan)
+      // Where Claude Code keeps this conversation's plan, to clear it once the plan is done with.
+      if (forwarded.type === 'tool_call' && (forwarded.name === 'Write' || forwarded.name === 'Edit')) {
+        const file = (forwarded.input as { file_path?: string } | undefined)?.file_path
+        if (file && isPlanFile(file)) planFiles.set(projectId, file)
+      }
       const building = buildingPlans.get(projectId)
       if (building) {
         const updates: { step: number; status: 'doing' | 'done' }[] = []
@@ -1241,6 +1356,21 @@ function wireSessionEvents(
         else if (forwarded.type === 'stopped') record.stopped = true
       }
 
+      // A to-do sent with "Build this": ticked off when its request finishes properly.
+      const todo = turnTodos.get(projectId)
+      if (todo) {
+        if (forwarded.type === 'stopped' || forwarded.type === 'error') todo.failed = true
+        else if (forwarded.type === 'turn_complete') {
+          if (todo.carried) {
+            // Codex takes the request over; it's ticked off when Codex finishes.
+            todo.carried = false
+          } else {
+            turnTodos.delete(projectId)
+            if (!todo.failed && updateTodo(memoryDb(), projectId, todo.id, { done: true })) todosChanged(projectId)
+          }
+        }
+      }
+
       // Between requests is a good moment to save what was learned, tidy
       // memory and refresh the code map, if they need it.
       if (forwarded.type === 'turn_complete') {
@@ -1251,6 +1381,7 @@ function wireSessionEvents(
         const built = buildingPlans.get(projectId)
         if (built) {
           buildingPlans.delete(projectId)
+          clearPlanFile(projectId)
           session.emit('event', {
             type: 'plan_finished',
             total: built.steps.length,

@@ -314,6 +314,17 @@ export interface TranscriptEntry {
 export const MEMORY_CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other'] as const
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number]
 
+/** One item on a project's to-do list. */
+export interface TodoItem {
+  id: string
+  text: string
+  done: boolean
+  /** Who added it: the user, or an agent noting something left for later. */
+  source: 'user' | 'claude' | 'codex'
+  createdAt: string
+  doneAt: string | null
+}
+
 export interface MemoryFact {
   id: string
   text: string

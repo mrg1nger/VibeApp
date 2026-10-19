@@ -14,6 +14,7 @@ import type {
 import CheckpointButton from '../components/CheckpointButton'
 import GoNutzToggle from '../components/GoNutzToggle'
 import PreviewPane from '../components/PreviewPane'
+import NotesPane from '../components/NotesPane'
 import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
@@ -80,6 +81,7 @@ type ChatItem =
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
+const SIDE_PREF_KEY = 'vibeapp.sidePane'
 const ASK_PREF_KEY = 'vibeapp.askMode'
 const MODE_PREF_KEY = 'vibeapp.chatMode'
 /** A Build chat this big (tokens) gets a note about what each message costs. */
@@ -144,6 +146,16 @@ function readModePref(): ChatMode {
   }
 }
 
+type SidePane = 'preview' | 'notes'
+
+function readSidePref(): SidePane {
+  try {
+    return localStorage.getItem(SIDE_PREF_KEY) === 'notes' ? 'notes' : 'preview'
+  } catch {
+    return 'preview'
+  }
+}
+
 function readPreviewPref(): boolean {
   try {
     return localStorage.getItem(PREVIEW_PREF_KEY) !== 'false'
@@ -162,10 +174,14 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const confirmation = confirmations[0] ?? null
   const [hasChanges, setHasChanges] = useState(false)
   const [goNutz, setGoNutz] = useState(false)
+  // The pane beside the chat (when showPreview is on): the live preview or the Notes tab.
   const [showPreview, setShowPreview] = useState(readPreviewPref)
-  // On a phone there's room for one pane at a time: the chat or the preview.
+  const [sidePane, setSidePaneState] = useState<SidePane>(readSidePref)
+  // On a phone there's room for one pane at a time: the chat or the side pane.
   const phone = usePhone()
   const [phonePane, setPhonePane] = useState<'chat' | 'preview'>('chat')
+  // A to-do sent to Plan mode: ticked off once its approved plan has been built.
+  const planTodo = useRef<string | null>(null)
   // Ask: answer a question without changing anything. Build: the normal coding flow.
   // Build: work on the project. Plan: propose a plan to approve first. Ask: answer, change nothing.
   const [mode, setModeState] = useState<ChatMode>(readModePref)
@@ -212,16 +228,36 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
     window.vibe.chat.isGoNutzMode(project.id).then(setGoNutz)
   }, [project.id])
 
-  const togglePreview = useCallback(() => {
-    setShowPreview((prev) => {
-      try {
-        localStorage.setItem(PREVIEW_PREF_KEY, String(!prev))
-      } catch {
-        // Only a remembered preference; fine to lose.
-      }
-      return !prev
-    })
+  const setSideOpen = useCallback((open: boolean) => {
+    setShowPreview(open)
+    try {
+      localStorage.setItem(PREVIEW_PREF_KEY, String(open))
+    } catch {
+      // Only a remembered preference; fine to lose.
+    }
   }, [])
+
+  const setSidePane = useCallback((pane: SidePane) => {
+    setSidePaneState(pane)
+    try {
+      localStorage.setItem(SIDE_PREF_KEY, pane)
+    } catch {
+      // Only a remembered preference; fine to lose.
+    }
+  }, [])
+
+  /** The Preview and Notes buttons: open that pane, or close it if it's already showing. */
+  const toggleSide = useCallback(
+    (pane: SidePane) => {
+      if (showPreview && sidePane === pane) {
+        setSideOpen(false)
+      } else {
+        setSidePane(pane)
+        setSideOpen(true)
+      }
+    },
+    [showPreview, sidePane, setSideOpen, setSidePane]
+  )
 
   const handleGoNutzChange = useCallback(
     async (enabled: boolean) => {
@@ -249,7 +285,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             // Plan bookkeeping isn't work on the project: the plan card shows it.
             if (
               event.name === 'mcp__vibe_tools__plan_progress' ||
-              (event.name === 'Write' && /[\\/]\.claude[\\/]plans[\\/]/.test(String((event.input as { file_path?: string })?.file_path ?? '')))
+              ((event.name === 'Write' || event.name === 'Read' || event.name === 'Edit') &&
+                /[\\/]\.claude[\\/]plans[\\/]/.test(String((event.input as { file_path?: string })?.file_path ?? '')))
             ) {
               return prev
             }
@@ -543,7 +580,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
       element?: PickedElement,
       images: PendingImage[] = [],
       forceBuild = false,
-      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
+      extra?: { mode?: 'build' | 'plan'; approvedPlan?: string; todoId?: string }
     ) => {
       // Plan mode (unless this is an answer to a plan, which says what it is itself).
       const sendExtra = extra ?? (mode === 'plan' && !forceBuild ? { mode: 'plan' as const } : undefined)
@@ -799,8 +836,15 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         <button onClick={onBack}>&larr; Projects</button>
         <span className="chat-project-name">{project.name}</span>
         <div className="chat-header-actions" data-scroll-x>
-          <button className={showPreview ? 'active' : ''} onClick={togglePreview}>
+          <button className={showPreview && sidePane === 'preview' ? 'active' : ''} onClick={() => toggleSide('preview')}>
             Preview
+          </button>
+          <button
+            className={showPreview && sidePane === 'notes' ? 'active' : ''}
+            onClick={() => toggleSide('notes')}
+            title="This project's to-do list and notes"
+          >
+            📝 Notes
           </button>
           <button onClick={() => setDialog('secrets')} title="API keys and passwords for this project">
             🔑 Secrets
@@ -824,14 +868,34 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         </div>
       )}
 
-      {phone && showPreview && (
+      {phone && (
         <div className="mobile-pane-switch chat-mode-switch" role="tablist" aria-label="Show">
-          <button role="tab" aria-selected={phonePane === 'chat'} className={phonePane === 'chat' ? 'active' : ''} onClick={() => setPhonePane('chat')}>
+          <button
+            role="tab"
+            aria-selected={phonePane === 'chat' || !showPreview}
+            className={phonePane === 'chat' || !showPreview ? 'active' : ''}
+            onClick={() => setPhonePane('chat')}
+          >
             💬 Chat
           </button>
-          <button role="tab" aria-selected={phonePane === 'preview'} className={phonePane === 'preview' ? 'active' : ''} onClick={() => setPhonePane('preview')}>
-            👁 Preview
-          </button>
+          {(['preview', 'notes'] as const).map((pane) => {
+            const on = showPreview && phonePane === 'preview' && sidePane === pane
+            return (
+              <button
+                key={pane}
+                role="tab"
+                aria-selected={on}
+                className={on ? 'active' : ''}
+                onClick={() => {
+                  setSidePane(pane)
+                  setSideOpen(true)
+                  setPhonePane('preview')
+                }}
+              >
+                {pane === 'preview' ? '👁 Preview' : '📝 Notes'}
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -928,13 +992,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     busy={busy}
                     onApprove={() => {
                       void window.vibe.chat.planDecided(project.id, item.toolUseId, 'approved')
-                      sendMessage('✅ Approved the plan. Go ahead and build it.', undefined, [], true, { approvedPlan: item.plan })
+                      const todoId = planTodo.current ?? undefined
+                      planTodo.current = null
+                      sendMessage('✅ Approved the plan. Go ahead and build it.', undefined, [], true, { approvedPlan: item.plan, todoId })
                     }}
                     onRevise={(feedback) => {
                       void window.vibe.chat.planDecided(project.id, item.toolUseId, 'revised')
                       sendMessage(`Change the plan: ${feedback}`, undefined, [], true, { mode: 'plan' })
                     }}
-                    onCancel={() => void window.vibe.chat.planDecided(project.id, item.toolUseId, 'cancelled')}
+                    onCancel={() => {
+                      planTodo.current = null
+                      void window.vibe.chat.planDecided(project.id, item.toolUseId, 'cancelled')
+                    }}
                   />
                 )}
                 {item.kind === 'plan_suggestion' && (
@@ -1293,14 +1362,35 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         </div>
 
         {showPreview && (
-          <PreviewPane
+          // Kept running behind the Notes tab, so switching back doesn't reload the app.
+          <div style={{ display: sidePane === 'preview' ? 'contents' : 'none' }}>
+            <PreviewPane
+              projectId={project.id}
+              projectPath={project.path}
+              refreshToken={refreshToken}
+              picking={picking}
+              onPickingChange={setPicking}
+              onPicked={handlePicked}
+              onProblem={handleProblem}
+            />
+          </div>
+        )}
+        {showPreview && sidePane === 'notes' && (
+          <NotesPane
             projectId={project.id}
-            projectPath={project.path}
-            refreshToken={refreshToken}
-            picking={picking}
-            onPickingChange={setPicking}
-            onPicked={handlePicked}
-            onProblem={handleProblem}
+            busy={busy}
+            onBuild={(todo, plan) => {
+              if (phone) setPhonePane('chat')
+              if (plan) {
+                planTodo.current = todo.id
+                sendMessage(todo.text, undefined, [], true, { mode: 'plan' })
+              } else {
+                planTodo.current = null
+                sendMessage(todo.text, undefined, [], true, { todoId: todo.id })
+              }
+            }}
+            onOpenSecrets={() => setDialog('secrets')}
+            onError={onError}
           />
         )}
       </div>

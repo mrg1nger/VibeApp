@@ -15,8 +15,8 @@
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { deflateSync } from 'node:zlib'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,6 +55,7 @@ const originalShop = readFileSync(join(project, 'shop.js'), 'utf-8')
 
 const data = mkdtempSync(join(tmpdir(), 'vibeapp-e2e-data-'))
 const PROJECT_ID = 'e2e-project'
+const E2E_CODEX_MODEL = process.env.VIBEAPP_E2E_CODEX_MODEL ?? ''
 writeFileSync(
   join(data, 'projects.json'),
   JSON.stringify({ projects: [{ id: PROJECT_ID, path: project, name: 'e2e-game', lastOpened: new Date().toISOString() }] })
@@ -67,7 +68,9 @@ writeFileSync(
     smartRouting: false, // no "quick edit" shortcut that would skip the review
     codexReview: true,
     autoMemory: false,
-    codeMap: false
+    codeMap: false,
+    // Optional: when OpenAI is turning the usual Codex model away, test with another one.
+    codexModel: E2E_CODEX_MODEL || null
   })
 )
 
@@ -268,6 +271,23 @@ async function step(name, fn) {
 
 const takeoverSwitch = join(data, 'test-claude-out')
 
+// Claude Code writes plans to the real ~/.claude/plans; this run's are the new ones about the test shop.
+const testStart = Date.now()
+const plansDir = join(homedir(), '.claude', 'plans')
+function planFilesFromThisRun() {
+  if (!existsSync(plansDir)) return []
+  return readdirSync(plansDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => join(plansDir, f))
+    .filter((f) => {
+      try {
+        return statSync(f).mtimeMs >= testStart - 1000 && /shop\.js/.test(readFileSync(f, 'utf-8'))
+      } catch {
+        return false
+      }
+    })
+}
+
 try {
   if (!page) throw new Error('The app window never appeared.')
 
@@ -443,6 +463,72 @@ try {
     if (readFileSync(join(project, 'shop.js'), 'utf-8') !== before) throw new Error('shop.js changed')
   })
 
+  await step('built and cancelled plans leave no old plan file behind', async () => {
+    // Claude Code's plan files are in the real ~/.claude/plans (it has no test setting); count this run's.
+    const left = planFilesFromThisRun()
+    if (left.length) throw new Error(`still there: ${left.join(', ')}`)
+  })
+
+  // -- the Notes tab: to-do list and notes --
+
+  const todos = () => evaluate(`window.vibe.todos.list(${JSON.stringify(PROJECT_ID)})`)
+
+  await step('the Notes tab saves to-dos and notes, and warns about a secret key', async () => {
+    await click('Notes', '.chat-header-actions button')
+    await waitFor(`!!document.querySelector('.todo-add input')`, 'the Notes tab', 10_000)
+    for (const text of ['Add a shield to shop.js costing 60 gold', 'Write a README']) {
+      await fill('.todo-add input', text)
+      await click('Add', '.todo-add button')
+    }
+    await waitFor(`document.querySelectorAll('.todo-list .todo-item').length === 2`, 'both to-dos', 10_000)
+    await evaluate(`[...document.querySelectorAll('.todo-item')].find((r) => r.textContent.includes('README')).querySelector('input[type=checkbox]').click()`)
+    await waitFor(`/Done \\(1\\)/.test(document.querySelector('.notes-pane').innerText)`, 'the done list', 10_000)
+    await fill('textarea.notes-text', 'Test server: http://localhost:3000\nLogin: admin / admin')
+    await sleep(1500)
+    const saved = await evaluate(`window.vibe.notes.get(${JSON.stringify(PROJECT_ID)})`)
+    if (!/localhost:3000/.test(saved.text)) throw new Error(`notes not saved: ${JSON.stringify(saved)}`)
+    await fill('textarea.notes-text', 'Test server: http://localhost:3000\nAWS key AKIAABCDEFGHIJKLMNOP')
+    await waitFor(`!!document.querySelector('.notes-secret-warning')`, 'the secret warning', 5000)
+    await fill('textarea.notes-text', 'Test server: http://localhost:3000')
+    await sleep(1500)
+    const list = await todos()
+    if (list.length !== 2 || !list.find((t) => /README/.test(t.text))?.done) throw new Error(`to-dos: ${JSON.stringify(list)}`)
+  })
+
+  await step('"Build this" sends a to-do to Claude and ticks it off when done', async () => {
+    await evaluate(`[...document.querySelectorAll('.todo-item')].find((r) => r.textContent.includes('shield')).querySelector('.todo-build').click()`)
+    await waitFor(`!!document.querySelector('.chat-stop')`, 'the request to start', 15_000)
+    await idle(600_000)
+    if (!/shield/i.test(readFileSync(join(project, 'shop.js'), 'utf-8'))) throw new Error('shop.js has no shield')
+    await waitFor(
+      `window.vibe.todos.list(${JSON.stringify(PROJECT_ID)}).then((l) => l.find((t) => /shield/.test(t.text))?.done === true)`,
+      'the to-do to be ticked off',
+      20_000
+    )
+    writeFileSync(join(project, 'shop.js'), originalShop)
+  })
+
+  await step('Claude reads the notes when asked, and adds a leftover to the to-do list', async () => {
+    await send('Check my notes for this project and tell me the test server address. Also put "Add a sell button to the shop" on my to-do list for later. Change no files.')
+    await idle(300_000)
+    if (!/localhost:3000/.test(await lastReply())) throw new Error(`no address in the reply: ${(await lastReply()).slice(0, 200)}`)
+    // The list on screen updates by itself (the agent writes from its own process).
+    await waitFor(`[...document.querySelectorAll('.todo-item')].some((r) => /sell button/i.test(r.textContent) && /from Claude/.test(r.textContent))`, 'the new to-do on screen', 20_000)
+  })
+
+  await step('Codex adds to the to-do list too', async () => {
+    writeFileSync(takeoverSwitch, '')
+    try {
+      await send('Put "Check the shop on a phone" on my to-do list for later, using your to-do tools. Change no files.')
+      await idle(600_000)
+    } finally {
+      rmSync(takeoverSwitch, { force: true })
+    }
+    await waitFor(`[...document.querySelectorAll('.todo-item')].some((r) => /on a phone/i.test(r.textContent) && /from Codex/.test(r.textContent))`, "Codex's to-do on screen", 20_000)
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed')
+    await click('Preview', '.chat-header-actions button')
+  })
+
   // -- asking --
 
   await step('Ask mode answers without changing anything', async () => {
@@ -570,15 +656,19 @@ try {
 
   await step('with "ask me first", Codex only runs after "Let Codex do it"', async () => {
     await evaluate(`window.vibe.settings.update({ limitTakeover: 'ask' })`)
-    await type('Create a file second.txt containing ok.')
-    await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Let Codex do it'))`, 'the offer button', 30_000)
-    if (existsSync(join(project, 'second.txt'))) throw new Error('ran before being asked')
-    await click('Let Codex do it')
-    await waitFor(`!!document.querySelector('.chat-stop')`, 'Codex to start', 15_000)
-    await idle(600_000)
-    if (!existsSync(join(project, 'second.txt'))) throw new Error('Codex did not create the file')
-    await evaluate(`window.vibe.settings.update({ limitTakeover: 'auto' })`)
-    rmSync(takeoverSwitch, { force: true })
+    try {
+      await type('Create a file second.txt containing ok.')
+      await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Let Codex do it'))`, 'the offer button', 30_000)
+      if (existsSync(join(project, 'second.txt'))) throw new Error('ran before being asked')
+      await click('Let Codex do it')
+      await waitFor(`!!document.querySelector('.chat-stop')`, 'Codex to start', 15_000)
+      await idle(600_000)
+      if (!existsSync(join(project, 'second.txt'))) throw new Error('Codex did not create the file')
+    } finally {
+      // Even when it fails, so the steps after it use Claude again.
+      await evaluate(`window.vibe.settings.update({ limitTakeover: 'auto' })`).catch(() => undefined)
+      rmSync(takeoverSwitch, { force: true })
+    }
   })
 
   // -- shrinking and stopping --
@@ -638,8 +728,8 @@ try {
     if (saved.codexModel !== models[0] || saved.codexEffort !== efforts[0]) {
       throw new Error(`saved ${saved.codexModel} / ${saved.codexEffort}`)
     }
-    // Back to Codex's defaults for anything after this.
-    await choose('Codex (', '')
+    // Back to how the test started for anything after this.
+    await choose('Codex (', E2E_CODEX_MODEL)
     await choose('Codex thinking', '')
     await sleep(500)
   })
@@ -778,6 +868,8 @@ try {
   console.log(`✖ ${err.message}`)
   results.push({ name: 'setup', ok: false, error: err.message })
 } finally {
+  // Leave nothing in the user's real Claude folder.
+  for (const f of planFilesFromThisRun()) rmSync(f, { force: true })
   try {
     await Promise.race([cdp('Browser.close'), sleep(2000)])
   } catch {

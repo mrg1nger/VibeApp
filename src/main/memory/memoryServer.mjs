@@ -26,7 +26,11 @@ import {
   getHandoff,
   searchCode,
   countCodeFiles,
-  hashFile
+  hashFile,
+  listTodos,
+  addTodo,
+  updateTodo,
+  getNotes
 } from './store'
 
 const dbPath = process.argv[2]
@@ -210,6 +214,70 @@ server.registerTool(
       return `- ${f.path}: ${f.summary}${stale}`
     })
     return text(`Files matching "${query}":\n${lines.join('\n')}`)
+  }
+)
+
+// The user's own to-do list and notes for this project (shown on its Notes tab).
+
+const describeTodo = (t) => `- ${t.done ? '[done] ' : ''}${t.text} (id ${t.id}${t.source !== 'user' ? `, added by ${t.source}` : ''})`
+
+server.registerTool(
+  'todos',
+  {
+    description:
+      "The user's to-do list for this project (their Notes tab). Look at it when the user mentions their to-do list or asks what's left, or before adding an item.",
+    inputSchema: {}
+  },
+  async () => {
+    const all = listTodos(db, projectId)
+    const open = all.filter((t) => !t.done)
+    const done = all.filter((t) => t.done)
+    if (!all.length) return text('The to-do list is empty.')
+    return text(
+      `Open (${open.length}):\n${open.map(describeTodo).join('\n') || '(none)'}${
+        done.length ? `\n\nRecently finished:\n${done.slice(0, 5).map(describeTodo).join('\n')}` : ''
+      }`
+    )
+  }
+)
+
+server.registerTool(
+  'add_todo',
+  {
+    description:
+      "Put something on the user's to-do list for this project, so it isn't lost in the chat: follow-up work you noticed but are not doing now (out of scope for this request, a review issue left unfixed, a known limitation, an idea worth doing later). One short line saying what to do. Don't add what you are about to do yourself in this request.",
+    inputSchema: {
+      text: z.string().describe('What to do, as one short line (e.g. "Add a loading spinner to the shop screen").')
+    }
+  },
+  async ({ text: item }) => {
+    const { todo, duplicate } = addTodo(db, projectId, item, agentSource)
+    return text(duplicate ? `Already on the list: ${todo.text} (id ${todo.id}).` : `Added to the to-do list: ${todo.text} (id ${todo.id}).`)
+  }
+)
+
+server.registerTool(
+  'complete_todo',
+  {
+    description: "Tick off an item on the user's to-do list once you have actually finished it (use its id from todos).",
+    inputSchema: { id: z.string() }
+  },
+  async ({ id }) => {
+    const todo = updateTodo(db, projectId, id, { done: true })
+    return text(todo ? `Ticked off: ${todo.text}` : `No to-do with id ${id}.`)
+  }
+)
+
+server.registerTool(
+  'notes',
+  {
+    description:
+      "Read the user's own notes for this project (their Notes tab: addresses, steps, ideas). Only when the user refers to their notes or asks you to check them.",
+    inputSchema: {}
+  },
+  async () => {
+    const notes = getNotes(db, projectId)
+    return text(notes.text.trim() ? `The user's notes:\n${notes.text}` : 'The user has no notes for this project.')
   }
 )
 

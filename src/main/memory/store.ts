@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs'
 import { basename, dirname, join } from 'path'
-import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact } from '@shared/types'
+import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact, type TodoItem } from '@shared/types'
 
 // The shared memory: one SQLite file used by the app (Memory screen, key
 // facts for prompts, tidy-up) and by every memory tool process (one per
@@ -13,7 +13,7 @@ import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact } from '@shared
 /** Facts in the global scope apply to every project. */
 export const GLOBAL_SCOPE = 'global'
 
-const SCHEMA_VERSION = 2
+const SCHEMA_VERSION = 3
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -118,6 +118,25 @@ CREATE TABLE IF NOT EXISTS usage_log (
   cost_usd REAL
 );
 CREATE INDEX IF NOT EXISTS usage_at ON usage_log(at);
+
+-- The user's own to-do list and notes for each project (the agents can add to-dos and read both).
+CREATE TABLE IF NOT EXISTS todos (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  position REAL NOT NULL,
+  source TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  done_at TEXT
+);
+CREATE INDEX IF NOT EXISTS todos_project ON todos(project_id, done, position);
+CREATE TABLE IF NOT EXISTS notes (
+  project_id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `
 
 const databases = new Map<string, DatabaseSync>()
@@ -823,6 +842,8 @@ export function eraseProjectFromMemory(
     const handoffs = count('DELETE FROM handoffs WHERE project_id = ?')
     const files = count('DELETE FROM code_files WHERE project_id = ?')
     count('DELETE FROM usage_log WHERE project_id = ?')
+    count('DELETE FROM todos WHERE project_id = ?')
+    count('DELETE FROM notes WHERE project_id = ?')
     db.prepare('DELETE FROM meta WHERE key IN (?, ?, ?)').run(
       `history_imported:${projectId}`,
       `tidy:${projectId}`,
@@ -830,6 +851,150 @@ export function eraseProjectFromMemory(
     )
     return { facts, messages, handoffs, files }
   })
+}
+
+// ---- the user's to-do list and notes -------------------------------------------------
+
+/** Longest to-do (one line) and notes (a page or two) kept. */
+export const TODO_MAX_CHARS = 300
+export const NOTES_MAX_CHARS = 50_000
+
+interface TodoRow {
+  id: string
+  text: string
+  done: number
+  source: string
+  created_at: string
+  done_at: string | null
+}
+
+function toTodo(row: TodoRow): TodoItem {
+  return {
+    id: row.id,
+    text: row.text,
+    done: row.done === 1,
+    source: row.source === 'claude' || row.source === 'codex' ? row.source : 'user',
+    createdAt: row.created_at,
+    doneAt: row.done_at
+  }
+}
+
+/** Open items in the user's order, then finished ones (newest first). */
+export function listTodos(db: DatabaseSync, projectId: string): TodoItem[] {
+  const rows = db
+    .prepare(
+      'SELECT id, text, done, source, created_at, done_at FROM todos WHERE project_id = ? ORDER BY done, CASE WHEN done = 1 THEN done_at END DESC, position'
+    )
+    .all(projectId) as unknown as TodoRow[]
+  return rows.map(toTodo)
+}
+
+function oneLineTodo(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, TODO_MAX_CHARS)
+}
+
+/**
+ * Adds a to-do at the end (or the top). An open item with the same words
+ * isn't added twice: the agents may report the same leftover more than once.
+ */
+export function addTodo(
+  db: DatabaseSync,
+  projectId: string,
+  text: string,
+  source: string,
+  opts: { top?: boolean } = {}
+): { todo: TodoItem; duplicate: boolean } {
+  const clean = oneLineTodo(text)
+  if (!clean) throw new Error('A to-do needs some text.')
+  const open = listTodos(db, projectId).filter((t) => !t.done)
+  const same = open.find((t) => t.text.toLowerCase() === clean.toLowerCase() || similarity(t.text, clean) >= 0.85)
+  if (same) return { todo: same, duplicate: true }
+  const edge = db
+    .prepare(`SELECT ${opts.top ? 'MIN' : 'MAX'}(position) AS p FROM todos WHERE project_id = ? AND done = 0`)
+    .get(projectId) as { p: number | null }
+  const position = edge.p === null ? 0 : opts.top ? edge.p - 1 : edge.p + 1
+  const id = newId()
+  const at = now()
+  db.prepare(
+    'INSERT INTO todos (id, project_id, text, done, position, source, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?)'
+  ).run(id, projectId, clean, position, source === 'claude' || source === 'codex' ? source : 'user', at, at)
+  return { todo: listTodos(db, projectId).find((t) => t.id === id) as TodoItem, duplicate: false }
+}
+
+/** Changes a to-do's text or ticks it on/off. Returns null if it isn't in this project. */
+export function updateTodo(
+  db: DatabaseSync,
+  projectId: string,
+  id: string,
+  patch: { text?: string; done?: boolean }
+): TodoItem | null {
+  const row = db.prepare('SELECT id, done FROM todos WHERE id = ? AND project_id = ?').get(id, projectId) as
+    | { id: string; done: number }
+    | undefined
+  if (!row) return null
+  const at = now()
+  if (patch.text !== undefined) {
+    const clean = oneLineTodo(patch.text)
+    if (!clean) throw new Error('A to-do needs some text.')
+    db.prepare('UPDATE todos SET text = ?, updated_at = ? WHERE id = ?').run(clean, at, id)
+  }
+  if (patch.done !== undefined && patch.done !== (row.done === 1)) {
+    // Un-ticking puts it back at the end of the open list.
+    const end = db.prepare('SELECT MAX(position) AS p FROM todos WHERE project_id = ? AND done = 0').get(projectId) as { p: number | null }
+    db.prepare('UPDATE todos SET done = ?, done_at = ?, position = ?, updated_at = ? WHERE id = ?').run(
+      patch.done ? 1 : 0,
+      patch.done ? at : null,
+      patch.done ? 0 : (end.p ?? 0) + 1,
+      at,
+      id
+    )
+  }
+  return listTodos(db, projectId).find((t) => t.id === id) ?? null
+}
+
+export function deleteTodo(db: DatabaseSync, projectId: string, id: string): boolean {
+  return Number(db.prepare('DELETE FROM todos WHERE id = ? AND project_id = ?').run(id, projectId).changes) > 0
+}
+
+/** Clears the finished items. */
+export function clearDoneTodos(db: DatabaseSync, projectId: string): number {
+  return Number(db.prepare('DELETE FROM todos WHERE project_id = ? AND done = 1').run(projectId).changes)
+}
+
+/** Puts the open items in this order (ids not listed keep their place after them). */
+export function reorderTodos(db: DatabaseSync, projectId: string, ids: string[]): void {
+  transaction(db, () => {
+    const set = db.prepare('UPDATE todos SET position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND done = 0')
+    const at = now()
+    ids.forEach((id, i) => set.run(i, at, id, projectId))
+    const rest = db
+      .prepare(`SELECT id FROM todos WHERE project_id = ? AND done = 0 AND id NOT IN (${ids.map(() => '?').join(',') || "''"}) ORDER BY position`)
+      .all(projectId, ...ids) as { id: string }[]
+    rest.forEach((r, i) => set.run(ids.length + i, at, r.id, projectId))
+  })
+}
+
+export function getNotes(db: DatabaseSync, projectId: string): { text: string; updatedAt: string | null } {
+  const row = db.prepare('SELECT text, updated_at FROM notes WHERE project_id = ?').get(projectId) as
+    | { text: string; updated_at: string }
+    | undefined
+  return { text: row?.text ?? '', updatedAt: row?.updated_at ?? null }
+}
+
+export function setNotes(db: DatabaseSync, projectId: string, text: string): string {
+  const at = now()
+  db.prepare(
+    'INSERT INTO notes (project_id, text, updated_at) VALUES (?, ?, ?) ON CONFLICT(project_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at'
+  ).run(projectId, text.slice(0, NOTES_MAX_CHARS), at)
+  return at
+}
+
+/** Changes whenever any project's to-dos change (including from an agent's own process). */
+export function todosSignature(db: DatabaseSync): Map<string, string> {
+  const rows = db
+    .prepare('SELECT project_id, COUNT(*) AS n, MAX(updated_at) AS at FROM todos GROUP BY project_id')
+    .all() as { project_id: string; n: number; at: string }[]
+  return new Map(rows.map((r) => [r.project_id, `${r.n}:${r.at}`]))
 }
 
 // ---- usage log ---------------------------------------------------------------

@@ -12,6 +12,7 @@ import type {
   ModelOption,
   CodexModelList,
   ExtensionCheck,
+  TodoItem,
   PickedElement,
   PreviewProblem,
   PreviewState,
@@ -149,7 +150,7 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         picked?: PickedElement,
         images?: ImageAttachment[],
         forceBuild?: boolean,
-        extra?: { mode?: 'build' | 'plan'; approvedPlan?: string }
+        extra?: { mode?: 'build' | 'plan'; approvedPlan?: string; todoId?: string }
       ): Promise<{ snapshot?: string; thumbnails: string[] }> =>
         ipcRenderer.invoke('vibe:chat:send', projectId, projectPath, text, picked, images, forceBuild, extra),
       planDecided: (projectId: string, toolUseId: string, decision: 'approved' | 'revised' | 'cancelled'): Promise<void> =>
@@ -308,6 +309,32 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         ipcRenderer.invoke('vibe:memory:brief', projectId),
       refresh: (projectId: string, projectPath: string): Promise<{ text: string; updatedAt: string } | null> =>
         ipcRenderer.invoke('vibe:memory:refreshBrief', projectId, projectPath)
+    },
+
+    todos: {
+      list: (projectId: string): Promise<TodoItem[]> => ipcRenderer.invoke('vibe:todos:list', projectId),
+      add: (projectId: string, text: string, top?: boolean): Promise<TodoItem[]> =>
+        ipcRenderer.invoke('vibe:todos:add', projectId, text, top),
+      update: (projectId: string, id: string, patch: { text?: string; done?: boolean }): Promise<TodoItem[]> =>
+        ipcRenderer.invoke('vibe:todos:update', projectId, id, patch),
+      remove: (projectId: string, id: string): Promise<TodoItem[]> => ipcRenderer.invoke('vibe:todos:remove', projectId, id),
+      clearDone: (projectId: string): Promise<TodoItem[]> => ipcRenderer.invoke('vibe:todos:clearDone', projectId),
+      reorder: (projectId: string, ids: string[]): Promise<TodoItem[]> => ipcRenderer.invoke('vibe:todos:reorder', projectId, ids),
+      onChanged: (cb: (projectId: string) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string): void => cb(projectId)
+        ipcRenderer.on('vibe:todos:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:todos:changed', listener)
+      }
+    },
+
+    notes: {
+      get: (projectId: string): Promise<{ text: string; updatedAt: string | null }> => ipcRenderer.invoke('vibe:notes:get', projectId),
+      set: (projectId: string, text: string): Promise<{ updatedAt: string }> => ipcRenderer.invoke('vibe:notes:set', projectId, text),
+      onChanged: (cb: (projectId: string, updatedAt: string) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string, updatedAt: string): void => cb(projectId, updatedAt)
+        ipcRenderer.on('vibe:notes:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:notes:changed', listener)
+      }
     },
 
     extensions: {

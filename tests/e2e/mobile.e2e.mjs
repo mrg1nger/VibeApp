@@ -197,6 +197,13 @@ try {
     if (tab) await click('Preview', '.mobile-pane-switch button')
     await waitFor(browser, `!!document.querySelector('iframe.preview-frame') && document.querySelector('iframe.preview-frame').getBoundingClientRect().width > 200`, 'the preview to be visible', 60_000)
   })
+  await screen('06b-notes', async () => {
+    await click('Notes', '.mobile-pane-switch button')
+    await browser.evaluate(
+      `(async () => { const p = (await window.vibe.project.list()).find((x) => x.name === 'phone-game'); await window.vibe.todos.add(p.id, 'Add a shield to the shop costing 60 gold'); await window.vibe.todos.add(p.id, 'Check the shop screen on a small phone and make sure every button can be tapped'); return true })()`
+    )
+    await waitFor(browser, `document.querySelectorAll('.todo-item').length >= 2 && !!document.querySelector('.notes-text, .notes-view')`, 'the Notes tab')
+  })
   await screen('07-secrets-dialog', async () => {
     const back = await browser.evaluate(`!!document.querySelector('.mobile-pane-switch')`)
     if (back) await click('Chat', '.mobile-pane-switch button')

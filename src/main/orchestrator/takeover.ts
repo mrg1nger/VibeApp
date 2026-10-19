@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
 import type { VibeEvent } from '@shared/types'
-import { runCodexExec } from '../cli/codexExec'
+import { codexReport, runCodexExec } from '../cli/codexExec'
 import { changeStats, takeSnapshot, type FileChange } from '../git/snapshots'
 import { handoffContext } from '../memory/context'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
@@ -194,7 +194,7 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
     })
 
     status = result.exitCode === 0 ? 'done' : 'error'
-    report = result.finalMessage || '(Codex finished with no final message.)'
+    report = codexReport(result)
     if (before) {
       const after = await takeSnapshot(projectPath, 'after takeover').catch(() => undefined)
       if (after) changes = await changeStats(projectPath, before, after).catch(() => null)

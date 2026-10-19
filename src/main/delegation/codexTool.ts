@@ -3,7 +3,7 @@ import { app } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import * as z from 'zod/v4'
-import { runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
+import { codexReport, runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
 import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
 import { codeSummariesFor, finishHandoff, keyFactsBlock, reviewConventions, startHandoff } from '../memory/store'
@@ -250,7 +250,7 @@ export function createCodexDelegationServer(
             recordUsage(projectId, 'handoff', 'codex', countsFromCodexEvents(result.events))
 
             const full = `${continued ? '(Continued the earlier Codex session from this request.)\n' : ''}${
-              result.finalMessage || '(Codex finished with no final message.)'
+              codexReport(result)
             }`
             const status = result.exitCode === 0 ? 'done' : 'error'
             const { changes, diff, checks, checksOk } = await outcome(status, full)

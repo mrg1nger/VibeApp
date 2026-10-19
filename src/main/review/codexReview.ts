@@ -1,5 +1,5 @@
 import type { ReviewFinding } from '@shared/types'
-import { runCodexExec } from '../cli/codexExec'
+import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import { diffSnapshots } from '../git/snapshots'
 import { getSettings } from '../settings/store'
@@ -79,7 +79,7 @@ export async function reviewChanges(
   })
   recordUsage(projectId, 'review', 'codex', countsFromCodexEvents(result.events))
   if (result.exitCode !== 0 && !result.finalMessage) {
-    throw new Error(`Codex exited with code ${result.exitCode}`)
+    throw new Error(codexFailure(result) ?? `Codex exited with code ${result.exitCode}`)
   }
   let parsed: ReviewResult
   try {
