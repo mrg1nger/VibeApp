@@ -144,6 +144,8 @@ export interface CodexExecArgs {
   effort?: string
   /** Look but don't touch: read-only sandbox (overrides the other sandbox options). */
   readOnly?: boolean
+  /** With readOnly: these memory tools only (e.g. the to-do list), for answering a question. */
+  readOnlyMemory?: { scriptPath: string; dbPath: string; projectId: string; projectPath: string; tools: string[] }
   /** Don't keep a Codex session file for this run. */
   ephemeral?: boolean
   /** Image files to attach to the prompt (the user's pasted screenshots). */
@@ -307,6 +309,25 @@ ${args.prompt}`
     // simply missing and Codex improvised instead. Wait for them, up to a
     // limit (verified: it only waits as long as the servers take).
     if (extensions.length) cliArgs.push('-c', 'mcp_optional_startup_grace_ms=20000')
+  } else if (args.readOnly && args.readOnlyMemory) {
+    // A question answered read-only (Ask mode) may still use some memory tools,
+    // such as the user's to-do list. Under the read-only sandbox Codex refuses
+    // tool calls that need approval, so approve just these tools; the sandbox
+    // keeps blocking file changes (both verified against codex-cli 0.158).
+    const m = args.readOnlyMemory
+    const toForwardSlash = (p: string): string => p.replace(/\\/g, '/')
+    cliArgs.push(
+      '-c',
+      `mcp_servers.vibe_memory.command="${toForwardSlash(process.execPath)}"`,
+      '-c',
+      `mcp_servers.vibe_memory.args=["${toForwardSlash(m.scriptPath)}","${toForwardSlash(m.dbPath)}","${m.projectId}","codex","${toForwardSlash(m.projectPath)}"]`,
+      '-c',
+      'mcp_servers.vibe_memory.env={"ELECTRON_RUN_AS_NODE"="1"}',
+      '-c',
+      `mcp_servers.vibe_memory.enabled_tools=${JSON.stringify(m.tools.filter((t) => /^[a-z_]+$/.test(t)))}`,
+      '-c',
+      'mcp_servers.vibe_memory.default_tools_approval_mode="approve"'
+    )
   }
 
   // Resuming: the shared flags go before the subcommand (verified against the CLI).

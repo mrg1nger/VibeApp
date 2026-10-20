@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isPlainQuestion } from '../../src/main/orchestrator/questions'
+import { isPlainQuestion, isTodoListRequest } from '../../src/main/orchestrator/questions'
 import { parseClassification } from '../../src/main/orchestrator/classifier'
 import { applyBalance, autoLean } from '@shared/balance'
 
@@ -33,6 +33,28 @@ test('requests to change things stay Build requests', () => {
   ]) {
     assert.equal(isPlainQuestion(text), false, text)
   }
+})
+
+test('putting something on the to-do list takes the cheap path; building a to-do feature does not', () => {
+  for (const text of [
+    'Add "fix the shop button" to my to-do list',
+    'put check the phone layout on my todo list for later',
+    'Please add a sell button idea to the to-do list.',
+    'tick off the shield on my to-do list',
+    'Mark the README item as done on my to-do list'
+  ]) {
+    assert.equal(isTodoListRequest(text), true, text)
+  }
+  for (const text of [
+    'Add a to-do list to my app',
+    'Add a todo list page with a delete button',
+    'Fix the to-do list component so items save',
+    'add dark mode to the to-do list page',
+    'Add a shop screen\nand put it on my to-do list'
+  ]) {
+    assert.equal(isTodoListRequest(text), false, text)
+  }
+  assert.equal(isPlainQuestion("What's left on my to-do list?"), true)
 })
 
 test('classifier replies are parsed strictly', () => {

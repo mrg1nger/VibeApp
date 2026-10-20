@@ -14,6 +14,23 @@ const QUESTION_WORD =
 
 const MAX_CHARS = 400
 
+const TODO_LIST = String.raw`(?:my|the|our|this project'?s)\s+(?:to-?\s?do|todo)(?:\s+list)?`
+
+/**
+ * A short message that only asks to put something on (or tick it off) the
+ * user's own to-do list: "add X to my to-do list", "tick off X on my to-do
+ * list". Keeping a list isn't changing the project, so the cheap path can do
+ * it. Anything else that mentions a to-do list ("add a to-do list to my app")
+ * stays a Build request.
+ */
+export function isTodoListRequest(text: string): boolean {
+  const t = text.trim().replace(/[.!]+$/, '')
+  if (!t || t.length > 300 || /\n/.test(t)) return false
+  const add = new RegExp(String.raw`^(?:please\s+)?(?:add|put|note|jot down|stick)\b.+\b(?:to|on|onto|in)\s+${TODO_LIST}(?:\s+for later)?(?:,?\s+please)?$`, 'i')
+  const tick = new RegExp(String.raw`^(?:please\s+)?(?:tick|check|cross|mark)\s+(?:off\s+)?.+\b(?:off|done|as done)?\s*(?:on|from|in)\s+${TODO_LIST}(?:,?\s+please)?$`, 'i')
+  return add.test(t) || tick.test(t)
+}
+
 /** True when the whole message is a plain question (nothing asked to be changed). */
 export function isPlainQuestion(text: string): boolean {
   const trimmed = text.trim()

@@ -526,6 +526,49 @@ try {
     }
     await waitFor(`[...document.querySelectorAll('.todo-item')].some((r) => /on a phone/i.test(r.textContent) && /from Codex/.test(r.textContent))`, "Codex's to-do on screen", 20_000)
     if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed')
+  })
+
+  const todoOnScreen = (pattern, who) =>
+    waitFor(
+      `[...document.querySelectorAll('.todo-item')].some((r) => ${pattern}.test(r.textContent) && /from ${who}/.test(r.textContent))`,
+      `the to-do from ${who} on screen`,
+      20_000
+    )
+
+  await step('Ask mode adds to the to-do list and reads the notes, changing no files', async () => {
+    await click('Ask', '.chat-mode-switch button')
+    try {
+      await send('Put "Try the shop on a tablet" on my to-do list, and tell me the test server address from my notes.')
+      await idle(300_000)
+      if (!/localhost:3000/.test(await lastReply())) throw new Error(`no address in the reply: ${(await lastReply()).slice(0, 200)}`)
+      await todoOnScreen('/on a tablet/i', 'Claude')
+    } finally {
+      await click('Build', '.chat-mode-switch button')
+    }
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed')
+  })
+
+  await step('"add X to my to-do list" typed in Build takes the cheap path', async () => {
+    await send('Add "Tidy up the shop prices" to my to-do list')
+    await idle(300_000)
+    const text = await chatText()
+    // The label comes between the message and the reply (which repeats the item).
+    if (!/Answered as a question/.test(text.slice(text.lastIndexOf('Add "Tidy up the shop prices"')))) throw new Error('it went to the full Build session')
+    await todoOnScreen('/tidy up the shop prices/i', 'Claude')
+  })
+
+  await step('when Claude is out, Codex adds to the to-do list in Ask mode too', async () => {
+    writeFileSync(takeoverSwitch, '')
+    await click('Ask', '.chat-mode-switch button')
+    try {
+      await send('Put "Add sound effects to the shop" on my to-do list.')
+      await idle(300_000)
+    } finally {
+      rmSync(takeoverSwitch, { force: true })
+      await click('Build', '.chat-mode-switch button')
+    }
+    await todoOnScreen('/sound effects/i', 'Codex')
+    if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed')
     await click('Preview', '.chat-header-actions button')
   })
 

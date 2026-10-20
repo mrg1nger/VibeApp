@@ -39,7 +39,12 @@ export interface AskClaudeOptions {
   resume?: string
 }
 
-const MEMORY_TOOLS = ['recall', 'history', 'handoffs', 'where'].map((t) => `mcp__vibe_memory__${t}`)
+/**
+ * The memory tools a question may use: looking things up, plus the user's
+ * to-do list and notes (keeping a list isn't changing the project).
+ */
+export const ASK_MEMORY_TOOLS = ['recall', 'history', 'handoffs', 'where', 'todos', 'add_todo', 'complete_todo', 'notes']
+const MEMORY_TOOLS = ASK_MEMORY_TOOLS.map((t) => `mcp__vibe_memory__${t}`)
 
 export async function askClaude(opts: AskClaudeOptions): Promise<AskResult> {
   const tools = opts.readFiles ? ['Read', 'Grep', 'Glob'] : []
@@ -108,6 +113,8 @@ export interface AskCodexOptions {
   model?: string
   effort?: string
   abort: AbortController
+  /** The project's memory, for the to-do list and look-ups (files stay read-only). */
+  memory?: { scriptPath: string; dbPath: string; projectId: string; projectPath: string }
 }
 
 export async function askCodex(opts: AskCodexOptions): Promise<AskResult> {
@@ -118,6 +125,7 @@ export async function askCodex(opts: AskCodexOptions): Promise<AskResult> {
     ephemeral: true,
     model: opts.model,
     effort: opts.effort,
+    readOnlyMemory: opts.memory ? { ...opts.memory, tools: ASK_MEMORY_TOOLS } : undefined,
     timeoutMs: 5 * 60_000,
     signal: opts.abort.signal
   })

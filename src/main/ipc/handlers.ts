@@ -107,7 +107,7 @@ import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, pars
 import { briefBlock } from '../memory/brief'
 import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents } from '../usage/tokens'
-import { isPlainQuestion } from '../orchestrator/questions'
+import { isPlainQuestion, isTodoListRequest } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
 import { runTalk, stopTalk, getTalk } from '../chat/talk'
 import { deleteTalk, listTalks } from '../chat/talkStore'
@@ -279,7 +279,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         !images?.length &&
         getSettings().autoAsk &&
         !asks.has(projectId) &&
-        isPlainQuestion(text)
+        (isPlainQuestion(text) || isTodoListRequest(text))
       ) {
         runAsk(projectId, projectPath, text, getSender, true)
         return { snapshot: undefined, thumbnails: [] as string[] }
@@ -1177,7 +1177,7 @@ function runAsk(
       const keyFacts = keyFactsBlock(memoryDb(), projectId)
       const relevant = prefetchBlock(projectId, text)
       const chosen = getSettings().claudeModel
-      const system = `You are answering a question about the user's software project inside VibeApp. Do not change anything: you can only read and search files and look things up in the project's memory. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
+      const system = `You are answering a question about the user's software project inside VibeApp. You can't change the project's files: you can only read and search them and look things up in the project's memory. You can look at and update the user's to-do list for this project (add items, tick them off) and read their notes, when they ask. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
       const prompt = [relevant, text].filter(Boolean).join('\n\n')
       let answer
       const blocked = claudeBlockedUntil() !== null
@@ -1223,6 +1223,7 @@ ${prompt}`,
           cwd: projectPath,
           model: getSettings().codexModel ?? undefined,
           effort: getSettings().codexEffort ?? undefined,
+          memory: { scriptPath: memoryServerScriptPath(), dbPath: memoryDbPath(), projectId, projectPath },
           abort
         })
         recordUsage(projectId, 'chat', 'codex', answer.counts)
