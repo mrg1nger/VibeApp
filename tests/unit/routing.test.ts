@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isPlainQuestion, isTodoListRequest } from '../../src/main/orchestrator/questions'
+import { askNoteText, isPlainQuestion, isTodoListRequest } from '../../src/main/orchestrator/questions'
 import { parseClassification } from '../../src/main/orchestrator/classifier'
 import { applyBalance, autoLean } from '@shared/balance'
 
@@ -55,6 +55,16 @@ test('putting something on the to-do list takes the cheap path; building a to-do
     assert.equal(isTodoListRequest(text), false, text)
   }
   assert.equal(isPlainQuestion("What's left on my to-do list?"), true)
+})
+
+test("a question answered in Ask is passed on to the next Build message, short", () => {
+  assert.equal(askNoteText([]), undefined)
+  const note = askNoteText([{ question: 'Why does the shop button not work?', answer: 'The click handler in shop.js uses the wrong id.' }]) ?? ''
+  assert.match(note, /Ask mode/)
+  assert.match(note, /Q: Why does the shop button not work\?/)
+  assert.match(note, /A: The click handler in shop\.js uses the wrong id\./)
+  const long = askNoteText([{ question: 'q', answer: 'x'.repeat(5000) }]) ?? ''
+  assert.ok(long.length < 1500, 'a long answer is cut short')
 })
 
 test('classifier replies are parsed strictly', () => {

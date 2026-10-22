@@ -52,3 +52,14 @@ export function isPlainQuestion(text: string): boolean {
   }
   return questions > 0
 }
+
+/** The note that tells Claude (or Codex) about questions answered the cheap way just before a Build or Plan message. */
+export function askNoteText(asks: { question: string; answer: string }[]): string | undefined {
+  if (!asks.length) return undefined
+  const clip = (s: string, max: number): string => {
+    const flat = s.trim()
+    return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+  }
+  const lines = asks.map((a) => `Q: ${clip(a.question, 500)}\nA: ${clip(a.answer, 1200)}`)
+  return `[VibeApp note: just before this message, the user asked ${asks.length === 1 ? 'this question' : 'these questions'} in Ask mode, which was answered separately (you didn't see it). Their message may refer to it:\n${lines.join('\n\n')}]`
+}

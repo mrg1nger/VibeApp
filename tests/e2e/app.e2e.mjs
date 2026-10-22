@@ -590,6 +590,22 @@ try {
     await waitFor(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('Do it in Build instead'))`, 'the Build-instead button', 5000)
   })
 
+  await step('"make it cheaper" in Build knows what was just asked in Ask', async () => {
+    await click('Ask', '.chat-mode-switch button')
+    try {
+      await send('What does the potion cost in shop.js?')
+      await idle(180_000)
+    } finally {
+      await click('Build', '.chat-mode-switch button')
+    }
+    // Build's Claude never saw that question; the follow-up only makes sense with it.
+    await send('OK, make it 5 gold cheaper.')
+    await idle(600_000)
+    const shop = readFileSync(join(project, 'shop.js'), 'utf-8')
+    if (!/potion:\s*20\b/.test(shop)) throw new Error(`the potion isn't 20 gold: ${shop.slice(0, 200)}`)
+    writeFileSync(join(project, 'shop.js'), originalShop)
+  })
+
   await step('an attached image reaches Claude', async () => {
     const { root: doc } = (await cdp('DOM.getDocument', { depth: -1 })).result
     const { nodeId } = (await cdp('DOM.querySelector', { nodeId: doc.nodeId, selector: 'input[type=file]' })).result

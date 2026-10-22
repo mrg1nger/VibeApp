@@ -107,7 +107,7 @@ import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, pars
 import { briefBlock } from '../memory/brief'
 import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents } from '../usage/tokens'
-import { isPlainQuestion, isTodoListRequest } from '../orchestrator/questions'
+import { askNoteText, isPlainQuestion, isTodoListRequest } from '../orchestrator/questions'
 import { askClaude, askCodex, ClaudeLimitError } from '../chat/ask'
 import { runTalk, stopTalk, getTalk } from '../chat/talk'
 import { deleteTalk, listTalks } from '../chat/talkStore'
@@ -305,7 +305,8 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         // Claude is out: Codex makes the plan instead, read-only. Nothing is built until it's approved.
         appendUserMessage(projectId, text)
         recordUserMessage(projectId, text, 'plan (by Codex)')
-        void runCodexPlan(session, projectId, projectPath, text)
+        // A question answered just before goes along, as it does for Claude.
+        void runCodexPlan(session, projectId, projectPath, [takeAskNote(projectId), text].filter(Boolean).join('\n\n'))
         return { snapshot: undefined, thumbnails: [] as string[] }
       }
       if (blockedUntil !== null && takeoverMode !== 'off' && !process.env.VIBEAPP_SKIP_PREEMPTIVE) {
@@ -325,7 +326,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
             .join('; ')
         )
         const request: LastRequest = {
-          text: extra?.approvedPlan ? codexPlanBuildNote(extra.approvedPlan) : text,
+          text: [takeAskNote(projectId), extra?.approvedPlan ? codexPlanBuildNote(extra.approvedPlan) : text].filter(Boolean).join('\n\n'),
           element,
           images: prepared.map((p) => p.savedPath),
           snapshot
@@ -351,7 +352,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
           console.warn('Snapshot failed:', err.message)
           return undefined
         }),
-        routeMessage(text, getSettings(), { images: prepared.length, pointedAt: !!picked, projectId })
+        // "OK, fix it" after a question is judged together with that question.
+        routeMessage(
+          [peekAskQuestions(projectId), text].filter(Boolean).join('\n'),
+          getSettings(),
+          { images: prepared.length, pointedAt: !!picked, projectId }
+        )
       ])
 
       // A big request sent in Build: offer to plan it first (or just plan it, if that's the setting).
@@ -440,6 +446,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         // What Codex did on its own while Claude was out.
         takeCatchUpNote(projectId),
         takeUndoNote(projectId),
+        takeAskNote(projectId),
         route.note,
         planning
           ? '[VibeApp note: Plan mode. Explore and propose a plan for the user to approve; change nothing yet.]'
@@ -1068,6 +1075,36 @@ function takeUndoNote(projectId: string): string | undefined {
   return notes?.length ? `[VibeApp note: ${notes.join(' ')} Check the files rather than relying on what was done before.]` : undefined
 }
 
+/**
+ * Questions answered the cheap way (Ask mode, or a plain question typed in
+ * Build) run outside the project's Claude conversation, so a follow-up like
+ * "OK, fix it" would reach a Claude that never saw them. The last couple are
+ * kept here and passed along, short, with the next Build or Plan message.
+ */
+const recentAsks = new Map<string, { question: string; answer: string; at: number }[]>()
+const ASK_NOTE_MAX_AGE_MS = 3 * 60 * 60 * 1000
+
+function noteAsk(projectId: string, question: string, answer: string): void {
+  const list = [...(recentAsks.get(projectId) ?? []), { question, answer, at: Date.now() }]
+  recentAsks.set(projectId, list.slice(-2))
+}
+
+function freshAsks(projectId: string): { question: string; answer: string }[] {
+  return (recentAsks.get(projectId) ?? []).filter((a) => Date.now() - a.at < ASK_NOTE_MAX_AGE_MS)
+}
+
+/** The questions alone, so the request can be judged (routed) in context. */
+function peekAskQuestions(projectId: string): string | undefined {
+  const asks = freshAsks(projectId)
+  return asks.length ? asks.map((a) => a.question).join('\n') : undefined
+}
+
+function takeAskNote(projectId: string): string | undefined {
+  const note = askNoteText(freshAsks(projectId))
+  recentAsks.delete(projectId)
+  return note
+}
+
 /** A manually started fresh session's summary, delivered with the next message. */
 const pendingCarry = new Map<string, string>()
 
@@ -1230,6 +1267,7 @@ ${prompt}`,
         emit({ type: 'route', label: 'Answered by Codex', reason: 'Claude is out right now' })
       }
       recordAssistantMessage(projectId, answer.text)
+      noteAsk(projectId, text, answer.text)
       emit({ type: 'assistant_text', text: answer.text, partial: false })
     } catch (err) {
       if (abort.signal.aborted) emit({ type: 'stopped' })
