@@ -17,7 +17,8 @@
     "e2e": "node tests/e2e/app.e2e.mjs",
     "e2e:remote": "node tests/e2e/remote.e2e.mjs",
     "e2e:mobile": "node tests/e2e/mobile.e2e.mjs",
-    "postinstall": "patch-package && electron-rebuild -f -w node-pty"
+    "postinstall": "patch-package && electron-rebuild -f -w node-pty",
+    "e2e:tray": "node tests/e2e/tray.e2e.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.283",

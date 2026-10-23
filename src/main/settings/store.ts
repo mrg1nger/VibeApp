@@ -16,6 +16,8 @@ const DEFAULTS: AppSettings = {
   claudeModel: null,
   codexModel: null,
   codexEffort: null,
+  trayMode: false,
+  startWithWindows: false,
   themeId: 'midnight',
   smartRouting: true,
   aiRouting: true,

@@ -414,6 +414,10 @@ export interface AppSettings {
   codexModel: string | null
   /** How hard Codex thinks (low … max); null = whatever ~/.codex/config.toml defaults to. */
   codexEffort: string | null
+  /** Closing the window leaves VibeApp running in the system tray. */
+  trayMode: boolean
+  /** Start VibeApp with Windows, in the tray (installed app only). */
+  startWithWindows: boolean
   themeId: string
   /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
   smartRouting: boolean

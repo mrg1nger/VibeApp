@@ -9,8 +9,25 @@ import { stopAllPreviews } from './preview/preview'
 import { stopAllChildren } from './cli/codexExec'
 import { requestClassifier } from './orchestrator/classifier'
 import { getSettings } from './settings/store'
+import { applyLoginItem, noteStillRunning, setupTray } from './tray'
 
 let currentWindow: BrowserWindow | undefined
+/** Started with --tray (e.g. with Windows): no window until the user asks for one. */
+const startInTray = process.argv.includes('--tray')
+let quitting = false
+
+/** Keep running with no window: the setting, or started in the tray. */
+const keepRunningInTray = (): boolean => startInTray || !!getSettings().trayMode
+
+function showWindow(): void {
+  if (!currentWindow || currentWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (currentWindow.isMinimized()) currentWindow.restore()
+  currentWindow.show()
+  currentWindow.focus()
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -58,6 +75,8 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     if (currentWindow === mainWindow) currentWindow = undefined
+    // The window is gone (its memory freed) but the work goes on in the tray.
+    if (!quitting && keepRunningInTray()) noteStillRunning()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -76,8 +95,22 @@ function createWindow(): void {
 // touches the user's projects, memory or settings.
 if (process.env.VIBEAPP_USER_DATA) app.setPath('userData', process.env.VIBEAPP_USER_DATA)
 
+// One VibeApp at a time (per data folder): a second copy would start its own
+// Remote access server on the same port. Starting it again opens the window.
+const firstCopy = app.requestSingleInstanceLock()
+if (!firstCopy) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (app.isReady()) showWindow()
+  })
+}
+
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.vibeapp')
+  // A second copy only passes the "open the window" request on, then quits.
+  if (!firstCopy) return
+  // The same id the installer gives the Start menu shortcut, or Windows doesn't show its notifications.
+  electronApp.setAppUserModelId('com.vibeapp.desktop')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -89,7 +122,16 @@ app.whenReady().then(() => {
   // Remote access, if the user switched it on.
   applyRemoteSettings().catch((err) => console.warn('Remote access failed to start:', (err as Error).message))
 
-  createWindow()
+  setupTray({
+    showWindow,
+    windowShowing: () => !!currentWindow && !currentWindow.isDestroyed() && currentWindow.isVisible() && !currentWindow.isMinimized(),
+    quit: () => {
+      quitting = true
+      app.quit()
+    }
+  })
+  applyLoginItem()
+  if (!startInTray) createWindow()
 
   // Get Haiku's request labeller running before the first message needs it.
   setTimeout(() => {
@@ -102,6 +144,10 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  quitting = true
+})
+
 app.on('will-quit', () => {
   stopAllPreviews()
   // Codex jobs, test runs and tool checks still going: nothing keeps working after VibeApp is closed.
@@ -111,6 +157,8 @@ app.on('will-quit', () => {
 })
 
 app.on('window-all-closed', () => {
+  // In the tray, closing the window doesn't stop VibeApp: Quit in the tray menu does.
+  if (keepRunningInTray() && !quitting) return
   if (process.platform !== 'darwin') {
     app.quit()
   }

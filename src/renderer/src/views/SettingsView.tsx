@@ -387,6 +387,45 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
       </section>
 
       <section className="settings-section">
+        <h3>Running in the background</h3>
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.trayMode}
+            onChange={(e) => onSettingsChange({ trayMode: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Keep running in the tray when the window is closed
+            <small>
+              Closing the window frees its memory, but VibeApp keeps working: requests carry on, and browsers and
+              phones stay connected. Open it again, copy the pairing code or quit from the tray icon (bottom right of
+              the taskbar). Windows notifications say when something is waiting for you.
+            </small>
+          </span>
+        </label>
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.startWithWindows}
+            onChange={(e) => onSettingsChange({ startWithWindows: e.target.checked }).catch(() => undefined)}
+          />
+          <span>
+            Start with Windows, in the tray
+            <small>
+              VibeApp starts when you sign in, with no window, ready for your browsers and phone. (Only for the
+              installed app.)
+            </small>
+          </span>
+        </label>
+        {(settings.trayMode || settings.startWithWindows) && settings.remoteAccess === 'off' && (
+          <p className="chat-error">
+            Remote access is off, so with no window open the only way in is the tray icon. Turn it on below to use
+            VibeApp from a browser or your phone.
+          </p>
+        )}
+      </section>
+
+      <section className="settings-section">
         <h3>Remote access</h3>
         <RemoteAccessSettings settings={settings} onSettingsChange={onSettingsChange} onError={onError} />
       </section>
