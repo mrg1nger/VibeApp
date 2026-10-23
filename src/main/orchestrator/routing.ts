@@ -53,7 +53,13 @@ const CODEX_NOTES = {
 export async function routeMessage(
   text: string,
   settings: AppSettings,
-  context: { images?: number; pointedAt?: boolean; projectId?: string } = {}
+  context: {
+    images?: number
+    pointedAt?: boolean
+    projectId?: string
+    /** Planning, or building an approved plan: never a quick edit, however short the words typed. */
+    notQuick?: boolean
+  } = {}
 ): Promise<RouteDecision> {
   if (!settings.smartRouting) return { model: null, skipReview: false, size: 'normal' }
   const images = context.images ?? 0
@@ -61,7 +67,11 @@ export async function routeMessage(
   const labelled = settings.aiRouting && claudeHelpersAllowed()
     ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt, projectId: context.projectId })
     : null
-  const request = labelled ?? keywordClassification(text, images)
+  let request = labelled ?? keywordClassification(text, images)
+  // A quick edit skips Codex, the review and memory, and goes to Haiku: right
+  // for "make the title blue", wrong for a plan (a 7-step deploy plan was
+  // judged quick and planned and built by Haiku, ignoring the slider).
+  if (context.notQuick && request.size === 'quick') request = { ...request, size: 'normal' }
 
   const baseline = settings.claudeModel
   const claudeLeft = percentLeft(peekUsage('claude'))

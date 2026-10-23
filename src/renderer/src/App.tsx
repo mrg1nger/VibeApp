@@ -59,6 +59,8 @@ function App() {
   useEffect(() => {
     window.vibe.settings.get().then(setSettings)
     reloadThemes()
+    // Changed in another window (or on another device): show it here too.
+    return window.vibe.settings.onChanged(setSettings)
   }, [reloadThemes])
 
   // Remote access indicator (desktop): on, and how many browsers or tools are connected.

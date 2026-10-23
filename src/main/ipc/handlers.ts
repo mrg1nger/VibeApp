@@ -354,9 +354,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         }),
         // "OK, fix it" after a question is judged together with that question.
         routeMessage(
-          [peekAskQuestions(projectId), text].filter(Boolean).join('\n'),
+          // Building an approved plan is judged by the plan, not by the "go ahead" line.
+          [peekAskQuestions(projectId), extra?.approvedPlan ? `Build this approved plan:\n${extra.approvedPlan.slice(0, 4000)}` : text]
+            .filter(Boolean)
+            .join('\n'),
           getSettings(),
-          { images: prepared.length, pointedAt: !!picked, projectId }
+          { images: prepared.length, pointedAt: !!picked, projectId, notQuick: planning || !!extra?.approvedPlan }
         )
       ])
 
@@ -761,6 +764,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       await setModelForAllSessions(next.claudeModel)
     }
     if ('remoteAccess' in patch || 'remotePort' in patch) await applyRemoteSettings()
+    // Every other window (the app, remote browsers) shows the change too, or
+    // each kept showing what it loaded (the slider said "Auto" on one screen
+    // and "Codex-led" on another).
+    getSender()?.send('vibe:settings:changed', next)
     return next
   })
 

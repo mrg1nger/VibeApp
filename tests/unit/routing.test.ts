@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { askNoteText, isPlainQuestion, isTodoListRequest } from '../../src/main/orchestrator/questions'
 import { parseClassification } from '../../src/main/orchestrator/classifier'
+import { routeMessage } from '../../src/main/orchestrator/routing'
+import type { AppSettings } from '@shared/types'
 import { applyBalance, autoLean } from '@shared/balance'
 
 test('plain questions are recognised', () => {
@@ -65,6 +67,17 @@ test("a question answered in Ask is passed on to the next Build message, short",
   assert.match(note, /A: The click handler in shop\.js uses the wrong id\./)
   const long = askNoteText([{ question: 'q', answer: 'x'.repeat(5000) }]) ?? ''
   assert.ok(long.length < 1500, 'a long answer is cut short')
+})
+
+test('planning, or building an approved plan, is never a quick edit, so the slider applies', async () => {
+  const settings = { smartRouting: true, aiRouting: false, agentBalance: 'codex', claudeModel: null } as unknown as AppSettings
+  const tiny = await routeMessage('Make the title blue', settings)
+  assert.equal(tiny.size, 'quick', 'a real quick edit stays quick')
+  const approval = await routeMessage('Approved the plan. Go ahead and build it.', settings, { notQuick: true })
+  assert.notEqual(approval.size, 'quick')
+  assert.notEqual(approval.model, 'haiku', 'not handed to the cheapest model')
+  assert.match(approval.note ?? '', /Codex-led/, 'Codex-led is passed on')
+  assert.equal(approval.skipReview, false, 'and it gets the usual review')
 })
 
 test('classifier replies are parsed strictly', () => {

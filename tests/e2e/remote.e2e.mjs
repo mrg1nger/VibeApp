@@ -310,6 +310,19 @@ try {
     await until(async () => (await desktop.evaluate(`window.vibe.remote.status()`)).devices.some((d) => d.online && d.name === 'Main browser'), 'the device to show as online', 15_000)
   })
 
+  await step('moving the Claude/Codex slider in the browser shows on the desktop app too, and back', async () => {
+    const label = (on) => on.evaluate(`document.querySelector('.balance button')?.textContent ?? ''`)
+    // Drag the browser's slider to "Leaning Codex" (the second step from the right).
+    await browser.evaluate(
+      `(() => { const r = document.querySelector('.balance input[type=range]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(r, '3'); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })) })()`
+    )
+    await until(async () => (await label(browser)) === 'Leaning Codex', "the browser's slider to move", 5000)
+    await until(async () => (await label(desktop)) === 'Leaning Codex', 'the desktop app to show the same', 5000)
+    // And the other way: the desktop puts it back on Auto, and the browser follows.
+    await desktop.evaluate(`window.vibe.settings.update({ agentBalance: 'auto' })`)
+    await until(async () => (await label(browser)) === 'Auto', 'the browser to follow', 5000)
+  })
+
   await step('the browser opens the project and shows its live preview', async () => {
     await browser.evaluate(`[...document.querySelectorAll('.app-nav-tabs button')].find((b) => b.textContent === 'Projects').click()`)
     await waitFor(browser, `!!document.querySelector('button.project-row')`, 'the project list')

@@ -251,7 +251,13 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
     settings: {
       get: (): Promise<AppSettings> => ipcRenderer.invoke('vibe:settings:get'),
       update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
-        ipcRenderer.invoke('vibe:settings:update', patch)
+        ipcRenderer.invoke('vibe:settings:update', patch),
+      /** Settings changed from any window (this one, the app, or a remote browser). */
+      onChanged: (cb: (settings: AppSettings) => void): (() => void) => {
+        const listener = (_event: unknown, settings: AppSettings): void => cb(settings)
+        ipcRenderer.on('vibe:settings:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:settings:changed', listener)
+      }
     },
 
     models: {
