@@ -732,13 +732,29 @@ try {
 
   // -- shrinking and stopping --
 
-  await step('compacting the conversation shows a notice and keeps working', async () => {
-    const result = await evaluate(`window.vibe.chat.compactNow(${JSON.stringify(PROJECT_ID)}, ${JSON.stringify(project)})`)
-    if (!result?.ok) throw new Error(result?.message ?? 'compaction failed')
-    await waitFor(`/Compacted the conversation/.test(document.querySelector('.chat-log').innerText)`, 'the compaction notice', 20_000)
+  await step('the context meter shows the chat size against the auto-compact point, and the note can be hidden', async () => {
+    const label = await evaluate(`document.querySelector('.context-meter-label')?.textContent ?? ''`)
+    console.log(`  (meter: ${label})`)
+    if (!/^\d+(\.\d)?k \/ 120k$/.test(label)) throw new Error(`the meter says "${label}"`)
+    // The "this chat has grown" note only shows once a chat is big; when it does, ✕ hides it.
+    if (await evaluate(`!!document.querySelector('.chat-cost-note')`)) {
+      await click('✕', '.chat-cost-note button')
+      await waitFor(`!document.querySelector('.chat-cost-note')`, 'the note to hide', 5000)
+      console.log('  (the size note was showing and was hidden)')
+    }
+  })
+
+  await step('the Compact button shrinks the conversation, which keeps working', async () => {
+    const before = await evaluate(`window.vibe.chat.contextSize(${JSON.stringify(PROJECT_ID)})`)
+    await click('Compact', 'button.chat-compact')
+    await waitFor(`/Compacted the conversation/.test(document.querySelector('.chat-log').innerText)`, 'the compaction notice', 120_000)
+    await waitFor(`document.querySelector('.context-meter-label')?.textContent === '–'`, 'the meter to reset', 10_000)
     await send('In one word: which file holds the prices?')
     await idle(180_000)
     if (!/shop/i.test(await lastReply())) throw new Error('no sensible reply after compacting')
+    const after = await evaluate(`window.vibe.chat.contextSize(${JSON.stringify(PROJECT_ID)})`)
+    console.log(`  (context ${Math.round(before / 1000)}k before, ${Math.round(after / 1000)}k after)`)
+    if (!(after > 0 && after < before)) throw new Error(`the chat didn't shrink: ${before} -> ${after}`)
   })
 
   await step('Stop ends a running request', async () => {

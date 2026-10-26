@@ -3269,3 +3269,120 @@ textarea {
     min-height: 36px;
   }
 }
+
+/* ---- under the chat: Build / Plan / Ask, the context meter and Compact ---- */
+
+.chat-compose-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  min-width: 0;
+}
+
+.chat-compose-bar .chat-mode-switch {
+  margin: 0;
+  flex: none;
+}
+
+.context-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.context-meter-bar {
+  width: 70px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  overflow: hidden;
+  flex: none;
+}
+
+.context-meter-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.context-meter-mid .context-meter-bar span {
+  background: var(--warning-text);
+}
+
+.context-meter-high .context-meter-bar span {
+  background: var(--danger);
+}
+
+.context-meter-label {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-compact {
+  flex: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chat-cost-note {
+  position: relative;
+  padding-right: 34px;
+}
+
+/* Top right, so it never takes a line of its own. */
+.chat-cost-note-hide {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+}
+
+.context-meter-percent {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .chat-compose-bar {
+    gap: 8px;
+  }
+
+  .context-meter-bar {
+    width: 48px;
+  }
+
+  .chat-compact {
+    min-height: 36px;
+    min-width: 40px;
+  }
+
+  /* The icon is enough on a phone; the meter keeps its numbers. */
+  .chat-compact-label {
+    display: none;
+  }
+
+  .chat-cost-note-hide {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  /* Room is short next to Build / Plan / Ask: the bar and a percentage. */
+  .context-meter-label {
+    display: none;
+  }
+
+  .context-meter-percent {
+    display: inline;
+    white-space: nowrap;
+  }
+
+  .chat-cost-note {
+    padding-right: 44px;
+  }
+}

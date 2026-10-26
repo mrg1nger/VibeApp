@@ -86,6 +86,29 @@ const ASK_PREF_KEY = 'vibeapp.askMode'
 const MODE_PREF_KEY = 'vibeapp.chatMode'
 /** A Build chat this big (tokens) gets a note about what each message costs. */
 const CONTEXT_NOTE_TOKENS = 60_000
+/** A hidden size note comes back only once the chat has grown this much more (or after compacting). */
+const NOTE_RETURNS_AFTER = 30_000
+/** Without auto-compact, Claude Code shrinks the conversation itself near its limit (about this size). */
+const CLAUDE_CONTEXT_LIMIT = 200_000
+const noteKey = (projectId: string): string => `vibeapp.costNoteHidden.${projectId}`
+
+/** When the size note appears (the tests lower it, so they needn't grow a chat to 60k first). */
+function noteThreshold(): number {
+  try {
+    return Number(localStorage.getItem('vibeapp.costNoteAt')) || CONTEXT_NOTE_TOKENS
+  } catch {
+    return CONTEXT_NOTE_TOKENS
+  }
+}
+
+function readNoteHidden(projectId: string): number | null {
+  try {
+    const v = Number(localStorage.getItem(noteKey(projectId)))
+    return Number.isFinite(v) && v > 0 ? v : null
+  } catch {
+    return null
+  }
+}
 /** How many of the most recent requests are shown when a chat is opened. */
 const REPLAY_REQUESTS = 40
 
@@ -196,6 +219,22 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   }, [])
   // How big this project's Claude conversation is now (tokens re-read on every Build step).
   const [contextTokens, setContextTokens] = useState(0)
+  // Where auto-compact kicks in, for the context meter.
+  const [compactAt, setCompactAt] = useState<{ auto: boolean; tokens: number }>({ auto: true, tokens: 120_000 })
+  // The size the "this chat has grown" note was hidden at (per project, on this device).
+  const [noteHiddenAt, setNoteHiddenAt] = useState<number | null>(() => readNoteHidden(project.id))
+  const hideNote = useCallback(
+    (tokens: number | null) => {
+      setNoteHiddenAt(tokens)
+      try {
+        if (tokens) localStorage.setItem(noteKey(project.id), String(tokens))
+        else localStorage.removeItem(noteKey(project.id))
+      } catch {
+        // a remembered preference only
+      }
+    },
+    [project.id]
+  )
   // Opening a chat shows its recent requests; this loads the whole log.
   const [showAllHistory, setShowAllHistory] = useState(false)
   const [rotating, setRotating] = useState(false)
@@ -440,7 +479,11 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             ]
           case 'session_compacted':
             // The real size (summary plus Claude's instructions) is known after the next message.
-            if (!isReplay) setContextTokens(0)
+            if (!isReplay) {
+              setContextTokens(0)
+              // A fresh start: the size note may come back when it's big again.
+              hideNote(null)
+            }
             return [
               ...prev,
               {
@@ -499,12 +542,20 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
         }
       })
     },
-    [refreshHasChanges, onError, project.id]
+    [refreshHasChanges, onError, project.id, hideNote]
   )
 
   useEffect(() => {
     window.vibe.chat.contextSize(project.id).then(setContextTokens).catch(() => undefined)
+    setNoteHiddenAt(readNoteHidden(project.id))
   }, [project.id])
+
+  useEffect(() => {
+    const apply = (s: { autoCompact: boolean; rotateAtTokens: number }): void =>
+      setCompactAt({ auto: s.autoCompact, tokens: s.rotateAtTokens || 120_000 })
+    window.vibe.settings.get().then(apply).catch(() => undefined)
+    return window.vibe.settings.onChanged(apply)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -1243,7 +1294,10 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             </div>
           )}
 
-          {!askMode && !busy && contextTokens >= CONTEXT_NOTE_TOKENS && (
+          {!askMode &&
+            !busy &&
+            contextTokens >= noteThreshold() &&
+            !(noteHiddenAt && contextTokens < noteHiddenAt + NOTE_RETURNS_AFTER) && (
             <div className="chat-cost-note">
               <span>
                 💡 This chat has grown to about {compactCount(contextTokens)} tokens, and every Build message re-reads
@@ -1259,9 +1313,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
               <button className="chat-inline-action" disabled={rotating} onClick={handleFreshSession}>
                 {rotating ? 'Starting…' : 'Start a fresh session'}
               </button>
+              <button
+                className="chat-inline-action chat-cost-note-hide"
+                title="Hide this until the chat grows a lot more (the meter by Build / Plan / Ask keeps showing the size)"
+                aria-label="Hide this note"
+                onClick={() => hideNote(contextTokens)}
+              >
+                ✕
+              </button>
             </div>
           )}
 
+          <div className="chat-compose-bar">
           <div className="chat-mode-switch" role="group" aria-label="Message type">
             <button
               className={mode === 'build' ? 'active' : ''}
@@ -1287,6 +1350,20 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             >
               💬 Ask
             </button>
+          </div>
+          <ContextMeter
+            tokens={contextTokens}
+            limit={compactAt.auto ? compactAt.tokens : CLAUDE_CONTEXT_LIMIT}
+            auto={compactAt.auto}
+          />
+          <button
+            className="chat-compact"
+            disabled={busy || rotating || contextTokens === 0}
+            title="Compact now: shrink this chat to a summary (rules, procedures and the project brief are saved first), so each Build message re-reads less"
+            onClick={handleCompact}
+          >
+            {rotating ? '…' : '🗜'} <span className="chat-compact-label">Compact</span>
+          </button>
           </div>
 
           <div className="chat-input-row">
@@ -1450,6 +1527,28 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           </div>
         </Modal>
       )}
+    </div>
+  )
+}
+
+/** How full this chat's conversation is, against where it will be compacted. */
+function ContextMeter({ tokens, limit, auto }: { tokens: number; limit: number; auto: boolean }) {
+  const share = limit > 0 ? Math.min(1, tokens / limit) : 0
+  const level = share >= 0.9 ? 'high' : share >= 0.7 ? 'mid' : 'low'
+  const title = tokens
+    ? `This chat is about ${compactCount(tokens)} tokens; every Build step re-reads it. ${
+        auto
+          ? `It's compacted automatically at ${compactCount(limit)} (Settings).`
+          : `Auto-compact is off, so Claude Code shrinks it itself near about ${compactCount(limit)}.`
+      }`
+    : 'The size is measured after the next message.'
+  return (
+    <div className={`context-meter context-meter-${level}`} title={title} aria-label={title}>
+      <div className="context-meter-bar">
+        <span style={{ width: `${Math.round(share * 100)}%` }} />
+      </div>
+      <span className="context-meter-label">{tokens ? `${compactCount(tokens)} / ${compactCount(limit)}` : '–'}</span>
+      <span className="context-meter-percent">{tokens ? `${Math.round(share * 100)}%` : '–'}</span>
     </div>
   )
 }

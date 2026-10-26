@@ -191,6 +191,21 @@ try {
     await browser.evaluate(`document.querySelector('.plan-card-pending').scrollIntoView({ block: 'end' })`)
   })
   await click('Cancel', '.plan-card-pending button')
+  await screen('05c-size-note-and-meter', async () => {
+    // The note normally waits for a 60k chat; show it from 1k here.
+    await browser.evaluate(`localStorage.setItem('vibeapp.costNoteAt', '1000'); 1`)
+    await click('Build', '.chat-compose-bar .chat-mode-switch button')
+    await waitFor(browser, `!!document.querySelector('.chat-cost-note') && /\\d+(\\.\\d)?k \\/ \\d+k/.test(document.querySelector('.context-meter-label')?.textContent ?? '')`, 'the size note and the meter', 30_000)
+  })
+  await browser.evaluate(`[...document.querySelectorAll('.chat-cost-note button')].find((b) => b.textContent.includes('✕')).click(); 1`)
+  await waitFor(browser, `!document.querySelector('.chat-cost-note')`, 'the note to hide', 5000).then(
+    () => console.log('✔ the size note hides with ✕'),
+    (err) => {
+      results.push({ name: 'the size note hides with ✕', ok: false, problems: [err.message] })
+      console.log(`✖ the size note hides with ✕: ${err.message}`)
+    }
+  )
+  await browser.evaluate(`localStorage.removeItem('vibeapp.costNoteAt'); 1`)
   await click('Ask', '.chat-mode-switch button')
   await screen('06-preview', async () => {
     const tab = await browser.evaluate(`[...document.querySelectorAll('button')].some((b) => b.offsetParent && /^(👁 )?Preview$/.test(b.textContent.trim()) && b.closest('.mobile-pane-switch'))`)
