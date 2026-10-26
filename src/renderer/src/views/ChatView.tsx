@@ -559,22 +559,12 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
 
   useEffect(() => {
     let cancelled = false
-    window.vibe.chat.loadTranscript(project.id).then((all) => {
+    // A long project's log runs to tens of thousands of entries (every Codex step is saved).
+    // Only the recent requests are fetched and replayed, with a button for the rest: loading the
+    // whole log made a big project slow to open, and a phone downloaded all of it every time.
+    window.vibe.chat.loadRecent(project.id, showAllHistory ? 0 : REPLAY_REQUESTS).then(({ entries, earlier }) => {
       if (cancelled) return
-      // A long project's log runs to tens of thousands of entries (every Codex step is saved),
-      // and replaying them all makes the chat slow to open. Show the recent requests, with a
-      // button for the rest.
-      let start = 0
-      let requests = 0
-      for (let i = all.length - 1; i >= 0; i--) {
-        if (!showAllHistory && all[i].direction === 'user' && ++requests > REPLAY_REQUESTS) {
-          start = i + 1
-          break
-        }
-      }
-      const entries = all.slice(start)
-      const hidden = all.slice(0, start).filter((e) => e.direction === 'user').length
-      setItems(start > 0 ? [{ kind: 'older', hidden }] : [])
+      setItems(earlier > 0 ? [{ kind: 'older', hidden: earlier }] : [])
       for (const entry of entries) {
         if (entry.direction === 'user' && entry.text) {
           const item: ChatItem = {

@@ -312,12 +312,15 @@ try {
 
   await step('moving the Claude/Codex slider in the browser shows on the desktop app too, and back', async () => {
     const label = (on) => on.evaluate(`document.querySelector('.balance button')?.textContent ?? ''`)
-    // Drag the browser's slider to "Leaning Codex" (the second step from the right).
+    // Drag the browser's slider one step in from an end. On Auto it may already sit at
+    // "Leaning Codex" (it follows plan usage), and moving it to where it is does nothing.
+    const at = await browser.evaluate(`Number(document.querySelector('.balance input[type=range]').value)`)
+    const [to, expected] = at === 3 ? ['1', 'Leaning Claude'] : ['3', 'Leaning Codex']
     await browser.evaluate(
-      `(() => { const r = document.querySelector('.balance input[type=range]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(r, '3'); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })) })()`
+      `(() => { const r = document.querySelector('.balance input[type=range]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(r, '${to}'); r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })) })()`
     )
-    await until(async () => (await label(browser)) === 'Leaning Codex', "the browser's slider to move", 5000)
-    await until(async () => (await label(desktop)) === 'Leaning Codex', 'the desktop app to show the same', 5000)
+    await until(async () => (await label(browser)) === expected, "the browser's slider to move", 5000)
+    await until(async () => (await label(desktop)) === expected, 'the desktop app to show the same', 5000)
     // And the other way: the desktop puts it back on Auto, and the browser follows.
     await desktop.evaluate(`window.vibe.settings.update({ agentBalance: 'auto' })`)
     await until(async () => (await label(browser)) === 'Auto', 'the browser to follow', 5000)

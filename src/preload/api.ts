@@ -208,6 +208,9 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
       dispose: (projectId: string): void => ipcRenderer.send('vibe:chat:dispose', projectId),
       loadTranscript: (projectId: string): Promise<TranscriptEntry[]> =>
         ipcRenderer.invoke('vibe:chat:loadTranscript', projectId),
+      /** The last `requests` requests and everything after them (0 = all), and how many came before. */
+      loadRecent: (projectId: string, requests: number): Promise<{ entries: TranscriptEntry[]; earlier: number }> =>
+        ipcRenderer.invoke('vibe:chat:loadRecent', projectId, requests),
       setGoNutzMode: (projectId: string, enabled: boolean): Promise<void> =>
         ipcRenderer.invoke('vibe:chat:setGoNutzMode', projectId, enabled),
       isGoNutzMode: (projectId: string): Promise<boolean> =>

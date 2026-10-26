@@ -232,6 +232,7 @@ const READ_CHANNELS = new Set([
   'vibe:auth:checkNode',
   'vibe:project:list',
   'vibe:chat:loadTranscript',
+  'vibe:chat:loadRecent',
   'vibe:chat:isGoNutzMode',
   'vibe:chat:contextSize',
   'vibe:git:hasChanges',

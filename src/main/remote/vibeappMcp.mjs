@@ -266,6 +266,15 @@ server.registerTool(
   })
 )
 
+/** The end of a project's chat log (recent requests only; an older VibeApp sends the whole log). */
+async function recentEntries(projectId, requests) {
+  try {
+    return (await invoke('vibe:chat:loadRecent', projectId, requests)).entries
+  } catch {
+    return invoke('vibe:chat:loadTranscript', projectId)
+  }
+}
+
 server.registerTool(
   'approve_plan',
   {
@@ -274,7 +283,7 @@ server.registerTool(
   },
   guard(async ({ project, timeout_seconds = 600 }) => {
     const p = await findProject(project)
-    const entries = await invoke('vibe:chat:loadTranscript', p.id)
+    const entries = await recentEntries(p.id, 30)
     const decided = new Set(entries.filter((e) => e.event?.type === 'plan_decided').map((e) => e.event.toolUseId))
     const pending = entries.filter((e) => e.event?.type === 'plan_proposed' && !decided.has(e.event.toolUseId)).at(-1)?.event
     if (!pending) return text('There is no plan waiting for approval in that project.')
@@ -323,7 +332,7 @@ server.registerTool(
   },
   guard(async ({ project, last = 40 }) => {
     const p = await findProject(project)
-    const entries = await invoke('vibe:chat:loadTranscript', p.id)
+    const entries = await recentEntries(p.id, Math.max(10, last))
     const lines = []
     for (const e of entries) {
       if (e.direction === 'user' && e.text) lines.push(`USER: ${e.text}`)

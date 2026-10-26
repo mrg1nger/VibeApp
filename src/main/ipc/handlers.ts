@@ -44,7 +44,7 @@ import {
   removeProject
 } from '../projects/store'
 import { eraseProjectData } from '../projects/erase'
-import { appendUserMessage, appendEvent, loadTranscript } from '../projects/transcript'
+import { appendUserMessage, appendEvent, loadRecentTranscript, loadTranscript } from '../projects/transcript'
 import {
   ensureRepo,
   hasUncommittedChanges,
@@ -610,6 +610,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   })
 
   ipc.handle('vibe:chat:loadTranscript', (_event, projectId: string) => loadTranscript(projectId))
+  // The recent part only: what the chat shows when it opens (0 = everything).
+  ipc.handle('vibe:chat:loadRecent', (_event, projectId: string, requests: number) =>
+    loadRecentTranscript(projectId, Number(requests) || 0)
+  )
 
   ipc.on(
     'vibe:chat:confirmationResponse',
@@ -1137,7 +1141,8 @@ async function saveBeforeShrinking(projectId: string): Promise<void> {
   const projectPath = getProject(projectId)?.path
   if (projectPath) {
     try {
-      await refreshBrief(projectId, projectPath, { force: true })
+      // Only if something changed since it was written (it used to be rewritten before every compaction).
+      await refreshBrief(projectId, projectPath, { minChanges: 1 })
     } catch (err) {
       console.warn('Project brief refresh failed:', (err as Error).message)
     }
