@@ -13,6 +13,9 @@ import type {
   CodexModelList,
   ExtensionCheck,
   TodoItem,
+  DeployRecipe,
+  DeployEvent,
+  BackupInfo,
   PickedElement,
   PreviewProblem,
   PreviewState,
@@ -318,6 +321,38 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         ipcRenderer.invoke('vibe:memory:brief', projectId),
       refresh: (projectId: string, projectPath: string): Promise<{ text: string; updatedAt: string } | null> =>
         ipcRenderer.invoke('vibe:memory:refreshBrief', projectId, projectPath)
+    },
+
+    deploy: {
+      get: (projectId: string): Promise<{ recipe: DeployRecipe | null; running: boolean }> => ipcRenderer.invoke('vibe:deploy:get', projectId),
+      save: (projectId: string, recipe: Partial<DeployRecipe>): Promise<DeployRecipe> => ipcRenderer.invoke('vibe:deploy:save', projectId, recipe),
+      remove: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:deploy:remove', projectId),
+      run: (projectId: string, projectPath: string): Promise<{ started: boolean }> => ipcRenderer.invoke('vibe:deploy:run', projectId, projectPath),
+      stop: (projectId: string): Promise<void> => ipcRenderer.invoke('vibe:deploy:stop', projectId),
+      onEvent: (cb: (projectId: string, event: DeployEvent) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string, event: DeployEvent): void => cb(projectId, event)
+        ipcRenderer.on('vibe:deploy:event', listener)
+        return () => ipcRenderer.removeListener('vibe:deploy:event', listener)
+      },
+      onChanged: (cb: (projectId: string) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string): void => cb(projectId)
+        ipcRenderer.on('vibe:deploy:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:deploy:changed', listener)
+      }
+    },
+
+    backup: {
+      status: (): Promise<{ dir: string; defaultDir: string; backups: BackupInfo[] }> => ipcRenderer.invoke('vibe:backup:status'),
+      now: (): Promise<BackupInfo> => ipcRenderer.invoke('vibe:backup:now'),
+      export: (folder: string): Promise<BackupInfo> => ipcRenderer.invoke('vibe:backup:export', folder),
+      /** Puts the backup in place and restarts VibeApp. */
+      restore: (path: string): Promise<BackupInfo> => ipcRenderer.invoke('vibe:backup:restore', path)
+    },
+
+    phone: {
+      setup: (): Promise<{ topic: string; url: string }> => ipcRenderer.invoke('vibe:phone:setup'),
+      newTopic: (): Promise<{ topic: string; url: string }> => ipcRenderer.invoke('vibe:phone:newTopic'),
+      test: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('vibe:phone:test')
     },
 
     todos: {

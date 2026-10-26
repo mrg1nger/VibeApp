@@ -1,4 +1,4 @@
-import { dialog, shell, type WebContents } from 'electron'
+import { app, dialog, shell, type WebContents } from 'electron'
 import { ipc } from '../remote/bus'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs'
 import { homedir, tmpdir } from 'os'
@@ -8,6 +8,8 @@ import type {
   AppSettings,
   CliName,
   ConfirmationRequest,
+  DeployEvent,
+  DeployRecipe,
   ExtensionCheck,
   ExtensionDraft,
   ImageAttachment,
@@ -122,6 +124,10 @@ import {
   setExtensionEnv
 } from '../extensions/store'
 import { selfTestServer, type SelfTestProbe } from '../extensions/selftest'
+import { deployEvents, getRecipe, isDeploying, removeRecipe, runDeploy, saveRecipe, stopDeploy } from '../deploy/deploy'
+import { backupDir, backupNow, defaultBackupDir, listBackups, stageRestore } from '../backup/backup'
+import { DEFAULT_NTFY_SERVER, newTopic, sendPhoneAlert, topicUrl } from '../notify/phone'
+import { notifyUser } from '../tray'
 import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
@@ -738,6 +744,86 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     return { updatedAt }
   })
 
+  // One-click Deploy: the project's recipe, run by VibeApp with no AI.
+  deployEvents.on('event', (projectId: string, event: DeployEvent) => getSender()?.send('vibe:deploy:event', projectId, event))
+  deployEvents.on('changed', (projectId: string) => getSender()?.send('vibe:deploy:changed', projectId))
+  deployEvents.on('recipe-ready', (projectId: string, recipe: DeployRecipe) => {
+    const event: VibeEvent = { type: 'deploy_recipe_ready', name: recipe.name, steps: recipe.steps.length }
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+  })
+  ipc.handle('vibe:deploy:get', (_event, projectId: string) => ({ recipe: getRecipe(projectId), running: isDeploying(projectId) }))
+  ipc.handle('vibe:deploy:save', (_event, projectId: string, recipe: Partial<DeployRecipe>) => saveRecipe(projectId, recipe, 'user', true))
+  ipc.handle('vibe:deploy:remove', (_event, projectId: string) => removeRecipe(projectId))
+  ipc.handle('vibe:deploy:stop', (_event, projectId: string) => stopDeploy(projectId))
+  ipc.handle('vibe:deploy:run', (_event, projectId: string, projectPath: string) => {
+    const recipe = getRecipe(projectId)
+    if (!recipe?.confirmed) throw new Error('Check the deploy recipe and save it before running it.')
+    if (isDeploying(projectId)) throw new Error('A deploy is already running for this project.')
+    void runDeploy(projectId, projectPath)
+      .then((result) => {
+        const event: VibeEvent = {
+          type: 'deploy_result',
+          name: recipe.name,
+          ok: result.ok,
+          seconds: result.seconds,
+          failedStep: result.failedStep,
+          detail: result.checkDetail,
+          rolledBack: result.rolledBack,
+          stopped: result.stopped
+        }
+        appendEvent(projectId, event)
+        getSender()?.send('vibe:chat:event', projectId, event)
+        // Claude hears about it with the next message, like an Undo.
+        const notes = undoNotes.get(projectId) ?? []
+        notes.push(
+          result.ok
+            ? `The user deployed with the Deploy button ("${recipe.name}") and it succeeded${result.checkDetail ? ` (${result.checkDetail})` : ''}.`
+            : `The user ran the Deploy button ("${recipe.name}") and it ${result.stopped ? 'was stopped' : `failed at "${result.failedStep}"`}${result.rolledBack ? '; the rollback steps ran' : ''}.${result.output ? ` Last output:\n${result.output.slice(-1200)}` : ''}`
+        )
+        undoNotes.set(projectId, notes)
+        notifyUser(
+          result.ok ? `${projectName(projectId)}: deployed` : `${projectName(projectId)}: deploy failed`,
+          result.ok ? `${recipe.name} is live (${result.seconds}s).` : `${result.stopped ? 'Stopped' : `Failed at "${result.failedStep}"`}${result.rolledBack ? '; rolled back' : ''}.`
+        )
+      })
+      .catch((err: Error) => {
+        const event: VibeEvent = { type: 'deploy_result', name: recipe.name, ok: false, seconds: 0, failedStep: 'Starting', detail: err.message }
+        appendEvent(projectId, event)
+        getSender()?.send('vibe:chat:event', projectId, event)
+      })
+    return { started: true }
+  })
+
+  // Backups of VibeApp's own data.
+  ipc.handle('vibe:backup:status', () => ({ dir: backupDir(), defaultDir: defaultBackupDir(), backups: listBackups() }))
+  ipc.handle('vibe:backup:now', () => backupNow('manual'))
+  ipc.handle('vibe:backup:export', (_event, folder: string) => backupNow('export', String(folder ?? '')))
+  ipc.handle('vibe:backup:restore', (_event, path: string) => {
+    const info = stageRestore(String(path ?? ''))
+    // Applied as VibeApp starts again, before anything opens the data.
+    setTimeout(() => {
+      app.relaunch()
+      app.quit()
+    }, 500)
+    return info
+  })
+
+  // Phone alerts (ntfy).
+  ipc.handle('vibe:phone:setup', () => {
+    const s = getSettings()
+    const topic = s.phoneAlertTopic || newTopic()
+    const next = updateSettings({ phoneAlertTopic: topic, phoneAlertServer: s.phoneAlertServer || DEFAULT_NTFY_SERVER })
+    getSender()?.send('vibe:settings:changed', next)
+    return { topic, url: topicUrl(next.phoneAlertServer, topic) }
+  })
+  ipc.handle('vibe:phone:newTopic', () => {
+    const next = updateSettings({ phoneAlertTopic: newTopic() })
+    getSender()?.send('vibe:settings:changed', next)
+    return { topic: next.phoneAlertTopic, url: topicUrl(next.phoneAlertServer, next.phoneAlertTopic ?? '') }
+  })
+  ipc.handle('vibe:phone:test', () => sendPhoneAlert('VibeApp test alert', 'Phone alerts are working. You will hear from VibeApp when something needs you.', { force: true }))
+
   // Starts an installed extension the way the agents do and makes sure it really works.
   // (Also run right after installing, so the first agent to use it doesn't wait for the download.)
   ipc.handle('vibe:extensions:check', async (_event, id: string): Promise<ExtensionCheck> => {
@@ -918,6 +1004,11 @@ function listDirs(dir?: string): { path: string; parent: string | null; dirs: { 
 function rotateThreshold(): number {
   // The override is for testing; Claude Code's own prompt is ~40k of this.
   return Number(process.env.VIBEAPP_ROTATE_TOKENS) || getSettings().rotateAtTokens || 120_000
+}
+
+/** A project's name, for alerts. */
+function projectName(projectId: string): string {
+  return getProject(projectId)?.name ?? 'A project'
 }
 
 // ---- the to-do list and notes ------------------------------------------------------

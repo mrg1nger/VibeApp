@@ -15,6 +15,7 @@ import { verifyChanges } from '../review/checks'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import type { DelegationActivity } from '@shared/types'
 import type { AgentInstallRequest } from '../extensions/install'
+import { saveRecipe } from '../deploy/deploy'
 
 export type DelegationProgressListener = (note: string) => void
 
@@ -112,6 +113,48 @@ export function createCodexDelegationServer(
           }
           onPlanProgress?.(args.step, args.status)
           return { content: [{ type: 'text' as const, text: `Step ${args.step}: ${args.status}.` }] }
+        }
+      ),
+      tool(
+        'save_deploy_recipe',
+        "Save this project's one-click Deploy recipe, which VibeApp runs by itself (no AI) when the user presses Deploy. Only when the user asks to set up or change Deploy. Use the steps that have actually worked before (the \"Procedure -\" facts from recall, the conversation history, the project's scripts): exact commands in order, each run from the project folder in Git Bash (or PowerShell if you set shell), non-interactive, and stopping with an error if something fails (a non-zero exit stops the deploy). Back up live data first if earlier deploys did. Add a check URL that should answer once it's live, and rollback steps that put the previous version back if a step or the check fails, if that's possible. Refer to passwords and keys only as $NAME environment variables from the project's Secrets; never put a value in a step. Don't run the deploy yourself: the user checks the recipe and presses Deploy.",
+        {
+          name: z.string().describe('Short name, e.g. "Deploy Glyphlands to the VPS".'),
+          shell: z.enum(['bash', 'powershell']).optional().describe('bash (Git Bash, the default) or powershell.'),
+          steps: z
+            .array(
+              z.object({
+                label: z.string().describe('What the step does, in plain words, e.g. "Back up the live data".'),
+                run: z.string().describe('The command(s) to run.'),
+                timeoutSec: z.number().int().optional().describe('Seconds before it counts as stuck (default 600).')
+              })
+            )
+            .describe('In order.'),
+          check: z
+            .object({ url: z.string(), expectStatus: z.number().int().optional() })
+            .optional()
+            .describe('A web address that answers (2xx/3xx, or expectStatus) once the deploy is live.'),
+          rollback: z
+            .array(z.object({ label: z.string(), run: z.string(), timeoutSec: z.number().int().optional() }))
+            .optional()
+            .describe('Steps that restore the previous live version if a step or the check fails.'),
+          notes: z.string().optional().describe('Anything the user should know (one or two sentences).')
+        },
+        async (args) => {
+          if (!memory?.projectId) return { content: [{ type: 'text' as const, text: 'Deploy recipes are not available here.' }], isError: true }
+          try {
+            const saved = saveRecipe(memory.projectId, args, 'claude', false)
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Saved "${saved.name}" (${saved.steps.length} steps${saved.check ? ', with a site check' : ''}${saved.rollback ? ', with rollback' : ''}). The user now checks it in VibeApp's Deploy window before it can run; tell them that, briefly, and don't deploy yourself.`
+                }
+              ]
+            }
+          } catch (err) {
+            return { content: [{ type: 'text' as const, text: `Not saved: ${(err as Error).message}` }], isError: true }
+          }
         }
       ),
       tool(

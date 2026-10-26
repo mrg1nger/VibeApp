@@ -84,6 +84,10 @@ export type VibeEvent =
   | { type: 'plan_finished'; total: number; tracked: number; stopped: boolean }
   /** A big request was sent in Build: VibeApp asks whether to plan it first. */
   | { type: 'plan_suggested'; text: string }
+  /** The Deploy button ran (shown in the chat so the history says when it went live). */
+  | { type: 'deploy_result'; name: string; ok: boolean; seconds: number; failedStep?: string; detail?: string; rolledBack?: boolean; stopped?: boolean }
+  /** Claude wrote or changed the deploy recipe: the user should check it. */
+  | { type: 'deploy_recipe_ready'; name: string; steps: number }
   /** What the user decided about a proposed plan (kept so the chat shows it after reopening). */
   | { type: 'plan_decided'; toolUseId: string; decision: 'approved' | 'revised' | 'cancelled' }
   /** Building an approved plan: a step started or finished. */
@@ -314,6 +318,57 @@ export interface TranscriptEntry {
 export const MEMORY_CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other'] as const
 export type MemoryCategory = (typeof MEMORY_CATEGORIES)[number]
 
+/** One backup of VibeApp's data (a folder). */
+export interface BackupInfo {
+  path: string
+  createdAt: string
+  reason: 'nightly' | 'manual' | 'before restore' | 'export'
+  bytes: number
+  computer: string
+  appVersion: string
+}
+
+/** One command in a project's deploy recipe, run from the project folder. */
+export interface DeployStep {
+  label: string
+  run: string
+  timeoutSec?: number
+}
+
+/** A project's one-click Deploy: written once (usually by Claude), checked by the user, then run by VibeApp. */
+export interface DeployRecipe {
+  name: string
+  shell: 'bash' | 'powershell'
+  steps: DeployStep[]
+  /** Checked after the steps: the site answers (retried a few times while it restarts). */
+  check?: { url: string; expectStatus?: number }
+  /** Run if a step or the check fails, to put the live site back. */
+  rollback?: DeployStep[]
+  notes?: string
+  by: 'claude' | 'user'
+  /** The user has looked at the steps; only then can it run. */
+  confirmed: boolean
+  updatedAt: string
+}
+
+/** Progress of a running deploy, for the Deploy window. */
+export type DeployEvent =
+  | { type: 'started'; steps: string[]; hasCheck: boolean }
+  | { type: 'step'; index: number; status: 'running' | 'ok' | 'failed' }
+  | { type: 'output'; index: number; text: string }
+  | { type: 'check'; status: 'running' | 'ok' | 'failed'; detail?: string }
+  | { type: 'rollback'; status: 'running' | 'ok' | 'failed'; detail?: string }
+  | {
+      type: 'finished'
+      ok: boolean
+      seconds: number
+      failedStep?: string
+      output?: string
+      checkDetail?: string
+      rolledBack?: boolean
+      stopped?: boolean
+    }
+
 /** One item on a project's to-do list. */
 export interface TodoItem {
   id: string
@@ -418,6 +473,18 @@ export interface AppSettings {
   trayMode: boolean
   /** Start VibeApp with Windows, in the tray (installed app only). */
   startWithWindows: boolean
+  /** Back up VibeApp's data once a day. */
+  backupDaily: boolean
+  /** Where backups go; null = Documents\VibeApp Backups. */
+  backupDir: string | null
+  /** How many backups are kept. */
+  backupKeep: number
+  backupLastAt: string | null
+  backupLastError: string | null
+  /** Alerts on the phone through the ntfy app. */
+  phoneAlerts: boolean
+  phoneAlertServer: string
+  phoneAlertTopic: string | null
   themeId: string
   /** Pick a cheaper Claude model for small edits and when plan usage runs low. */
   smartRouting: boolean

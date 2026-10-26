@@ -3386,3 +3386,148 @@ textarea {
     padding-right: 44px;
   }
 }
+
+/* ---- the Deploy window ---- */
+
+.deploy-steps {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deploy-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.deploy-mark {
+  width: 1.2em;
+  flex: none;
+  text-align: center;
+}
+
+.deploy-step-waiting {
+  color: var(--text-muted);
+}
+
+.deploy-step-ok .deploy-mark,
+.deploy-result-ok {
+  color: var(--success-text);
+}
+
+.deploy-step-failed .deploy-mark,
+.deploy-result-bad {
+  color: var(--danger);
+}
+
+.deploy-log {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.deploy-heading {
+  margin: 12px 0 6px;
+  font-size: 13px;
+}
+
+.deploy-edit-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.deploy-edit-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.deploy-edit-steps textarea {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+
+.deploy-change {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: flex-start;
+}
+
+.deploy-change textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  .deploy-change {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ---- Settings: backups and phone alerts ---- */
+
+.backup-actions {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.backup-list {
+  margin: 6px 0;
+}
+
+.backup-list ul {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backup-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.backup-path-row {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.backup-path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.phone-setup ol {
+  margin: 6px 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.phone-topic {
+  user-select: all;
+  word-break: break-all;
+}

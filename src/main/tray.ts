@@ -6,6 +6,7 @@ import iconPath from '../../build/icon.png?asset'
 import { addEventSink, invoke } from './remote/bus'
 import { remoteStatus } from './remote/server'
 import { getSettings } from './settings/store'
+import { sendPhoneAlert } from './notify/phone'
 
 // The system tray icon: VibeApp can run with no window open (Remote access
 // browsers and phones do the work), and the tray shows what's going on and
@@ -45,10 +46,21 @@ async function refreshNames(): Promise<void> {
 const nameOf = (projectId: string): string => projectNames.get(projectId) ?? 'A project'
 
 function notify(title: string, body: string): void {
-  if (!options || options.windowShowing() || !Notification.isSupported()) return
-  const n = new Notification({ title, body: body.slice(0, 240), silent: false })
-  n.on('click', () => options?.showWindow())
-  n.show()
+  notifyUser(title, body)
+}
+
+/**
+ * Tells the user something needs them, when no VibeApp window is on screen:
+ * a Windows notification, and an alert on their phone if they set that up.
+ */
+export function notifyUser(title: string, body: string): void {
+  if (!options || options.windowShowing()) return
+  if (Notification.isSupported()) {
+    const n = new Notification({ title, body: body.slice(0, 240), silent: false })
+    n.on('click', () => options?.showWindow())
+    n.show()
+  }
+  void sendPhoneAlert(title, body.replace(/ Answer from a connected browser or phone, or open VibeApp\.$/, ''))
 }
 
 /** Keeps track of what's running and waiting, from the events sent to the screens. */

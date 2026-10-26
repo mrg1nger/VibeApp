@@ -15,6 +15,7 @@ import CheckpointButton from '../components/CheckpointButton'
 import GoNutzToggle from '../components/GoNutzToggle'
 import PreviewPane from '../components/PreviewPane'
 import NotesPane from '../components/NotesPane'
+import DeployDialog from '../components/DeployDialog'
 import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
@@ -53,6 +54,7 @@ type ChatItem =
     }
   | { kind: 'error'; message: string }
   | { kind: 'notice'; text: string; details?: string }
+  | { kind: 'deploy_ready'; name: string; steps: number }
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
@@ -244,7 +246,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [problem, setProblem] = useState<PreviewProblem | null>(null)
   const [problemExpanded, setProblemExpanded] = useState(false)
   const [restoring, setRestoring] = useState(false)
-  const [dialog, setDialog] = useState<'secrets' | 'publish' | null>(null)
+  const [dialog, setDialog] = useState<'secrets' | 'publish' | 'deploy' | null>(null)
   const [stopping, setStopping] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [dragging, setDragging] = useState(false)
@@ -452,6 +454,18 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             const finished = { total: event.total, tracked: event.tracked, stopped: event.stopped }
             return prev.map((item, i) => (i === at && item.kind === 'plan' ? { ...item, finished } : item))
           }
+          case 'deploy_result':
+            return [
+              ...prev,
+              {
+                kind: 'notice',
+                text: event.ok
+                  ? `🚀 Deployed with the Deploy button ("${event.name}", ${event.seconds}s).${event.detail ? ` ${event.detail}.` : ''}`
+                  : `🚀 Deploy ${event.stopped ? 'stopped' : `failed at "${event.failedStep}"`}${event.rolledBack ? '; the previous version was put back' : ''}.${event.detail ? ` ${event.detail}` : ''}`
+              }
+            ]
+          case 'deploy_recipe_ready':
+            return [...prev, { kind: 'deploy_ready', name: event.name, steps: event.steps }]
           case 'plan_suggested': {
             // Only meaningful at the moment it's asked; the question isn't repeated when the chat is reopened.
             if (isReplay) return prev
@@ -893,6 +907,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           <button onClick={() => setDialog('publish')} disabled={busy}>
             Publish
           </button>
+          <button onClick={() => setDialog('deploy')} title="Put this project live with its own deploy steps, with no AI">
+            🚀 Deploy
+          </button>
           <button onClick={onOpenHistory}>History</button>
           <CheckpointButton
             hasChanges={hasChanges}
@@ -1082,6 +1099,19 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                   <button className="chat-inline-action" disabled={busy} onClick={() => setShowAllHistory(true)}>
                     Show {item.hidden} earlier request{item.hidden === 1 ? '' : 's'}
                   </button>
+                )}
+                {item.kind === 'deploy_ready' && (
+                  <div className="plan-suggestion">
+                    <p>
+                      🚀 <strong>Deploy steps ready: {item.name}</strong> ({item.steps} step{item.steps === 1 ? '' : 's'}). Check them
+                      once; after that the Deploy button runs them with no AI.
+                    </p>
+                    <div className="plan-actions">
+                      <button className="plan-approve" onClick={() => setDialog('deploy')}>
+                        Check the Deploy steps
+                      </button>
+                    </div>
+                  </div>
                 )}
                 {item.kind === 'notice' && (
                   <>
@@ -1464,6 +1494,19 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
 
       {dialog === 'secrets' && (
         <SecretsDialog projectId={project.id} onClose={() => setDialog(null)} onError={onError} />
+      )}
+      {dialog === 'deploy' && (
+        <DeployDialog
+          project={project}
+          busy={busy}
+          onClose={() => setDialog(null)}
+          onError={onError}
+          onAskClaude={(text) => {
+            setMode('build')
+            if (phone) setPhonePane('chat')
+            sendMessage(text, undefined, [], true)
+          }}
+        />
       )}
       {dialog === 'publish' && (
         <PublishDialog project={project} onClose={() => setDialog(null)} onError={onError} onFixLeaks={handleFixLeaks} />

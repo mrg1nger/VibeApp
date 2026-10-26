@@ -53,6 +53,8 @@ function friendlyToolLabel(name: string, input: unknown): string {
       return (input as { fact?: string })?.fact ? `Updated memory: ${(input as { fact: string }).fact}` : 'Updated a memory'
     case 'mcp__vibe_memory__forget':
       return `Forgot a memory${(input as { reason?: string })?.reason ? `: ${(input as { reason: string }).reason}` : ''}`
+    case 'mcp__vibe_tools__save_deploy_recipe':
+      return `Wrote the Deploy steps: ${(input as { name?: string })?.name ?? 'Deploy'}`
     case 'mcp__vibe_memory__todos':
       return 'Checked your to-do list'
     case 'mcp__vibe_memory__add_todo':

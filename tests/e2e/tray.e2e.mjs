@@ -15,6 +15,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,6 +25,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const PORT = 8400 + Math.floor(Math.random() * 500)
 const APP_DEBUG = PORT + 600
 const BROWSER_DEBUG = PORT + 601
+const NTFY_PORT = PORT + 602
 
 const packaged = process.argv.includes('--packaged')
 const exe = join(root, 'release', 'win-unpacked', 'VibeApp.exe')
@@ -48,7 +50,19 @@ const PROJECT_ID = 'tray-project'
 writeFileSync(join(data, 'projects.json'), JSON.stringify({ projects: [{ id: PROJECT_ID, path: project, name: 'tray-game', lastOpened: new Date().toISOString() }] }))
 writeFileSync(
   join(data, 'settings.json'),
-  JSON.stringify({ claudeModel: 'haiku', autoMemory: false, codeMap: false, smartRouting: false, codexReview: false, remoteAccess: 'local', remotePort: PORT })
+  JSON.stringify({
+    claudeModel: 'haiku',
+    autoMemory: false,
+    codeMap: false,
+    smartRouting: false,
+    codexReview: false,
+    remoteAccess: 'local',
+    remotePort: PORT,
+    // Phone alerts go to a stand-in ntfy server on this computer.
+    phoneAlerts: true,
+    phoneAlertServer: `http://127.0.0.1:${NTFY_PORT}`,
+    phoneAlertTopic: 'vibeapp-traytest'
+  })
 )
 const code = () => JSON.parse(readFileSync(join(data, 'remote.json'), 'utf-8')).pairingCode
 const trayMenu = () => {
@@ -58,6 +72,18 @@ const trayMenu = () => {
     return ''
   }
 }
+
+// The stand-in ntfy: records what VibeApp would have sent to the phone.
+const alerts = []
+const ntfy = createServer((req, res) => {
+  let body = ''
+  req.on('data', (c) => (body += c))
+  req.on('end', () => {
+    alerts.push({ topic: req.url, title: String(req.headers.title ?? ''), body })
+    res.end('{}')
+  })
+})
+await new Promise((r) => ntfy.listen(NTFY_PORT, '127.0.0.1', r))
 
 const env = { ...process.env, VIBEAPP_USER_DATA: data, VIBEAPP_TEST_HOOKS: '1' }
 delete env.ELECTRON_RUN_AS_NODE
@@ -207,6 +233,7 @@ try {
     await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 })
     await waitFor(browser, `!!document.querySelector('.question-card')`, 'the question in the browser', 180_000)
     await until(async () => /tray-game: waiting for you/.test(trayMenu()), 'the tray to show it waiting', 20_000)
+    await until(async () => alerts.some((a) => a.topic === '/vibeapp-traytest' && /tray-game: Claude has a question/.test(a.title)), 'the phone alert', 15_000)
     await browser.evaluate(`[...document.querySelectorAll('.question-option')].find((b) => b.textContent.includes('Blue')).click()`)
     await sleep(300)
     await browser.evaluate(`document.querySelector('.question-submit').click()`)
@@ -236,6 +263,22 @@ try {
     if ((await fetch(`http://127.0.0.1:${PORT}/login`)).status !== 200) throw new Error('Remote access stopped')
     if (!/Open VibeApp/.test(trayMenu())) throw new Error('the tray menu is gone')
   })
+  await step('restoring a backup restarts VibeApp with the data as it was', async () => {
+    await browser.evaluate(`window.vibe.todos.add('${PROJECT_ID}', 'Made before the backup')`)
+    const made = await browser.evaluate(`window.vibe.backup.now()`)
+    if (!made?.path?.startsWith(data)) throw new Error(`a test backup went outside the test folder: ${made?.path}`)
+    await browser.evaluate(`window.vibe.todos.add('${PROJECT_ID}', 'Made after the backup')`)
+    await browser.evaluate(`window.vibe.backup.restore(${JSON.stringify(made.path)})`).catch(() => undefined)
+    await until(async () => appExited, 'the running VibeApp to close', 30_000)
+    // It starts again by itself (with the same --tray start), with the backup in place.
+    await sleep(3000)
+    await until(async () => (await fetch(`http://127.0.0.1:${PORT}/login`)).status === 200, 'VibeApp to start again', 90_000)
+    await browser.send('Page.reload')
+    await waitFor(browser, `window.vibe?.host === 'browser'`, 'the app in the browser again', 60_000)
+    const texts = (await browser.evaluate(`window.vibe.todos.list('${PROJECT_ID}')`)).map((t) => t.text)
+    console.log(`  (to-dos after restoring: ${texts.join(', ')})`)
+    if (!texts.includes('Made before the backup') || texts.includes('Made after the backup')) throw new Error(`not as it was: ${texts.join(', ')}`)
+  }, browser)
 } catch (err) {
   console.log(`✖ ${err.message}`)
   results.push({ name: 'setup', ok: false, error: err.message })
@@ -245,6 +288,11 @@ try {
   app.kill()
   await sleep(1500)
   if (process.platform === 'win32' && app.pid) spawnSync('taskkill', ['/pid', String(app.pid), '/T', '/F'], { stdio: 'ignore' })
+  // The copy that started again after the restore isn't a child of this script.
+  if (process.platform === 'win32') {
+    spawnSync('powershell', ['-NoProfile', '-Command', `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'remote-debugging-port=${APP_DEBUG}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }`], { stdio: 'ignore' })
+  }
+  ntfy.close()
   const failed = results.filter((r) => !r.ok)
   console.log(`\n${results.length - failed.length}/${results.length} tray steps passed${packaged ? ' (packaged app)' : ''}. Screenshots: ${shots}`)
   rmSync(data, { recursive: true, force: true })

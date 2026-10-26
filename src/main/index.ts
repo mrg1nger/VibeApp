@@ -10,6 +10,7 @@ import { stopAllChildren } from './cli/codexExec'
 import { requestClassifier } from './orchestrator/classifier'
 import { getSettings } from './settings/store'
 import { applyLoginItem, noteStillRunning, setupTray } from './tray'
+import { applyPendingRestore, scheduleBackups } from './backup/backup'
 
 let currentWindow: BrowserWindow | undefined
 /** Started with --tray (e.g. with Windows): no window until the user asks for one. */
@@ -116,6 +117,9 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  // A restore chosen last time goes in place before anything opens the data.
+  applyPendingRestore()
+
   // Events go to the desktop window and to any Remote access screens.
   registerIpcHandlers(broadcaster(() => currentWindow?.webContents))
   registerRemoteHandlers()
@@ -131,6 +135,7 @@ app.whenReady().then(() => {
     }
   })
   applyLoginItem()
+  scheduleBackups()
   if (!startInTray) createWindow()
 
   // Get Haiku's request labeller running before the first message needs it.

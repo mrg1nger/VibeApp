@@ -572,6 +572,38 @@ try {
     await click('Preview', '.chat-header-actions button')
   })
 
+  // -- one-click Deploy --
+
+  await step('Claude writes the Deploy steps, they are checked and saved, and Deploy runs them with no AI', async () => {
+    const live = mkdtempSync(join(tmpdir(), 'vibeapp-e2e-live-'))
+    const liveBash = live.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => `/${d.toLowerCase()}`)
+    await waitFor(`window.vibe.preview.state(${JSON.stringify(PROJECT_ID)}).then((s) => s.status === 'running')`, 'the preview', 60_000)
+    const site = (await evaluate(`window.vibe.preview.state(${JSON.stringify(PROJECT_ID)})`)).url
+    await click('Deploy', '.chat-header-actions button')
+    await waitFor(`[...document.querySelectorAll('.modal button')].some((b) => b.textContent.includes('Set up Deploy'))`, 'the Deploy window', 10_000)
+    await pressEscape()
+    // Tell Claude how this project deploys (a real one would be worked out from past deploys).
+    await send(
+      `Set up the one-click Deploy button for this project. Deploying it means copying index.html and shop.js into the folder ${liveBash} (Git Bash path; use cp, one step per file is fine), and the check URL is ${site}. Save it with save_deploy_recipe; don't deploy now.`
+    )
+    await idle(300_000)
+    await waitFor(`!!document.querySelector('.plan-suggestion') && /Deploy steps ready/.test(document.querySelector('.chat-log').innerText)`, 'the "Deploy steps ready" card', 20_000)
+    await click('Check the Deploy steps', '.plan-suggestion button')
+    await waitFor(`[...document.querySelectorAll('.modal button')].some((b) => b.textContent.includes('Looks right'))`, 'the steps to check', 10_000)
+    const steps = await evaluate(`document.querySelectorAll('.deploy-edit-steps textarea').length`)
+    console.log(`  (Claude wrote ${steps} step${steps === 1 ? '' : 's'})`)
+    await click('Looks right', '.modal button')
+    await waitFor(`[...document.querySelectorAll('.modal button')].some((b) => b.textContent.includes('Deploy now'))`, 'the saved recipe', 10_000)
+    await click('Deploy now', '.modal button')
+    await waitFor(`/Deployed in/.test(document.querySelector('.modal')?.innerText ?? '') || /Failed at/.test(document.querySelector('.modal')?.innerText ?? '')`, 'the deploy to finish', 120_000)
+    const text = await evaluate(`document.querySelector('.modal').innerText`)
+    if (!/Deployed in/.test(text)) throw new Error(`the deploy failed: ${text.slice(0, 400)}`)
+    for (const f of ['index.html', 'shop.js']) if (!existsSync(join(live, f))) throw new Error(`${f} wasn't copied to the live folder`)
+    await pressEscape()
+    await waitFor(`/Deployed with the Deploy button/.test(document.querySelector('.chat-log').innerText)`, 'the deploy line in the chat', 10_000)
+    rmSync(live, { recursive: true, force: true })
+  })
+
   // -- asking --
 
   await step('Ask mode answers without changing anything', async () => {
