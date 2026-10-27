@@ -34,8 +34,10 @@ import type {
   TranscriptEntry,
   UsageSnapshot,
   UsageSummaryRow,
-  VibeEvent
+  VibeEvent,
+  Schedule
 } from '@shared/types'
+import type { ScheduleInput } from '@shared/schedule'
 
 // Everything the screens can ask of the app, as one definition shared by the
 // desktop app (Electron's IPC, see index.ts) and a web browser (Remote access,
@@ -338,6 +340,21 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         const listener = (_event: unknown, projectId: string): void => cb(projectId)
         ipcRenderer.on('vibe:deploy:changed', listener)
         return () => ipcRenderer.removeListener('vibe:deploy:changed', listener)
+      }
+    },
+
+    schedules: {
+      list: (projectId: string): Promise<Schedule[]> => ipcRenderer.invoke('vibe:schedules:list', projectId),
+      /** Every project's, with the project's name (Settings). */
+      all: (): Promise<(Schedule & { projectName: string })[]> => ipcRenderer.invoke('vibe:schedules:all'),
+      save: (projectId: string, input: ScheduleInput & { id?: string }): Promise<Schedule> => ipcRenderer.invoke('vibe:schedules:save', projectId, input),
+      setEnabled: (id: string, enabled: boolean): Promise<Schedule | undefined> => ipcRenderer.invoke('vibe:schedules:setEnabled', id, enabled),
+      remove: (id: string): Promise<void> => ipcRenderer.invoke('vibe:schedules:remove', id),
+      runNow: (id: string): Promise<{ started: boolean; reason?: string }> => ipcRenderer.invoke('vibe:schedules:runNow', id),
+      onChanged: (cb: (projectId: string) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string): void => cb(projectId)
+        ipcRenderer.on('vibe:schedules:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:schedules:changed', listener)
       }
     },
 

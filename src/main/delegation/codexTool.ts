@@ -16,6 +16,7 @@ import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import type { DelegationActivity } from '@shared/types'
 import type { AgentInstallRequest } from '../extensions/install'
 import { saveRecipe } from '../deploy/deploy'
+import { listSchedules, saveSchedule, summarize as summarizeSchedule } from '../schedule/scheduler'
 
 export type DelegationProgressListener = (note: string) => void
 
@@ -155,6 +156,63 @@ export function createCodexDelegationServer(
           } catch (err) {
             return { content: [{ type: 'text' as const, text: `Not saved: ${(err as Error).message}` }], isError: true }
           }
+        }
+      ),
+      tool(
+        'save_schedule',
+        "Save a schedule for this project, which VibeApp runs by itself while it's running (in the tray is enough). Only when the user asks for something to happen on a schedule or after each Deploy (\"every weekday at 7am run the tests\", \"check the site every 15 minutes\"). It's saved as a draft: the user checks it and turns it on in VibeApp's Schedules window, so tell them that, briefly. Don't run the work now as well. A request runs as a normal chat message with nobody watching, so write it as a complete instruction (what to do, and what to report). Pass id to change an existing schedule (from list_schedules).",
+        {
+          id: z.string().optional().describe('An existing schedule to change (from list_schedules).'),
+          name: z.string().describe('Short name, e.g. "Morning test run".'),
+          action: z
+            .discriminatedUnion('kind', [
+              z.object({ kind: z.literal('request'), text: z.string().describe('The message to send, as the user would type it.'), mode: z.enum(['build', 'plan', 'ask']).describe('build changes code; plan proposes a plan and waits for approval; ask answers without changing anything.') }),
+              z.object({ kind: z.literal('next_todo'), mode: z.enum(['build', 'plan']) }),
+              z.object({ kind: z.literal('deploy') }),
+              z.object({ kind: z.literal('site_check'), url: z.string(), onDown: z.string().optional().describe('A request to send you when the site goes down (once per outage).') })
+            ])
+            .describe("What runs: a request; the top to-do; the project's saved Deploy; or a check that a web address is up (no AI)."),
+          when: z
+            .discriminatedUnion('kind', [
+              z.object({ kind: z.literal('once'), at: z.string().describe('Local date and time, e.g. 2026-11-02T19:00.') }),
+              z.object({ kind: z.literal('daily'), time: z.string().describe('HH:MM, 24-hour, this computer\'s time.'), days: z.array(z.number().int().min(0).max(6)).describe('0 = Sunday … 6 = Saturday; all seven for every day.') }),
+              z.object({ kind: z.literal('every'), minutes: z.number().int().describe('At least 60 for requests, 5 for site checks.') }),
+              z.object({ kind: z.literal('after_deploy') })
+            ])
+            .describe('When it runs.'),
+          maxPerDay: z.number().int().optional().describe('Requests: at most this many runs a day (default 3).'),
+          skipAboveUsage: z.number().int().optional().describe("Requests: skip when Claude's plan usage is at or above this percent (default 90; 0 = never skip).")
+        },
+        async (args) => {
+          if (!memory?.projectId) return { content: [{ type: 'text' as const, text: 'Schedules are not available here.' }], isError: true }
+          try {
+            const saved = saveSchedule(memory.projectId, args, 'claude', false)
+            return {
+              content: [
+                { type: 'text' as const, text: `Saved the draft schedule "${saved.name}" (${summarizeSchedule(saved)}). It runs once the user checks it and turns it on in the Schedules window.` }
+              ]
+            }
+          } catch (err) {
+            return { content: [{ type: 'text' as const, text: `Not saved: ${(err as Error).message}` }], isError: true }
+          }
+        }
+      ),
+      tool(
+        'list_schedules',
+        "This project's schedules: what each runs, when, whether it's on, and how its last runs went.",
+        {},
+        async () => {
+          if (!memory?.projectId) return { content: [{ type: 'text' as const, text: 'Schedules are not available here.' }], isError: true }
+          const list = listSchedules(memory.projectId)
+          const text = list.length
+            ? list
+                .map((s) => {
+                  const last = s.runs[0]
+                  return `- ${s.id}: "${s.name}" — ${summarizeSchedule(s)} — ${s.enabled ? 'on' : s.confirmed ? 'off' : 'draft, not yet checked'}${last ? ` — last run ${last.at}: ${last.status}${last.detail ? ` (${last.detail})` : ''}` : ''}`
+                })
+                .join('\n')
+            : 'No schedules yet.'
+          return { content: [{ type: 'text' as const, text }] }
         }
       ),
       tool(

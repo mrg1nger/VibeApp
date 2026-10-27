@@ -242,6 +242,25 @@ try {
     if ((await appWindows()).length) throw new Error('a window opened')
   }, browser)
 
+  await step('a schedule shows in the tray, runs with no window and its phone alert arrives; Pause all hides it', async () => {
+    const at = new Date(Date.now() + 35_000).toISOString()
+    await browser.evaluate(
+      `window.vibe.schedules.save('${PROJECT_ID}', { name: 'Quick check', action: { kind: 'request', text: 'Reply with just the word OK.', mode: 'ask' }, when: { kind: 'once', at: ${JSON.stringify(at)} } })`
+    )
+    await until(async () => /⏰ .*Quick check \(tray-game\)/.test(trayMenu()), 'the schedule in the tray menu', 20_000)
+    await until(async () => alerts.some((a) => /tray-game: .*Quick check done/.test(a.title)), 'the phone alert for the scheduled run', 150_000)
+    if ((await appWindows()).length) throw new Error('a window opened')
+    // Another one, then pause everything: it leaves the menu.
+    await browser.evaluate(
+      `window.vibe.schedules.save('${PROJECT_ID}', { name: 'Later check', action: { kind: 'request', text: 'Reply OK.', mode: 'ask' }, when: { kind: 'every', minutes: 120 } })`
+    )
+    await until(async () => /Later check/.test(trayMenu()), 'the second schedule in the tray menu', 20_000)
+    await browser.evaluate(`window.vibe.settings.update({ schedulesPaused: true })`)
+    await until(async () => !/Later check/.test(trayMenu()) && /Pause all schedules/.test(trayMenu()), 'the paused tray menu', 20_000)
+    await browser.evaluate(`window.vibe.settings.update({ schedulesPaused: false })`)
+    for (const s of await browser.evaluate(`window.vibe.schedules.list('${PROJECT_ID}')`)) await browser.evaluate(`window.vibe.schedules.remove('${s.id}')`)
+  }, browser)
+
   await step('starting VibeApp again opens the window instead of a second copy', async () => {
     const second = launch([])
     const exited = await Promise.race([new Promise((r) => second.once('exit', () => r(true))), sleep(20_000).then(() => false)])

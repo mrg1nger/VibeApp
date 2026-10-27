@@ -7,6 +7,7 @@ import { addEventSink, invoke } from './remote/bus'
 import { remoteStatus } from './remote/server'
 import { getSettings } from './settings/store'
 import { sendPhoneAlert } from './notify/phone'
+import { isScheduledRun, upcoming } from './schedule/scheduler'
 
 // The system tray icon: VibeApp can run with no window open (Remote access
 // browsers and phones do the work), and the tray shows what's going on and
@@ -74,7 +75,8 @@ function watch(channel: string, args: unknown[]): void {
       const since = working.get(projectId)
       working.delete(projectId)
       waiting.delete(projectId)
-      if (event.type === 'turn_complete' && since && Date.now() - since > ANNOUNCE_AFTER_MS) {
+      // A scheduled request says how it went itself.
+      if (event.type === 'turn_complete' && since && Date.now() - since > ANNOUNCE_AFTER_MS && !isScheduledRun(projectId)) {
         notify(`${nameOf(projectId)}: finished`, 'The request you sent is done.')
       }
     }
@@ -88,6 +90,8 @@ function watch(channel: string, args: unknown[]): void {
       `${nameOf(projectId)}: ${request.questions?.length ? 'Claude has a question' : 'Claude is asking permission'}`,
       `${request.reason}. Answer from a connected browser or phone, or open VibeApp.`
     )
+    scheduleRebuild()
+  } else if (channel === 'vibe:schedules:changed') {
     scheduleRebuild()
   } else if (channel === 'vibe:settings:changed') {
     applyLoginItem(args[0] as AppSettings)
@@ -126,6 +130,29 @@ async function pendingPrompts(): Promise<Map<string, number>> {
     }
   }
   return out
+}
+
+function when(iso: string): string {
+  const d = new Date(iso)
+  const today = new Date().toDateString() === d.toDateString()
+  return d.toLocaleString([], today ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+}
+
+/** The next few schedules across every project, and the switch that pauses them all. */
+function scheduleItems(settings: AppSettings): MenuItemConstructorOptions[] {
+  const next = upcoming(3)
+  if (!next.length && !settings.schedulesPaused) return [{ label: 'No schedules', enabled: false }]
+  return [
+    ...(settings.schedulesPaused
+      ? []
+      : next.map(({ schedule, at }) => ({ label: `⏰ ${when(at)}: ${schedule.name} (${nameOf(schedule.projectId)})`, enabled: false }))),
+    {
+      label: 'Pause all schedules',
+      type: 'checkbox' as const,
+      checked: !!settings.schedulesPaused,
+      click: (item: { checked: boolean }) => void invoke('vibe:settings:update', [{ schedulesPaused: item.checked }])
+    }
+  ]
 }
 
 async function rebuild(): Promise<void> {
@@ -171,6 +198,8 @@ async function rebuild(): Promise<void> {
         }
       }
     },
+    { type: 'separator' },
+    ...scheduleItems(settings),
     { type: 'separator' },
     {
       label: 'Keep running in the tray when the window is closed',

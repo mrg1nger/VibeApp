@@ -249,7 +249,11 @@ async function shot(name) {
 // ---- the steps ------------------------------------------------------------------
 
 const results = []
+/** VIBEAPP_E2E_ONLY="schedule|Deploy": only the steps whose names match (plus opening the app and the project). */
+const only = process.env.VIBEAPP_E2E_ONLY ? new RegExp(`${process.env.VIBEAPP_E2E_ONLY}|app opens|test project opens`, 'i') : null
+
 async function step(name, fn) {
+  if (only && !only.test(name)) return
   const start = Date.now()
   try {
     await fn()
@@ -602,6 +606,72 @@ try {
     await pressEscape()
     await waitFor(`/Deployed with the Deploy button/.test(document.querySelector('.chat-log').innerText)`, 'the deploy line in the chat', 10_000)
     rmSync(live, { recursive: true, force: true })
+  })
+
+  // -- schedules --
+
+  const schedules = () => evaluate(`window.vibe.schedules.list(${JSON.stringify(PROJECT_ID)})`)
+  /** Picks an option in a React-controlled <select>. */
+  const pick = (selector, value) =>
+    evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)})
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)})
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    })()`)
+
+  await step('a schedule made in the Schedules window runs a Build request, marked ⏰ in the chat, and is marked done', async () => {
+    await click('Schedules', '.chat-header-actions button')
+    await click('New schedule', '.modal button')
+    await waitFor(`!!document.querySelector('.schedule-form textarea')`, 'the new-schedule form', 10_000)
+    await fill('.schedule-form textarea', 'Create a file named scheduled-note.txt in the project folder containing just the word tick. Change nothing else.')
+    await pick('.schedule-form label:nth-of-type(3) select', 'every')
+    await click('Add schedule', '.modal button')
+    await waitFor(`/Every 2 hours/.test(document.querySelector('.schedule-list')?.innerText ?? '')`, 'the schedule in the list', 10_000)
+    await click('Run now', '.schedule-list button')
+    await pressEscape()
+    await waitFor(`/⏰ Scheduled/.test(document.querySelector('.chat-log').innerText)`, 'the scheduled run in the chat', 15_000)
+    await waitFor(`!!document.querySelector('.chat-stop')`, 'the request to show as running', 15_000)
+    await idle(300_000)
+    const file = join(project, 'scheduled-note.txt')
+    if (!existsSync(file) || !/tick/i.test(readFileSync(file, 'utf-8'))) throw new Error('the scheduled request did not create the file')
+    const [s] = await schedules()
+    if (s.runs[0]?.status !== 'ok') throw new Error(`run: ${JSON.stringify(s.runs[0])}`)
+    if (!s.nextAt || Date.parse(s.nextAt) < Date.now() + 60 * 60_000) throw new Error(`next run: ${s.nextAt}`)
+    await evaluate(`window.vibe.schedules.remove(${JSON.stringify(s.id)})`)
+  })
+
+  await step('a schedule runs by itself when its time comes (an Ask, in under a minute)', async () => {
+    const at = new Date(Date.now() + 35_000).toISOString()
+    await evaluate(
+      `window.vibe.schedules.save(${JSON.stringify(PROJECT_ID)}, { name: 'Quick sum', action: { kind: 'request', text: 'What is 2 + 2? Reply with just the number.', mode: 'ask' }, when: { kind: 'once', at: ${JSON.stringify(at)} } })`
+    )
+    await waitFor(`/⏰ Scheduled: "Quick sum"/.test(document.querySelector('.chat-log').innerText)`, 'the schedule to start on time', 120_000)
+    await idle(180_000)
+    await waitFor(
+      `window.vibe.schedules.list(${JSON.stringify(PROJECT_ID)}).then((l) => l[0]?.runs[0]?.status === 'ok')`,
+      'the run to be marked done',
+      20_000
+    )
+    const [s] = await schedules()
+    if (s.enabled) throw new Error('a one-off schedule should turn itself off after running')
+    if (!/4/.test(await lastReply())) throw new Error(`answer: ${await lastReply()}`)
+    await evaluate(`window.vibe.schedules.remove(${JSON.stringify(s.id)})`)
+  })
+
+  await step('Claude sets up a schedule from the chat as a draft, and it runs only once turned on', async () => {
+    await send("Every weekday at 7am, check that index.html still contains the word Shop and tell me if it doesn't. Set that up as a schedule for this project; don't check it now.")
+    await idle(300_000)
+    await waitFor(`/Schedule ready/.test(document.querySelector('.chat-log').innerText)`, 'the "Schedule ready" card', 20_000)
+    const [draft] = await schedules()
+    if (!draft || draft.confirmed || draft.enabled) throw new Error(`the draft: ${JSON.stringify(draft)}`)
+    if (draft.when.kind !== 'daily' || draft.when.time !== '07:00' || draft.when.days.join() !== '1,2,3,4,5') throw new Error(`when: ${JSON.stringify(draft.when)}`)
+    await click('Check the schedule', '.plan-suggestion button')
+    await waitFor(`/Draft from Claude/.test(document.querySelector('.modal')?.innerText ?? '')`, 'the draft in the Schedules window', 10_000)
+    await click('Looks right, turn it on', '.modal button')
+    await waitFor(`window.vibe.schedules.list(${JSON.stringify(PROJECT_ID)}).then((l) => l[0]?.enabled && l[0]?.confirmed)`, 'the schedule to be on', 10_000)
+    await waitFor(`/Weekdays at 7/.test(document.querySelector('.schedule-list')?.innerText ?? '')`, 'the schedule described', 10_000)
+    await pressEscape()
+    for (const s of await schedules()) await evaluate(`window.vibe.schedules.remove(${JSON.stringify(s.id)})`)
   })
 
   // -- asking --

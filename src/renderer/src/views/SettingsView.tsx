@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, CodexModelList, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
 import RemoteAccessSettings from '../components/RemoteAccessSettings'
 import BackupSettings from '../components/BackupSettings'
+import ScheduleSettings from '../components/ScheduleSettings'
 import PhoneAlertSettings from '../components/PhoneAlertSettings'
 
 interface SettingsViewProps {
@@ -425,6 +426,11 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
             VibeApp from a browser or your phone.
           </p>
         )}
+      </section>
+
+      <section className="settings-section">
+        <h3>Schedules</h3>
+        <ScheduleSettings settings={settings} onSettingsChange={onSettingsChange} />
       </section>
 
       <section className="settings-section">

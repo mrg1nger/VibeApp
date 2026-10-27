@@ -55,6 +55,10 @@ function friendlyToolLabel(name: string, input: unknown): string {
       return `Forgot a memory${(input as { reason?: string })?.reason ? `: ${(input as { reason: string }).reason}` : ''}`
     case 'mcp__vibe_tools__save_deploy_recipe':
       return `Wrote the Deploy steps: ${(input as { name?: string })?.name ?? 'Deploy'}`
+    case 'mcp__vibe_tools__save_schedule':
+      return `Wrote a schedule: ${(input as { name?: string })?.name ?? 'a schedule'}`
+    case 'mcp__vibe_tools__list_schedules':
+      return 'Checked the schedules'
     case 'mcp__vibe_memory__todos':
       return 'Checked your to-do list'
     case 'mcp__vibe_memory__add_todo':

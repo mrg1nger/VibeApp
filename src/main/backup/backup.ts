@@ -14,7 +14,7 @@ import { getSettings, updateSettings } from '../settings/store'
 
 const PREFIX = 'VibeApp backup '
 /** What's copied (when present). Remote access pairings and its certificate stay with this computer. */
-const FILES = ['settings.json', 'projects.json', 'extensions.json', 'memory-global.json']
+const FILES = ['settings.json', 'projects.json', 'extensions.json', 'memory-global.json', 'schedules.json']
 const FOLDERS = ['transcripts', 'secrets', 'talk', 'themes', 'deploy', 'extensions', 'attachments', 'memory-projects']
 
 const userData = (): string => app.getPath('userData')

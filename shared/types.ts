@@ -88,6 +88,12 @@ export type VibeEvent =
   | { type: 'deploy_result'; name: string; ok: boolean; seconds: number; failedStep?: string; detail?: string; rolledBack?: boolean; stopped?: boolean }
   /** Claude wrote or changed the deploy recipe: the user should check it. */
   | { type: 'deploy_recipe_ready'; name: string; steps: number }
+  /** A schedule started (a request's own message follows in the chat as usual). */
+  | { type: 'scheduled_run'; scheduleId: string; name: string; what: string; text?: string }
+  /** A schedule ran something with no AI (Deploy, a site check) or was skipped: a line in the chat. */
+  | { type: 'schedule_note'; name: string; text: string }
+  /** Claude wrote a schedule: the user should check it and turn it on. */
+  | { type: 'schedule_ready'; scheduleId: string; name: string; summary: string }
   /** What the user decided about a proposed plan (kept so the chat shows it after reopening). */
   | { type: 'plan_decided'; toolUseId: string; decision: 'approved' | 'revised' | 'cancelled' }
   /** Building an approved plan: a step started or finished. */
@@ -373,6 +379,57 @@ export type DeployEvent =
       stopped?: boolean
     }
 
+/** What a schedule runs. */
+export type ScheduleAction =
+  /** A message to Claude (or Codex, as usual), in Build, Plan or Ask. */
+  | { kind: 'request'; text: string; mode: 'build' | 'plan' | 'ask' }
+  /** The top item of the to-do list, ticked off when it's done. */
+  | { kind: 'next_todo'; mode: 'build' | 'plan' }
+  /** The project's saved Deploy steps (no AI). */
+  | { kind: 'deploy' }
+  /** Is the site up? (no AI). Alerts when it goes down and comes back; can send Claude a request when it goes down. */
+  | { kind: 'site_check'; url: string; onDown?: string }
+
+/** When a schedule runs. */
+export type ScheduleWhen =
+  | { kind: 'once'; at: string }
+  /** At a time of day (HH:MM, this computer's time) on the given weekdays (0 = Sunday); all seven = every day. */
+  | { kind: 'daily'; time: string; days: number[] }
+  | { kind: 'every'; minutes: number }
+  /** Each time the project's Deploy succeeds. */
+  | { kind: 'after_deploy' }
+
+export interface ScheduleRun {
+  at: string
+  /** 'running' until it's done; 'waiting' when it needs the user (a plan, a question). */
+  status: 'running' | 'ok' | 'failed' | 'skipped' | 'waiting'
+  detail?: string
+  trigger: 'time' | 'late' | 'manual' | 'deploy'
+}
+
+export interface Schedule {
+  id: string
+  projectId: string
+  name: string
+  action: ScheduleAction
+  when: ScheduleWhen
+  enabled: boolean
+  /** Written by Claude: waits for the user to check it before it can run. */
+  confirmed: boolean
+  by: 'claude' | 'user'
+  /** Requests to Claude/Codex: at most this many runs a day. */
+  maxPerDay: number
+  /** Requests to Claude/Codex: skipped when Claude's plan usage is at or above this percent (0 = never skip). */
+  skipAboveUsage: number
+  /** When it's next due (computed). */
+  nextAt?: string
+  runs: ScheduleRun[]
+  createdAt: string
+  updatedAt: string
+  /** Site checks: what the last check found. */
+  siteUp?: boolean
+}
+
 /** One item on a project's to-do list. */
 export interface TodoItem {
   id: string
@@ -475,6 +532,8 @@ export interface AppSettings {
   codexEffort: string | null
   /** Closing the window leaves VibeApp running in the system tray. */
   trayMode: boolean
+  /** Every project's schedules are paused (they don't run, and nothing is made up for afterwards). */
+  schedulesPaused: boolean
   /** Start VibeApp with Windows, in the tray (installed app only). */
   startWithWindows: boolean
   /** Back up VibeApp's data once a day. */

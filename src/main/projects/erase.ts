@@ -5,6 +5,7 @@ import { memoryDb } from '../memory/paths'
 import { eraseProjectFromMemory } from '../memory/store'
 import { disposeSession } from '../orchestrator/session'
 import { findPreview } from '../preview/preview'
+import { removeSchedulesFor } from '../schedule/scheduler'
 
 /**
  * Deletes everything VibeApp keeps for a project: chat history, memory,
@@ -32,5 +33,6 @@ export function eraseProjectData(projectId: string): string[] {
   attempt('attached images', () => rmSync(join(data, 'attachments', projectId), { recursive: true, force: true }))
   attempt('secrets', () => rmSync(join(data, 'secrets', `${projectId}.bin`), { force: true }))
   attempt('old memory file', () => rmSync(join(data, 'memory-projects', `${projectId}.json`), { force: true }))
+  attempt('schedules', () => removeSchedulesFor(projectId))
   return erased
 }

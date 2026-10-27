@@ -16,6 +16,7 @@ import GoNutzToggle from '../components/GoNutzToggle'
 import PreviewPane from '../components/PreviewPane'
 import NotesPane from '../components/NotesPane'
 import DeployDialog from '../components/DeployDialog'
+import ScheduleDialog from '../components/ScheduleDialog'
 import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
@@ -55,6 +56,7 @@ type ChatItem =
   | { kind: 'error'; message: string }
   | { kind: 'notice'; text: string; details?: string }
   | { kind: 'deploy_ready'; name: string; steps: number }
+  | { kind: 'schedule_ready'; scheduleId: string; name: string; summary: string }
   | { kind: 'route'; label: string; reason: string; detail?: string }
   | { kind: 'restore'; text: string; restoreTo?: string; actionLabel?: string }
   | { kind: 'usage'; text: string }
@@ -246,7 +248,8 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
   const [problem, setProblem] = useState<PreviewProblem | null>(null)
   const [problemExpanded, setProblemExpanded] = useState(false)
   const [restoring, setRestoring] = useState(false)
-  const [dialog, setDialog] = useState<'secrets' | 'publish' | 'deploy' | null>(null)
+  const [dialog, setDialog] = useState<'secrets' | 'publish' | 'deploy' | 'schedules' | null>(null)
+  const [scheduleFocus, setScheduleFocus] = useState<string | undefined>(undefined)
   const [stopping, setStopping] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [dragging, setDragging] = useState(false)
@@ -466,6 +469,17 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             ]
           case 'deploy_recipe_ready':
             return [...prev, { kind: 'deploy_ready', name: event.name, steps: event.steps }]
+          case 'scheduled_run': {
+            const notice: ChatItem = { kind: 'notice', text: `⏰ Scheduled: "${event.name}" (${event.what})` }
+            // Reopened, the request's own message follows from the history; live, it's added here.
+            if (isReplay || !event.text) return [...prev, notice]
+            setBusy(true)
+            return [...prev, notice, { kind: 'user_text', text: event.text }]
+          }
+          case 'schedule_note':
+            return [...prev, { kind: 'notice', text: event.text }]
+          case 'schedule_ready':
+            return [...prev, { kind: 'schedule_ready', scheduleId: event.scheduleId, name: event.name, summary: event.summary }]
           case 'plan_suggested': {
             // Only meaningful at the moment it's asked; the question isn't repeated when the chat is reopened.
             if (isReplay) return prev
@@ -910,6 +924,15 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           <button onClick={() => setDialog('deploy')} title="Put this project live with its own deploy steps, with no AI">
             🚀 Deploy
           </button>
+          <button
+            onClick={() => {
+              setScheduleFocus(undefined)
+              setDialog('schedules')
+            }}
+            title="Run requests, the next to-do, Deploy or a site check on a schedule"
+          >
+            ⏰ Schedules
+          </button>
           <button onClick={onOpenHistory}>History</button>
           <CheckpointButton
             hasChanges={hasChanges}
@@ -1109,6 +1132,25 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
                     <div className="plan-actions">
                       <button className="plan-approve" onClick={() => setDialog('deploy')}>
                         Check the Deploy steps
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {item.kind === 'schedule_ready' && (
+                  <div className="plan-suggestion">
+                    <p>
+                      ⏰ <strong>Schedule ready: {item.name}</strong> ({item.summary}). Check it and turn it on; until then it does
+                      nothing.
+                    </p>
+                    <div className="plan-actions">
+                      <button
+                        className="plan-approve"
+                        onClick={() => {
+                          setScheduleFocus(item.scheduleId)
+                          setDialog('schedules')
+                        }}
+                      >
+                        Check the schedule
                       </button>
                     </div>
                   </div>
@@ -1507,6 +1549,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             sendMessage(text, undefined, [], true)
           }}
         />
+      )}
+      {dialog === 'schedules' && (
+        <ScheduleDialog project={project} focusId={scheduleFocus} onClose={() => setDialog(null)} onError={onError} />
       )}
       {dialog === 'publish' && (
         <PublishDialog project={project} onClose={() => setDialog(null)} onError={onError} onFixLeaks={handleFixLeaks} />

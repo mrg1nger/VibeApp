@@ -58,7 +58,16 @@ Messages may start with bracketed notes from VibeApp (for example, an element th
 Codex is automatically given the user's original request, the key facts and recent hand-offs when you hand it a task, so a task only needs to say what to do, which files are involved, and what done looks like.
 Helpers: you can start sub-agents (the Agent tool) for self-contained jobs so this long conversation isn't re-read for them. Use explorer (cheap, read-only) to find where something is or survey several files, reviewer after a large or risky change (name the files and any rules that apply), and test-runner when test output would be long. They don't see this conversation, so put everything they need in the task. Don't use one for something a single file read would answer.
 VibeApp doesn't commit anything for the user, so the working tree usually holds uncommitted work from earlier requests (some done by Codex while you were unavailable). A whole-tree git diff or git status therefore shows much more than the current request changed. Judge what a request changed from hand-off results, which list their own files and diff, and don't try to untangle or revert earlier uncommitted work unless asked.
-If the user wants a new tool for you and Codex ("add a tool that...", "make an MCP server for..."), build it as a small MCP server in the project, then call mcp__vibe_tools__install_extension so it's available everywhere. Don't edit .mcp.json for that: servers listed there are only seen by you in this project.`
+If the user wants a new tool for you and Codex ("add a tool that...", "make an MCP server for..."), build it as a small MCP server in the project, then call mcp__vibe_tools__install_extension so it's available everywhere. Don't edit .mcp.json for that: servers listed there are only seen by you in this project.
+Schedules: when the user wants something to happen on a schedule or after each Deploy ("every morning…", "check the site every 15 minutes"), call mcp__vibe_tools__save_schedule (and list_schedules to see or change existing ones). VibeApp runs those itself. Claude Code's own scheduling (the schedule and loop skills, CronCreate, RemoteTrigger, ScheduleWakeup) doesn't work inside VibeApp: don't use it.`
+
+/** Claude Code's own scheduling, which doesn't run inside VibeApp: VibeApp's schedules are the way. */
+const OWN_SCHEDULING_TOOLS = new Set(['CronCreate', 'CronDelete', 'CronList', 'RemoteTrigger', 'ScheduleWakeup'])
+function isOwnScheduling(toolName: string, input: unknown): boolean {
+  if (OWN_SCHEDULING_TOOLS.has(toolName)) return true
+  const skill = String((input as { skill?: string; command?: string })?.skill ?? (input as { command?: string })?.command ?? '')
+  return toolName === 'Skill' && /^\/?(schedule|loop)\b/i.test(skill.trim())
+}
 
 function secretsInstructions(projectId: string): string {
   let names: string[] = []
@@ -305,6 +314,18 @@ export class ClaudeSession extends EventEmitter {
     const destructiveCommandGate: HookCallback = async (input) => {
       if (input.hook_event_name !== 'PreToolUse') return { continue: true }
       const toolInput = input as PreToolUseHookInput
+
+      if (isOwnScheduling(toolInput.tool_name, toolInput.tool_input)) {
+        return {
+          continue: true,
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason:
+              "Claude Code's own scheduling doesn't run inside VibeApp. Use mcp__vibe_tools__save_schedule instead: VibeApp runs it (the user checks the draft and turns it on)."
+          }
+        }
+      }
 
       // External (non-SDK) MCP servers need an explicit permission grant
       // even under acceptEdits/allowDangerouslySkipPermissions -- confirmed

@@ -244,6 +244,8 @@ const READ_CHANNELS = new Set([
   'vibe:models:codex',
   'vibe:todos:list',
   'vibe:deploy:get',
+  'vibe:schedules:list',
+  'vibe:schedules:all',
   'vibe:backup:status',
   'vibe:notes:get',
   'vibe:themes:list',

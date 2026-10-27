@@ -1,5 +1,5 @@
 import { app, dialog, shell, type WebContents } from 'electron'
-import { ipc } from '../remote/bus'
+import { addEventSink, invoke, ipc } from '../remote/bus'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { dirname, join, resolve, sep } from 'path'
@@ -19,6 +19,7 @@ import type {
   PreviewProblem,
   PreviewState,
   QuestionAnswers,
+  Schedule,
   TalkAgent,
   VibeEvent
 } from '@shared/types'
@@ -128,6 +129,19 @@ import { deployEvents, getRecipe, isDeploying, removeRecipe, runDeploy, saveReci
 import { backupDir, backupNow, defaultBackupDir, listBackups, stageRestore } from '../backup/backup'
 import { DEFAULT_NTFY_SERVER, newTopic, sendPhoneAlert, topicUrl } from '../notify/phone'
 import { notifyUser } from '../tray'
+import {
+  listSchedules,
+  removeSchedule,
+  runScheduleNow,
+  saveSchedule,
+  scheduleEvents,
+  setScheduleEnabled,
+  startScheduler,
+  summarize as summarizeSchedule,
+  watchChatEvent,
+  watchDeployEvent
+} from '../schedule/scheduler'
+import type { ScheduleInput } from '@shared/schedule'
 import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
@@ -794,6 +808,50 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       })
     return { started: true }
   })
+
+  // Schedules: requests, the next to-do, Deploy or a site check at set times (or after each Deploy).
+  const scheduleChat = (projectId: string, event: VibeEvent): void => {
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+  }
+  deployEvents.on('event', (projectId: string, event: DeployEvent) => watchDeployEvent(projectId, event))
+  addEventSink((channel, args) => {
+    if (channel === 'vibe:chat:event') watchChatEvent(args[0] as string, args[1] as VibeEvent)
+  })
+  scheduleEvents.on('changed', (projectId: string) => getSender()?.send('vibe:schedules:changed', projectId))
+  scheduleEvents.on('ready', (projectId: string, s: Schedule) =>
+    scheduleChat(projectId, { type: 'schedule_ready', scheduleId: s.id, name: s.name, summary: summarizeSchedule(s) })
+  )
+  startScheduler({
+    projectPath: (projectId) => getProject(projectId)?.path,
+    busy: (projectId) => !!getSession(projectId)?.isBusy() || asks.has(projectId) || takeovers.has(projectId) || isDeploying(projectId),
+    startRequest: async (projectId, projectPath, text, mode, todoId) => {
+      if (mode === 'ask') await invoke('vibe:chat:ask', [projectId, projectPath, text])
+      // As Build (or Plan) for sure: no "plan it first?" or quick-question detour with nobody there to answer.
+      else await invoke('vibe:chat:send', [projectId, projectPath, text, undefined, undefined, true, { mode, ...(todoId ? { todoId } : {}) }])
+    },
+    startDeploy: async (projectId, projectPath) => {
+      await invoke('vibe:deploy:run', [projectId, projectPath])
+    },
+    chatEvent: scheduleChat,
+    notify: notifyUser,
+    projectName,
+    topTodo: (projectId) => listTodos(memoryDb(), projectId).find((t) => !t.done),
+    claudeUsage: async () => {
+      const usage = await getUsage('claude')
+      return usage.windows.length ? Math.max(...usage.windows.map((w) => w.usedPercent)) : undefined
+    }
+  })
+  const withNames = (list: Schedule[]): (Schedule & { projectName: string })[] => list.map((s) => ({ ...s, projectName: projectName(s.projectId) }))
+  ipc.handle('vibe:schedules:list', (_event, projectId: string) => listSchedules(String(projectId)))
+  ipc.handle('vibe:schedules:all', () => withNames(listSchedules()))
+  ipc.handle('vibe:schedules:save', (_event, projectId: string, input: ScheduleInput & { id?: string }) => {
+    if (!getProject(projectId)) throw new Error("That project isn't in VibeApp.")
+    return saveSchedule(projectId, input ?? {}, 'user', true)
+  })
+  ipc.handle('vibe:schedules:setEnabled', (_event, id: string, enabled: boolean) => setScheduleEnabled(String(id), !!enabled))
+  ipc.handle('vibe:schedules:remove', (_event, id: string) => removeSchedule(String(id)))
+  ipc.handle('vibe:schedules:runNow', (_event, id: string) => runScheduleNow(String(id)))
 
   // Backups of VibeApp's own data.
   ipc.handle('vibe:backup:status', () => ({ dir: backupDir(), defaultDir: defaultBackupDir(), backups: listBackups() }))

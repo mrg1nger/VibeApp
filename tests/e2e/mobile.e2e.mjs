@@ -112,7 +112,7 @@ const FIT_CHECK = `(() => {
   for (const el of document.querySelectorAll('button, a, input, select, textarea')) {
     const r = el.getBoundingClientRect()
     const s = getComputedStyle(el)
-    if (!r.width || s.visibility === 'hidden' || el.closest('[hidden]') || el.type === 'checkbox' || el.type === 'file') continue
+    if (!r.width || s.visibility === 'hidden' || el.closest('[hidden]') || el.type === 'checkbox' || el.type === 'radio' || el.type === 'file') continue
     if (r.height < 30 && r.width < 30) tiny.push(el.tagName.toLowerCase() + ' "' + (el.textContent || el.placeholder || '').trim().slice(0, 20) + '" ' + Math.round(r.width) + 'x' + Math.round(r.height))
   }
   return { scrollWidth: document.documentElement.scrollWidth, width: w, tooWide: [...new Set(tooWide)].slice(0, 8), tiny: tiny.slice(0, 8) }
@@ -224,6 +224,18 @@ try {
     if (back) await click('Chat', '.mobile-pane-switch button')
     await click('Secrets')
     await waitFor(browser, `!!document.querySelector('.modal')`, 'the dialog')
+  })
+  await browser.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await screen('07b-schedules', async () => {
+    await browser.evaluate(
+      `(async () => { const p = (await window.vibe.project.list()).find((x) => x.name === 'phone-game'); await window.vibe.schedules.save(p.id, { name: 'Morning test run', action: { kind: 'request', text: 'Run the tests, fix anything that fails and tell me what you changed.', mode: 'build' }, when: { kind: 'daily', time: '07:00', days: [1, 2, 3, 4, 5] } }); await window.vibe.schedules.save(p.id, { name: 'Is the site up?', action: { kind: 'site_check', url: 'https://example.com/' }, when: { kind: 'every', minutes: 15 }, enabled: false }); return true })()`
+    )
+    await click('Schedules')
+    await waitFor(browser, `document.querySelectorAll('.schedule-item').length >= 2`, 'the Schedules window')
+  })
+  await screen('07c-new-schedule', async () => {
+    await click('New schedule', '.modal button')
+    await waitFor(browser, `!!document.querySelector('.schedule-form')`, 'the new-schedule form')
   })
   await browser.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
   await screen('08-chat-tab', () => click('Chat', '.app-nav-tabs button'))

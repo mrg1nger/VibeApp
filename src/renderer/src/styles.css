@@ -3531,3 +3531,184 @@ textarea {
   user-select: all;
   word-break: break-all;
 }
+
+/* ---- Schedules ---- */
+.schedule-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.schedule-item.schedule-draft {
+  border-color: var(--accent);
+}
+
+.schedule-item.schedule-off .schedule-what,
+.schedule-item.schedule-off .schedule-when-line,
+.schedule-overview .schedule-off {
+  opacity: 0.6;
+}
+
+.schedule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.schedule-head strong {
+  overflow-wrap: anywhere;
+}
+
+.schedule-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.schedule-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--delegation-bg);
+  color: var(--delegation-text);
+  flex-shrink: 0;
+}
+
+.schedule-what {
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.schedule-when-line,
+.schedule-runs {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.schedule-runs {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+
+.schedule-run-ok {
+  color: var(--success-text);
+}
+
+.schedule-run-failed {
+  color: var(--danger);
+}
+
+.schedule-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  align-items: center;
+}
+
+.schedule-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.schedule-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.schedule-mode {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex: 1 1 160px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.schedule-mode small {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.schedule-when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.schedule-when input[type='number'] {
+  width: 70px;
+}
+
+.schedule-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.schedule-days button {
+  padding: 4px 8px;
+  font-size: 12.5px;
+}
+
+.schedule-days button.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.schedule-day-presets {
+  display: flex;
+  gap: 8px;
+}
+
+.schedule-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.schedule-limits input[type='number'] {
+  width: 64px;
+}
+
+.schedule-overview {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
