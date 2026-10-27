@@ -272,6 +272,18 @@ input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;borde
 <label class="check"><input type="checkbox" id="remember" checked><span>Remember this device<small>Stays connected until you disconnect it in VibeApp's Settings. Untick on a computer that isn't yours: it then lasts until this browser closes.</small></span></label>
 <button type="submit">Connect</button><p id="err" role="alert"></p></form></main>
 <script>
+// Opening the installed app, or a link from another app, arrives "from outside", and the browser holds the
+// session cookie back (it's SameSite=Strict). From this page it is sent: if this device is paired, go straight in.
+document.documentElement.style.visibility = 'hidden'
+const show = () => (document.documentElement.style.visibility = '')
+setTimeout(show, 3000)
+const tried = Number(sessionStorage.getItem('vibeapp-forward') || 0)
+if (Date.now() - tried < 10000) show() // just tried and came back: show the form rather than loop
+else fetch('/api/status', { credentials: 'same-origin' }).then((r) => {
+  if (!r.ok) return show()
+  sessionStorage.setItem('vibeapp-forward', String(Date.now()))
+  location.replace('/')
+}).catch(show)
 document.getElementById('name').value = (navigator.userAgent.match(/(Firefox|Edg|Chrome|Safari)\\//)?.[1] ?? 'Browser').replace('Edg', 'Edge') + ' browser'
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault()

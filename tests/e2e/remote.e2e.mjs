@@ -468,6 +468,14 @@ try {
       await waitFor(page, `window.vibe?.host === 'browser'`, 'the app over the trusted address', 30_000)
       await waitFor(page, `[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'the app to be ready', 60_000)
       await waitFor(page, `navigator.serviceWorker.getRegistration().then((r) => !!r?.active)`, 'the offline helper', 30_000)
+      // Opening the installed app (or a link from another app) is a navigation from outside, which leaves
+      // the session cookie behind: a paired device must still go straight in, not be asked for a code.
+      const devicesBefore = (await desktop.evaluate(`window.vibe.remote.status()`)).devices.length
+      await page.send('Page.navigate', { url: `data:text/html,<a id="go" href="${status.trustedUrl}/">open</a>` })
+      await waitFor(page, `!!document.getElementById('go')`, 'the outside page')
+      await page.evaluate(`document.getElementById('go').click(); 1`)
+      await waitFor(page, `location.pathname === '/' && window.vibe?.host === 'browser'`, 'the app, without pairing again', 20_000)
+      if ((await desktop.evaluate(`window.vibe.remote.status()`)).devices.length !== devicesBefore) throw new Error('it paired again')
       let errors
       await until(async () => {
         const m = await page.send('Page.getInstallabilityErrors')
