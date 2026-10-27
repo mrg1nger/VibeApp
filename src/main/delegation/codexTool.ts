@@ -169,9 +169,10 @@ export function createCodexDelegationServer(
               z.object({ kind: z.literal('request'), text: z.string().describe('The message to send, as the user would type it.'), mode: z.enum(['build', 'plan', 'ask']).describe('build changes code; plan proposes a plan and waits for approval; ask answers without changing anything.') }),
               z.object({ kind: z.literal('next_todo'), mode: z.enum(['build', 'plan']) }),
               z.object({ kind: z.literal('deploy') }),
-              z.object({ kind: z.literal('site_check'), url: z.string(), onDown: z.string().optional().describe('A request to send you when the site goes down (once per outage).') })
+              z.object({ kind: z.literal('site_check'), url: z.string(), onDown: z.string().optional().describe('A request to send you when the site goes down (once per outage).') }),
+              z.object({ kind: z.literal('github_backup') })
             ])
-            .describe("What runs: a request; the top to-do; the project's saved Deploy; or a check that a web address is up (no AI)."),
+            .describe("What runs: a request; the top to-do; the project's saved Deploy; a check that a web address is up (no AI); or an upload to the project's GitHub copy (no AI)."),
           when: z
             .discriminatedUnion('kind', [
               z.object({ kind: z.literal('once'), at: z.string().describe('Local date and time, e.g. 2026-11-02T19:00.') }),

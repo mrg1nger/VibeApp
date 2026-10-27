@@ -44,8 +44,21 @@ import {
   getProject,
   setGoNutzMode,
   setDeployUrl,
+  setGitHubAutoBackup,
   removeProject
 } from '../projects/store'
+import {
+  BehindError,
+  backupFailed,
+  cloneRepo,
+  getLatest,
+  githubAccount,
+  githubUrl,
+  listRepos,
+  syncStatus,
+  uploadToGitHub,
+  useGitHubVersion
+} from '../github/github'
 import { eraseProjectData } from '../projects/erase'
 import { appendUserMessage, appendEvent, loadRecentTranscript, loadTranscript } from '../projects/transcript'
 import {
@@ -816,15 +829,19 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   }
   deployEvents.on('event', (projectId: string, event: DeployEvent) => watchDeployEvent(projectId, event))
   addEventSink((channel, args) => {
-    if (channel === 'vibe:chat:event') watchChatEvent(args[0] as string, args[1] as VibeEvent)
+    if (channel !== 'vibe:chat:event') return
+    watchChatEvent(args[0] as string, args[1] as VibeEvent)
+    if ((args[1] as VibeEvent).type === 'turn_complete') autoBackup(args[0] as string)
   })
+  const projectBusy = (projectId: string): boolean =>
+    !!getSession(projectId)?.isBusy() || asks.has(projectId) || takeovers.has(projectId) || isDeploying(projectId)
   scheduleEvents.on('changed', (projectId: string) => getSender()?.send('vibe:schedules:changed', projectId))
   scheduleEvents.on('ready', (projectId: string, s: Schedule) =>
     scheduleChat(projectId, { type: 'schedule_ready', scheduleId: s.id, name: s.name, summary: summarizeSchedule(s) })
   )
   startScheduler({
     projectPath: (projectId) => getProject(projectId)?.path,
-    busy: (projectId) => !!getSession(projectId)?.isBusy() || asks.has(projectId) || takeovers.has(projectId) || isDeploying(projectId),
+    busy: projectBusy,
     startRequest: async (projectId, projectPath, text, mode, todoId) => {
       if (mode === 'ask') await invoke('vibe:chat:ask', [projectId, projectPath, text])
       // As Build (or Plan) for sure: no "plan it first?" or quick-question detour with nobody there to answer.
@@ -833,6 +850,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     startDeploy: async (projectId, projectPath) => {
       await invoke('vibe:deploy:run', [projectId, projectPath])
     },
+    backup: (projectId, projectPath) => backupToGitHub(projectId, projectPath),
     chatEvent: scheduleChat,
     notify: notifyUser,
     projectName,
@@ -852,6 +870,122 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:schedules:setEnabled', (_event, id: string, enabled: boolean) => setScheduleEnabled(String(id), !!enabled))
   ipc.handle('vibe:schedules:remove', (_event, id: string) => removeSchedule(String(id)))
   ipc.handle('vibe:schedules:runNow', (_event, id: string) => runScheduleNow(String(id)))
+
+  // GitHub: the project's copy there (backups, newer work from another computer, downloading one).
+  const githubChanged = (projectId: string): void => getSender()?.send('vibe:github:changed', projectId)
+  const githubNote = (projectId: string, text: string): void => {
+    const event: VibeEvent = { type: 'github_note', text }
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+  }
+  async function backupToGitHub(projectId: string, projectPath: string): Promise<string> {
+    if (!(await githubUrl(projectPath))) throw new Error('This project has no GitHub copy yet: make one in Publish.')
+    const message = `Backup: ${await suggestCheckpointMessage(projectPath).catch(() => 'latest work')}`
+    try {
+      const pushed = await uploadToGitHub(projectId, projectPath, message)
+      return pushed ? 'Uploaded to GitHub.' : 'Nothing new to upload.'
+    } catch (err) {
+      backupFailed(projectId, (err as Error).message)
+      throw err
+    } finally {
+      githubChanged(projectId)
+    }
+  }
+  // After each finished request (when switched on): a line in the chat and a
+  // phone alert only when a backup can't go, once per problem, and when it works again.
+  const autoProblems = new Map<string, string>()
+  const autoTimers = new Map<string, NodeJS.Timeout>()
+  function autoBackup(projectId: string): void {
+    if (!getProject(projectId)?.githubAutoBackup) return
+    clearTimeout(autoTimers.get(projectId))
+    autoTimers.set(
+      projectId,
+      setTimeout(async () => {
+        autoTimers.delete(projectId)
+        const project = getProject(projectId)
+        // Busy again (a queued message): the next finished request backs it all up.
+        if (!project?.githubAutoBackup || projectBusy(projectId) || !(await githubUrl(project.path).catch(() => null))) return
+        try {
+          await backupToGitHub(projectId, project.path)
+          if (autoProblems.delete(projectId)) githubNote(projectId, '💾 Backing up to GitHub works again: everything is uploaded.')
+        } catch (err) {
+          const problem = (err as Error).message
+          if (autoProblems.get(projectId) === problem) return
+          autoProblems.set(projectId, problem)
+          const behind = err instanceof BehindError
+          githubNote(
+            projectId,
+            behind
+              ? "💾 Not backed up: GitHub has newer work for this project from your other computer. Press 'Get it' at the top of the chat, and backups carry on."
+              : `💾 Couldn't back up to GitHub: ${problem}`
+          )
+          notifyUser(`${projectName(projectId)}: GitHub backup didn't go`, behind ? 'GitHub has newer work from your other computer: get it first.' : problem)
+        }
+      }, Number(process.env.VIBEAPP_GITHUB_BACKUP_DELAY_MS) || 4000)
+    )
+  }
+  ipc.handle('vibe:github:status', (_event, projectId: string, projectPath: string, fetch?: boolean) =>
+    syncStatus(String(projectId), String(projectPath), fetch !== false)
+  )
+  ipc.handle('vibe:github:backup', async (_event, projectId: string, projectPath: string) => {
+    const result = await backupToGitHub(String(projectId), String(projectPath))
+    autoProblems.delete(projectId)
+    return result
+  })
+  ipc.handle('vibe:github:setAutoBackup', async (_event, projectId: string, enabled: boolean) => {
+    setGitHubAutoBackup(String(projectId), !!enabled)
+    githubChanged(projectId)
+    const project = getProject(projectId)
+    return project ? syncStatus(project.id, project.path, false) : null
+  })
+  ipc.handle('vibe:github:getLatest', async (_event, projectId: string, projectPath: string) => {
+    if (projectBusy(projectId)) throw new Error('Wait until the current request has finished, then get it.')
+    const before = await syncStatus(projectId, projectPath, false)
+    const result = await getLatest(projectId, projectPath)
+    if (result.status === 'updated') {
+      const list = (before.incoming ?? []).slice(0, 5).map((m) => `"${m}"`).join(', ')
+      githubNote(projectId, `⬇ Brought in ${result.count} newer checkpoint${result.count === 1 ? '' : 's'} from GitHub${result.merged ? ", combined with this computer's work" : ''}.`)
+      // Claude hears about it with the next message, like an Undo.
+      const notes = undoNotes.get(projectId) ?? []
+      notes.push(`The project was updated with newer work from GitHub (made on the user's other computer${list ? `: ${list}` : ''}), so files may have changed since you last saw them.`)
+      undoNotes.set(projectId, notes)
+      autoProblems.delete(projectId)
+      autoBackup(projectId)
+    }
+    githubChanged(projectId)
+    return result
+  })
+  ipc.handle('vibe:github:useGitHubVersion', async (_event, projectId: string, projectPath: string) => {
+    if (projectBusy(projectId)) throw new Error('Wait until the current request has finished.')
+    const { keptAs } = await useGitHubVersion(projectId, projectPath)
+    githubNote(projectId, `⬇ Switched to GitHub's version. This computer's version is kept on the branch "${keptAs}" (here and on GitHub).`)
+    const notes = undoNotes.get(projectId) ?? []
+    notes.push(`The project was switched to the version on GitHub (from the user's other computer); this computer's previous version is kept on the git branch "${keptAs}". Files may have changed since you last saw them.`)
+    undoNotes.set(projectId, notes)
+    autoProblems.delete(projectId)
+    githubChanged(projectId)
+    return { keptAs }
+  })
+  ipc.handle('vibe:github:account', () => githubAccount())
+  ipc.handle('vibe:github:repos', () => listRepos())
+  // Where a downloaded project goes unless the user picks somewhere: next to the most recent project.
+  ipc.handle('vibe:github:defaultFolder', () => {
+    const recent = listProjects()[0]
+    const docs = app.getPath('documents')
+    return recent && existsSync(dirname(recent.path)) ? dirname(recent.path) : docs
+  })
+  ipc.handle('vibe:github:pickFolder', async () => {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+  ipc.handle('vibe:github:clone', async (_event, repo: string, parent: string) => {
+    const folder = await cloneRepo(String(repo ?? ''), String(parent ?? ''))
+    await ensureRepo(folder)
+    const record = recordProjectOpened(folder)
+    // A downloaded project keeps itself in step with GitHub from the start.
+    if (record.githubAutoBackup === undefined) setGitHubAutoBackup(record.id, true)
+    return getProject(record.id) ?? record
+  })
 
   // Backups of VibeApp's own data.
   ipc.handle('vibe:backup:status', () => ({ dir: backupDir(), defaultDir: defaultBackupDir(), backups: listBackups() }))

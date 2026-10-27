@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ProjectRecord } from '@shared/types'
 import Modal from '../components/Modal'
 import FolderBrowser from '../components/FolderBrowser'
+import GitHubOpenDialog from '../components/GitHubOpenDialog'
 
 // In a browser (Remote access) there are no folder dialogs; folders are browsed on the computer instead.
 const inBrowser = window.vibe.host === 'browser'
@@ -18,6 +19,7 @@ function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProp
   const [busy, setBusy] = useState(false)
   const [removing, setRemoving] = useState<ProjectRecord | null>(null)
   const [browsing, setBrowsing] = useState<'open' | 'create' | null>(null)
+  const [fromGitHub, setFromGitHub] = useState(false)
 
   useEffect(() => {
     window.vibe.project.list().then(setRecent)
@@ -88,7 +90,19 @@ function ProjectPickerView({ onOpen, onError, onRemoved }: ProjectPickerViewProp
         <button onClick={handleCreateNew} disabled={busy}>
           Create a new project
         </button>
+        <button onClick={() => setFromGitHub(true)} disabled={busy}>
+          Get a project from GitHub
+        </button>
       </div>
+      {fromGitHub && (
+        <GitHubOpenDialog
+          onClose={() => setFromGitHub(false)}
+          onOpen={(project) => {
+            setFromGitHub(false)
+            onOpen(project)
+          }}
+        />
+      )}
 
       {recent.length > 0 && (
         <div className="recent-projects">

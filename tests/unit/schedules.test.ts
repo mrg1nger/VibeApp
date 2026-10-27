@@ -61,6 +61,7 @@ test('a schedule is checked: a request, sensible times, no secrets, limits kept 
 
 const started: { projectId: string; text: string; mode: string; todoId?: string }[] = []
 const deploysStarted: string[] = []
+const backups: string[] = []
 const notes: string[] = []
 const alerts: string[] = []
 let busy = false
@@ -77,6 +78,11 @@ startScheduler({
   },
   startDeploy: async (projectId) => {
     deploysStarted.push(projectId)
+  },
+  backup: async (projectId) => {
+    backups.push(projectId)
+    if (projectId === 'nogh') throw new Error('This project has no GitHub copy yet: make one in Publish.')
+    return 'Uploaded to GitHub.'
   },
   chatEvent: (_projectId, event: VibeEvent) => {
     if (event.type === 'schedule_note' || event.type === 'scheduled_run') notes.push(event.type === 'schedule_note' ? event.text : `run: ${event.name}`)
@@ -210,6 +216,22 @@ test('after each Deploy: runs when a deploy succeeds; a scheduled Deploy records
   assert.equal(getSchedule(dep.id)!.runs[0].status, 'failed')
   assert.match(getSchedule(dep.id)!.runs[0].detail!, /Upload/)
   removeSchedule(dep.id)
+})
+
+test('a GitHub backup on a schedule records its result; one that fails says why in the chat and on the phone', async () => {
+  const ok = saveSchedule('gh1', { name: 'Nightly backup', action: { kind: 'github_backup' }, when: { kind: 'daily', time: '23:00', days: [0, 1, 2, 3, 4, 5, 6] } }, 'user', true)
+  assert.equal(ok.maxPerDay, 3)
+  makeDue(ok.id)
+  await until(() => getSchedule(ok.id)!.runs[0]?.status === 'ok', 'the backup to run')
+  assert.equal(getSchedule(ok.id)!.runs[0].detail, 'Uploaded to GitHub.')
+  removeSchedule(ok.id)
+
+  const bad = saveSchedule('nogh', { name: 'Backup', action: { kind: 'github_backup' }, when: { kind: 'every', minutes: 120 } }, 'user', true)
+  makeDue(bad.id)
+  await until(() => getSchedule(bad.id)!.runs[0]?.status === 'failed', 'the failed backup')
+  assert.ok(notes.some((n) => /couldn't back up to GitHub: This project has no GitHub copy/.test(n)))
+  assert.ok(alerts.some((a) => a.includes('Backup failed')))
+  removeSchedule(bad.id)
 })
 
 test('a site check alerts once when the site goes down (and asks Claude once), and again when it is back', async () => {

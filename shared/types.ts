@@ -94,6 +94,8 @@ export type VibeEvent =
   | { type: 'schedule_note'; name: string; text: string }
   /** Claude wrote a schedule: the user should check it and turn it on. */
   | { type: 'schedule_ready'; scheduleId: string; name: string; summary: string }
+  /** Something about the GitHub copy worth a line in the chat (a backup that couldn't go, newer work fetched). */
+  | { type: 'github_note'; text: string }
   /** What the user decided about a proposed plan (kept so the chat shows it after reopening). */
   | { type: 'plan_decided'; toolUseId: string; decision: 'approved' | 'revised' | 'cancelled' }
   /** Building an approved plan: a step started or finished. */
@@ -292,6 +294,43 @@ export interface ProjectRecord {
   goNutzMode?: boolean
   /** Where the app was last published on Vercel. */
   deployUrl?: string
+  /** Upload to GitHub by itself after each request (once the project has a GitHub copy). Turned on when the copy is made or downloaded in VibeApp. */
+  githubAutoBackup?: boolean
+}
+
+/** How the project on this computer compares with its copy on GitHub. */
+export interface GitHubSync {
+  /** The project has a GitHub copy (its "origin" is on github.com). */
+  linked: boolean
+  url: string | null
+  branch: string
+  /** Checkpoints here that GitHub doesn't have yet. */
+  ahead: number
+  /** Checkpoints on GitHub that aren't here (from another computer). */
+  behind: number
+  /** Changes here that aren't in a checkpoint yet. */
+  dirty: boolean
+  autoBackup: boolean
+  /** The last backup went at this time (this run of VibeApp). */
+  lastBackupAt?: string
+  /** Why GitHub couldn't be checked or the last backup didn't go. */
+  problem?: string
+  /** The newer work on GitHub, newest first (its checkpoint messages). */
+  incoming?: string[]
+}
+
+/** Getting the newer work from GitHub. */
+export type GitHubGetResult =
+  | { status: 'updated'; count: number; merged: boolean }
+  | { status: 'up_to_date' }
+  /** Both computers changed the same lines: nothing was changed here. */
+  | { status: 'conflict'; files: string[] }
+
+export interface GitHubRepoInfo {
+  nameWithOwner: string
+  description: string
+  private: boolean
+  updatedAt: string
 }
 
 export interface PublishStatus {
@@ -389,6 +428,8 @@ export type ScheduleAction =
   | { kind: 'deploy' }
   /** Is the site up? (no AI). Alerts when it goes down and comes back; can send Claude a request when it goes down. */
   | { kind: 'site_check'; url: string; onDown?: string }
+  /** Upload the project to its GitHub copy (no AI). */
+  | { kind: 'github_backup' }
 
 /** When a schedule runs. */
 export type ScheduleWhen =

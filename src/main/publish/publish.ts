@@ -5,7 +5,8 @@ import { promisify } from 'util'
 import type { PublishStatus } from '@shared/types'
 import { isCliOnPath } from '../cli/execCli'
 import { checkpoint, hasUncommittedChanges } from '../git/repo'
-import { getProject } from '../projects/store'
+import { getProject, setGitHubAutoBackup } from '../projects/store'
+import { uploadToGitHub } from '../github/github'
 import { describeLeaks, scanDiff, scanProject } from '../secrets/leakScan'
 import { listSecrets, secretEnv, secretValues } from '../secrets/vault'
 import type { PtySessionOptions } from '../pty/ptySession'
@@ -24,7 +25,8 @@ async function run(file: string, args: string[], cwd: string): Promise<string> {
 
 async function githubRemote(projectPath: string): Promise<string | null> {
   try {
-    const url = await run('git', ['remote', 'get-url', 'origin'], projectPath)
+    // As configured (get-url would apply any insteadOf rewriting).
+    const url = await run('git', ['config', '--get', 'remote.origin.url'], projectPath)
     return url.replace(/\.git$/, '').replace(/^git@github\.com:/, 'https://github.com/') || null
   } catch {
     return null
@@ -101,25 +103,21 @@ export async function publishToGitHub(
   projectPath: string,
   options: { name: string; visibility: 'private' | 'public' }
 ): Promise<string> {
+  const existing = await githubRemote(projectPath)
+  if (existing) {
+    await uploadToGitHub(projectId, projectPath, 'Checkpoint before backing up')
+    return existing
+  }
+
   await assertNoLeaks(projectId, projectPath)
   // Lets plain `git push` use the GitHub login.
   await run('gh', ['auth', 'setup-git', '--hostname', 'github.com'], projectPath)
   if (await hasUncommittedChanges(projectPath)) {
     await checkpoint(projectPath, 'Checkpoint before publishing')
   }
-
   // Pushing uploads past checkpoints too, and a key that was committed once
   // and deleted later is still in them.
-  const existing = await githubRemote(projectPath)
-  const branch = await run('git', ['rev-parse', '--abbrev-ref', 'HEAD'], projectPath)
-  const alreadyPushed = existing
-    ? await run('git', ['rev-parse', '--verify', '-q', `origin/${branch}`], projectPath).catch(() => '')
-    : ''
-  const history = await run(
-    'git',
-    ['log', '-p', '--no-color', alreadyPushed ? `${alreadyPushed}..HEAD` : 'HEAD'],
-    projectPath
-  ).catch(() => '')
+  const history = await run('git', ['log', '-p', '--no-color', 'HEAD'], projectPath).catch(() => '')
   const historyLeaks = scanDiff(history, secretValues(projectId))
   if (historyLeaks.length) {
     throw new Error(
@@ -127,10 +125,6 @@ export async function publishToGitHub(
     )
   }
 
-  if (existing) {
-    await run('git', ['push', '-u', 'origin', 'HEAD'], projectPath)
-    return existing
-  }
   const name = options.name.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
   if (!name) throw new Error('Pick a name for the repository.')
   await run(
@@ -138,6 +132,8 @@ export async function publishToGitHub(
     ['repo', 'create', name, `--${options.visibility}`, '--source', '.', '--remote', 'origin', '--push'],
     projectPath
   )
+  // From now on it backs itself up after each request (switchable in Publish).
+  setGitHubAutoBackup(projectId, true)
   return (await githubRemote(projectPath)) ?? `https://github.com/${name}`
 }
 

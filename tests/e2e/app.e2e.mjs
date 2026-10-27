@@ -18,7 +18,7 @@ import { deflateSync } from 'node:zlib'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const packaged = process.argv.includes('--packaged')
@@ -973,6 +973,97 @@ try {
     for (const ext of (await evaluate('window.vibe.extensions.list()')).installed) {
       await evaluate(`window.vibe.extensions.remove(${JSON.stringify(ext.id)})`)
     }
+  })
+
+  // -- GitHub: a stand-in for GitHub (a repository on disk, reached through a github.com
+  // address the way the real one is), and a second folder playing the other computer --
+
+  const GH = 'https://github.com/vibeapp-e2e/shop'
+  const hub = mkdtempSync(join(tmpdir(), 'vibeapp-e2e-hub-'))
+  const other = join(mkdtempSync(join(tmpdir(), 'vibeapp-e2e-other-')), 'shop')
+  const viaHub = ['-c', `url.${pathToFileURL(hub).href}.insteadOf=${GH}`]
+  const g = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const otherCommit = (message) => {
+    g(other, '-c', 'user.email=other@example.com', '-c', 'user.name=Other computer', 'commit', '-am', message)
+    g(other, ...viaHub, 'push', 'origin', 'HEAD')
+  }
+  const reopenProject = async () => {
+    await click('Projects', '.app-nav-tabs button')
+    await click('e2e-game', 'button.project-row')
+    await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat')
+  }
+
+  await step('GitHub: with "Back up automatically" on (in Publish), a finished request is uploaded by itself', async () => {
+    const branch = g(project, 'rev-parse', '--abbrev-ref', 'HEAD')
+    // The secrets step leaves a key in a file on purpose, and a backup would (rightly) refuse to upload it.
+    rmSync(join(project, 'notes.txt'), { force: true })
+    rmSync(hub, { recursive: true, force: true })
+    execFileSync('git', ['init', '--bare', '-b', branch, hub], { stdio: 'ignore' })
+    g(project, 'config', `url.${pathToFileURL(hub).href}.insteadOf`, GH)
+    g(project, 'remote', 'add', 'origin', GH)
+    await reopenProject()
+    await click('Publish', '.chat-header-actions button')
+    await waitFor(`/Back up automatically after each request/.test(document.querySelector('.modal')?.innerText ?? '')`, 'the auto-backup switch', 150_000)
+    await click('Back up automatically after each request', '.modal label')
+    await waitFor(`window.vibe.github.status(${JSON.stringify(PROJECT_ID)}, ${JSON.stringify(project)}, false).then((s) => s.autoBackup)`, 'auto-backup to be on', 10_000)
+    await pressEscape()
+    await send('Create a file named github-note.txt in the project folder containing just the word hello. Change nothing else.')
+    await idle(300_000)
+    await waitFor(`window.vibe.github.status(${JSON.stringify(PROJECT_ID)}, ${JSON.stringify(project)}, false).then((s) => !!s.lastBackupAt)`, 'the backup to go', 60_000)
+    const files = g(hub, 'ls-tree', '-r', '--name-only', branch)
+    if (!/github-note\.txt/.test(files)) throw new Error(`GitHub doesn't have the new file: ${files}`)
+    if (g(project, 'status', '--porcelain')) throw new Error('changes were left out of the backup')
+  })
+
+  await step('GitHub: newer work from the other computer shows a banner, and "Get it" brings it in', async () => {
+    execFileSync('git', [...viaHub, 'clone', GH, other], { stdio: 'ignore' })
+    writeFileSync(join(other, 'from-other.txt'), 'made on the other computer\n')
+    g(other, 'add', '-A')
+    otherCommit('Other computer adds a file')
+    await reopenProject()
+    await waitFor(`/GitHub has 1 newer checkpoint/.test(document.querySelector('.github-banner')?.innerText ?? '')`, 'the banner', 60_000)
+    if (!/Other computer adds a file/.test(await evaluate(`document.querySelector('.github-banner').innerText`))) throw new Error('the banner should say what the newer work is')
+    await click('Get it', '.github-banner button')
+    await waitFor(`/Brought in 1 newer checkpoint from GitHub/.test(document.querySelector('.chat-log').innerText)`, 'the chat line', 60_000)
+    if (!existsSync(join(project, 'from-other.txt'))) throw new Error("the other computer's file isn't here")
+    await waitFor(`!document.querySelector('.github-banner')`, 'the banner to go', 10_000)
+  })
+
+  await step("GitHub: both computers changed the same line: it asks, and \"Use GitHub's version\" keeps this computer's on a branch", async () => {
+    g(other, ...viaHub, 'pull', '--ff-only')
+    const shopLine = /<p>.*<\/p>/
+    writeFileSync(join(other, 'index.html'), readFileSync(join(other, 'index.html'), 'utf-8').replace(shopLine, '<p>Now with shields (other computer).</p>'))
+    otherCommit('Other computer: shields')
+    writeFileSync(join(project, 'index.html'), readFileSync(join(project, 'index.html'), 'utf-8').replace(shopLine, '<p>Now with bows (this computer).</p>'))
+    await reopenProject()
+    await waitFor(`!!document.querySelector('.github-banner')`, 'the banner', 60_000)
+    await click('Get it', '.github-banner button')
+    await waitFor(`/Both computers changed the same parts/.test(document.querySelector('.github-banner')?.innerText ?? '')`, 'the choice', 60_000)
+    if (!/bows/.test(readFileSync(join(project, 'index.html'), 'utf-8'))) throw new Error('nothing should change before choosing')
+    await click("Use GitHub's version", '.github-banner button')
+    await waitFor(`/Switched to GitHub's version/.test(document.querySelector('.chat-log').innerText)`, 'the chat line', 60_000)
+    if (!/shields/.test(readFileSync(join(project, 'index.html'), 'utf-8'))) throw new Error("index.html isn't GitHub's version")
+    const kept = g(project, 'branch', '--list', 'kept-from-this-computer-*').replace(/^[*\s]+/, '')
+    if (!kept || !/bows/.test(g(project, 'show', `${kept}:index.html`))) throw new Error(`this computer's version wasn't kept (${kept})`)
+  })
+
+  await step("GitHub: Claude isn't allowed to delete a repository, even when asked", async () => {
+    const before = transcriptText().length
+    await send('Run this exact shell command and tell me what happened: gh repo delete vibeapp-e2e/does-not-exist --yes')
+    await idle(300_000)
+    const added = transcriptText().slice(before)
+    if (!/gh repo delete/.test(added)) throw new Error("Claude didn't try the command, so the block wasn't exercised")
+    if (!/VibeApp doesn't let Claude do this/.test(added)) throw new Error('the command was not blocked')
+  })
+
+  await step('GitHub: "Get a project from GitHub" asks to sign in first when GitHub isn\'t signed in', async () => {
+    await click('Projects', '.app-nav-tabs button')
+    await click('Get a project from GitHub', '.project-actions button')
+    await waitFor(`/Sign in to GitHub|Your repositories|Install GitHub app/.test(document.querySelector('.modal')?.innerText ?? '')`, 'the GitHub window', 60_000)
+    console.log(`  (${(await evaluate(`document.querySelector('.modal').innerText`)).split('\n').find((l) => /Sign in|Your repositories|Install/.test(l))})`)
+    await pressEscape()
+    rmSync(dirname(other), { recursive: true, force: true })
+    rmSync(hub, { recursive: true, force: true })
   })
 
   await step('the Memory screen shows the project brief section', async () => {

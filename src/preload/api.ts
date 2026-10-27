@@ -35,7 +35,10 @@ import type {
   UsageSnapshot,
   UsageSummaryRow,
   VibeEvent,
-  Schedule
+  Schedule,
+  GitHubSync,
+  GitHubGetResult,
+  GitHubRepoInfo
 } from '@shared/types'
 import type { ScheduleInput } from '@shared/schedule'
 
@@ -355,6 +358,29 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         const listener = (_event: unknown, projectId: string): void => cb(projectId)
         ipcRenderer.on('vibe:schedules:changed', listener)
         return () => ipcRenderer.removeListener('vibe:schedules:changed', listener)
+      }
+    },
+
+    github: {
+      /** How this computer's project compares with its GitHub copy (fetch: ask GitHub first). */
+      status: (projectId: string, projectPath: string, fetch = true): Promise<GitHubSync> =>
+        ipcRenderer.invoke('vibe:github:status', projectId, projectPath, fetch),
+      backup: (projectId: string, projectPath: string): Promise<string> => ipcRenderer.invoke('vibe:github:backup', projectId, projectPath),
+      setAutoBackup: (projectId: string, enabled: boolean): Promise<GitHubSync | null> =>
+        ipcRenderer.invoke('vibe:github:setAutoBackup', projectId, enabled),
+      getLatest: (projectId: string, projectPath: string): Promise<GitHubGetResult> =>
+        ipcRenderer.invoke('vibe:github:getLatest', projectId, projectPath),
+      useGitHubVersion: (projectId: string, projectPath: string): Promise<{ keptAs: string }> =>
+        ipcRenderer.invoke('vibe:github:useGitHubVersion', projectId, projectPath),
+      account: (): Promise<{ ghInstalled: boolean; loggedIn: boolean; login?: string }> => ipcRenderer.invoke('vibe:github:account'),
+      repos: (): Promise<GitHubRepoInfo[]> => ipcRenderer.invoke('vibe:github:repos'),
+      defaultFolder: (): Promise<string> => ipcRenderer.invoke('vibe:github:defaultFolder'),
+      pickFolder: (): Promise<string | null> => ipcRenderer.invoke('vibe:github:pickFolder'),
+      clone: (repo: string, parent: string): Promise<ProjectRecord> => ipcRenderer.invoke('vibe:github:clone', repo, parent),
+      onChanged: (cb: (projectId: string) => void): (() => void) => {
+        const listener = (_event: unknown, projectId: string): void => cb(projectId)
+        ipcRenderer.on('vibe:github:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:github:changed', listener)
       }
     },
 

@@ -76,6 +76,8 @@ export function describeAction(action: ScheduleAction): string {
       return 'Deploy (the saved steps, no AI)'
     case 'site_check':
       return `Check ${action.url} is up${action.onDown ? ', and ask Claude to look if it is down' : ''}`
+    case 'github_backup':
+      return 'Back up to GitHub (no AI)'
   }
 }
 
@@ -105,6 +107,9 @@ export function cleanSchedule(input: ScheduleInput): Pick<Schedule, 'name' | 'ac
       break
     case 'deploy':
       action = { kind: 'deploy' }
+      break
+    case 'github_backup':
+      action = { kind: 'github_backup' }
       break
     case 'site_check': {
       const url = String(a.url ?? '').trim()

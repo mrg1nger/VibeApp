@@ -62,6 +62,11 @@ export async function ensureRepo(projectPath: string): Promise<void> {
   }
 }
 
+/** Makes sure a commit (or a merge) won't fail for lack of a name and email. */
+export async function ensureIdentity(projectPath: string): Promise<void> {
+  await ensureGitIdentity(simpleGit(projectPath))
+}
+
 export async function hasUncommittedChanges(projectPath: string): Promise<boolean> {
   const git = simpleGit(projectPath)
   const status = await git.status()

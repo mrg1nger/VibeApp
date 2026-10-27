@@ -20,6 +20,8 @@ export interface SchedulerDeps {
   busy: (projectId: string) => boolean
   startRequest: (projectId: string, projectPath: string, text: string, mode: 'build' | 'plan' | 'ask', todoId?: string) => Promise<void>
   startDeploy: (projectId: string, projectPath: string) => Promise<void>
+  /** Uploads to the project's GitHub copy; says what happened (throws when it couldn't). */
+  backup: (projectId: string, projectPath: string) => Promise<string>
   /** Adds a line to the project's chat (kept in its history, shown on every screen). */
   chatEvent: (projectId: string, event: VibeEvent) => void
   notify: (title: string, body: string) => void
@@ -243,6 +245,18 @@ async function start(s: Schedule, trigger: ScheduleRun['trigger']): Promise<bool
         deploys.delete(s.projectId)
         setRun(s.id, at, { status: 'failed', detail: (err as Error).message })
         deps.notify(`${deps.projectName(s.projectId)}: ⏰ ${s.name} failed`, (err as Error).message)
+      }
+      return true
+    }
+    case 'github_backup': {
+      addRun(s.id, { at, status: 'running', trigger })
+      try {
+        setRun(s.id, at, { status: 'ok', detail: await deps.backup(s.projectId, path) })
+      } catch (err) {
+        const detail = (err as Error).message
+        setRun(s.id, at, { status: 'failed', detail })
+        deps.chatEvent(s.projectId, { type: 'schedule_note', name: s.name, text: `⏰ "${s.name}" couldn't back up to GitHub: ${detail}` })
+        deps.notify(`${deps.projectName(s.projectId)}: ⏰ ${s.name} failed`, detail)
       }
       return true
     }

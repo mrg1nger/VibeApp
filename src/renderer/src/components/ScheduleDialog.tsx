@@ -99,7 +99,9 @@ function fromForm(f: Form): { id?: string; name: string; action: ScheduleAction;
         ? { kind: 'next_todo', mode: f.mode === 'plan' ? 'plan' : 'build' }
         : f.actionKind === 'deploy'
           ? { kind: 'deploy' }
-          : { kind: 'site_check', url: f.url, onDown: f.onDown }
+          : f.actionKind === 'github_backup'
+            ? { kind: 'github_backup' }
+            : { kind: 'site_check', url: f.url, onDown: f.onDown }
   const when: ScheduleWhen =
     f.whenKind === 'once'
       ? { kind: 'once', at: new Date(f.at).toISOString() }
@@ -186,8 +188,15 @@ function ScheduleDialog({ project, onClose, onError, focusId }: ScheduleDialogPr
             <option value="next_todo">The top item on the to-do list</option>
             <option value="deploy">Deploy (the saved steps, no AI)</option>
             <option value="site_check">Check the site is up (no AI)</option>
+            <option value="github_backup">Back up to GitHub (no AI)</option>
           </select>
         </label>
+        {form.actionKind === 'github_backup' && (
+          <p className="modal-muted">
+            Uploads the project to its GitHub copy (make one in Publish first). Nothing is uploaded when there&apos;s
+            nothing new.
+          </p>
+        )}
 
         {form.actionKind === 'request' && (
           <label className="settings-field">

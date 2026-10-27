@@ -17,6 +17,7 @@ import PreviewPane from '../components/PreviewPane'
 import NotesPane from '../components/NotesPane'
 import DeployDialog from '../components/DeployDialog'
 import ScheduleDialog from '../components/ScheduleDialog'
+import GitHubSyncBanner from '../components/GitHubSyncBanner'
 import SecretsDialog from '../components/SecretsDialog'
 import PublishDialog from '../components/PublishDialog'
 import Modal from '../components/Modal'
@@ -477,6 +478,7 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             return [...prev, notice, { kind: 'user_text', text: event.text }]
           }
           case 'schedule_note':
+          case 'github_note':
             return [...prev, { kind: 'notice', text: event.text }]
           case 'schedule_ready':
             return [...prev, { kind: 'schedule_ready', scheduleId: event.scheduleId, name: event.name, summary: event.summary }]
@@ -948,6 +950,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
           🔥 Go Nutz mode is ON for this project — no confirmation prompts, no sandbox.
         </div>
       )}
+
+      <GitHubSyncBanner project={project} busy={busy} onAskClaude={(text) => void sendMessage(text)} onError={onError} />
+
 
       {phone && (
         <div className="mobile-pane-switch chat-mode-switch" role="tablist" aria-label="Show">

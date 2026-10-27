@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ProjectRecord, PublishStatus } from '@shared/types'
+import type { GitHubSync, ProjectRecord, PublishStatus } from '@shared/types'
 import Modal from './Modal'
 import LoginTerminal from './LoginTerminal'
 
@@ -27,11 +27,17 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
   const [deployFailed, setDeployFailed] = useState(false)
   const [justPublished, setJustPublished] = useState<{ vercel?: string; github?: string }>({})
 
+  const [sync, setSync] = useState<GitHubSync | null>(null)
+
   const refresh = useCallback(() => {
     window.vibe.publish
       .status(project.id, project.path)
       .then(setStatus)
       .catch((err: Error) => onError(err.message))
+    window.vibe.github
+      .status(project.id, project.path, false)
+      .then(setSync)
+      .catch(() => undefined)
   }, [project.id, project.path, onError])
 
   useEffect(() => {
@@ -226,6 +232,34 @@ function PublishDialog({ project, onClose, onError, onFixLeaks }: PublishDialogP
                 <button className="publish-primary" disabled={blocked || pushing} onClick={handleGitHub}>
                   {pushing ? 'Backing up…' : githubUrl ? 'Back up latest changes' : 'Create repository & back up'}
                 </button>
+              </>
+            )}
+            {githubUrl && sync?.linked && (
+              <>
+                <label className="publish-check">
+                  <input
+                    type="checkbox"
+                    checked={sync.autoBackup}
+                    onChange={async (e) => {
+                      const next = await window.vibe.github.setAutoBackup(project.id, e.target.checked).catch(() => null)
+                      if (next) setSync(next)
+                    }}
+                  />
+                  <span>
+                    Back up automatically after each request
+                    <small>
+                      Uploads when Claude or Codex finishes, so GitHub always has the latest. It also keeps your other
+                      computer in step: open the project there and VibeApp offers the newer work.
+                    </small>
+                  </span>
+                </label>
+                {(sync.problem || sync.lastBackupAt) && (
+                  <p className="github-sync-line">
+                    {sync.problem
+                      ? `Last backup didn't go: ${sync.problem}`
+                      : `Last backed up at ${new Date(sync.lastBackupAt!).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`}
+                  </p>
+                )}
               </>
             )}
           </section>

@@ -93,6 +93,14 @@ export function setGoNutzMode(projectId: string, enabled: boolean): void {
   writeStore(data)
 }
 
+export function setGitHubAutoBackup(projectId: string, enabled: boolean): void {
+  const data = readStore()
+  const project = data.projects.find((p) => p.id === projectId)
+  if (!project) return
+  project.githubAutoBackup = enabled
+  writeStore(data)
+}
+
 export function setDeployUrl(projectId: string, url: string): void {
   const data = readStore()
   const project = data.projects.find((p) => p.id === projectId)

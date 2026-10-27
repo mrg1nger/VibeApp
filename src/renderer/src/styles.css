@@ -1607,6 +1607,106 @@ textarea {
   font-size: 0.75rem;
 }
 
+.github-sync-line {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* GitHub has newer work for this project (from the other computer). */
+.github-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  border: 1px solid var(--accent);
+  background: var(--surface-raised);
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
+}
+
+.github-banner-conflict {
+  border-color: var(--warning-text);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+
+.github-banner > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.github-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.github-banner-primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+}
+
+.github-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+
+.github-repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.github-repo-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.github-repo-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
+  min-height: 44px;
+}
+
+.github-repo-list button.active {
+  background: var(--surface-raised);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.github-repo-list small {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.github-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
 .publish-check {
   display: flex;
   gap: 0.5rem;
