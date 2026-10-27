@@ -107,3 +107,9 @@ const ipc: IpcLike = {
 
 ;(window as unknown as { vibe: ReturnType<typeof createVibeApi> }).vibe = createVibeApi(ipc, 'browser')
 connect()
+
+// Installed as an app: shows a "can't reach VibeApp" page instead of the browser's error when the computer is off.
+// (Browsers only allow this on a trusted address, so it quietly does nothing on the self-made certificate.)
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register('/sw.js').catch(() => undefined)
+}

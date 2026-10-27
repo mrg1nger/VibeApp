@@ -55,7 +55,17 @@ try {
         electron: join(root, 'tests', 'support', 'electron-stub.cjs'),
         '@shared': join(root, 'shared')
       },
-      external: ['node:sqlite', '@anthropic-ai/claude-agent-sdk', 'node-pty']
+      external: ['node:sqlite', '@anthropic-ai/claude-agent-sdk', 'node-pty'],
+      plugins: [
+        {
+          // electron-vite's "file?asset" import: the file's path.
+          name: 'asset-path',
+          setup(b) {
+            b.onResolve({ filter: /\?asset$/ }, (args) => ({ path: join(args.resolveDir, args.path.replace(/\?asset$/, '')), namespace: 'asset' }))
+            b.onLoad({ filter: /.*/, namespace: 'asset' }, (args) => ({ contents: `module.exports = ${JSON.stringify(args.path)}`, loader: 'js' }))
+          }
+        }
+      ]
     })
     bundles.push(out)
   }

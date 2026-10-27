@@ -1,6 +1,6 @@
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import { createServer as createHttpServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'http'
-import { createServer as createHttpsServer } from 'https'
+import { createServer as createHttpsServer, type ServerOptions as HttpsOptions } from 'https'
 import { connect as netConnect, type Socket } from 'net'
 import { copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { hostname, networkInterfaces } from 'os'
@@ -20,6 +20,8 @@ import {
   PairingError,
   type Device
 } from './auth'
+import { sniCallback, startTrustedCert, stopTrustedCert, trustedCert, trustedCertProblem } from './tailscale'
+import iconPath from '../../../build/icon.png?asset'
 
 // Remote access: VibeApp's screens in a web browser, and an API (HTTP, a
 // WebSocket, and an MCP server for Claude Code), all through the same actions
@@ -169,10 +171,91 @@ async function certificate(): Promise<{ key: string; cert: string }> {
   return saved
 }
 
+/** VibeApp's own certificate, or Tailscale's trusted one when the browser came by the Tailscale name. */
+async function httpsOptions(): Promise<HttpsOptions> {
+  return { ...(await certificate()), SNICallback: sniCallback }
+}
+
+// ---- installing as an app (phones and desktop Chrome/Edge) ------------------------------
+// Public on purpose: browsers fetch these without the session cookie, and none of it says anything private.
+
+const THEME = '#0f1117'
+
+const MANIFEST = JSON.stringify({
+  id: '/',
+  name: 'VibeApp',
+  short_name: 'VibeApp',
+  description: 'Your VibeApp, from this device.',
+  start_url: '/',
+  scope: '/',
+  display: 'standalone',
+  background_color: THEME,
+  theme_color: THEME,
+  icons: [
+    { src: '/pwa/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: '/pwa/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: '/pwa/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+  ]
+})
+
+// Only page loads go through it, and only to show a friendly page when the computer can't be reached.
+const SERVICE_WORKER = `const OFFLINE = ${JSON.stringify(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="${THEME}"><title>VibeApp</title>
+<style>:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:${THEME};color:#e6e8ee;font:15px/1.5 system-ui,sans-serif;text-align:center}main{padding:24px;max-width:340px}h1{font-size:20px;margin:0 0 8px}p{color:#9aa3b2;margin:0 0 20px}button{padding:11px 22px;border:0;border-radius:8px;background:#4f7cff;color:#fff;font:inherit;font-weight:600}</style>
+</head><body><main><h1>Can't reach VibeApp</h1><p>Check that the computer running VibeApp is on, and that this device is connected to Tailscale (or the same network).</p><button onclick="location.reload()">Try again</button></main></body></html>`)}
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode !== 'navigate') return
+  event.respondWith(fetch(event.request).catch(() => new Response(OFFLINE, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })))
+})
+`
+
+const icons = new Map<string, Buffer>()
+function appIcon(name: string): Buffer | null {
+  if (!icons.has(name)) {
+    const image = nativeImage.createFromPath(iconPath)
+    if (image.isEmpty()) return null
+    const { width } = image.getSize()
+    // Maskable: the phone cuts its own shape, so the picture has to fill the square (no transparent corners).
+    const inset = Math.round(width * 0.117)
+    const source = name === 'icon-maskable-512.png' ? image.crop({ x: inset, y: inset, width: width - 2 * inset, height: width - 2 * inset }) : image
+    const size = name === 'icon-192.png' ? 192 : 512
+    icons.set(name, source.resize({ width: size, height: size, quality: 'best' }).toPNG())
+  }
+  return icons.get(name) ?? null
+}
+
+const HEAD_TAGS = `<link rel="manifest" href="/manifest.webmanifest" /><meta name="theme-color" content="${THEME}" /><link rel="icon" href="/pwa/icon-192.png" /><link rel="apple-touch-icon" href="/pwa/icon-192.png" />`
+
+/** The install files, or false when the path is something else. */
+function servePwa(path: string, res: ServerResponse): boolean {
+  const publicHeaders = { 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' }
+  if (path === '/manifest.webmanifest') {
+    res.writeHead(200, { 'Content-Type': 'application/manifest+json', ...publicHeaders })
+    res.end(MANIFEST)
+    return true
+  }
+  if (path === '/sw.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', ...publicHeaders })
+    res.end(SERVICE_WORKER)
+    return true
+  }
+  const icon = /^\/pwa\/(icon-192\.png|icon-512\.png|icon-maskable-512\.png)$/.exec(path)
+  if (icon) {
+    const png = appIcon(icon[1])
+    if (!png) return send(res, 404, { error: 'Not found' }), true
+    res.writeHead(200, { 'Content-Type': 'image/png', ...publicHeaders })
+    res.end(png)
+    return true
+  }
+  return false
+}
+
 // ---- pages ---------------------------------------------------------------------------
 
 const LOGIN_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>VibeApp: connect</title>
+${HEAD_TAGS}
 <style>
 :root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1117;color:#e6e8ee;font:15px/1.5 system-ui,sans-serif}
 main{width:min(360px,calc(100vw - 32px));background:#171a22;border:1px solid #2a2f3a;border-radius:14px;padding:28px}
@@ -217,6 +300,7 @@ function appPage(req: IncomingMessage, secure: boolean): string | null {
   return readFileSync(file, 'utf-8')
     .replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*>/i, `<meta http-equiv="Content-Security-Policy" content="${policy}" />`)
     .replace(/<script\b/i, '<script src="/remote/bridge.js"></script>\n    <script')
+    .replace(/<\/title>/i, (m) => `${m}\n    ${HEAD_TAGS}`)
 }
 
 function serveFile(res: ServerResponse, file: string): void {
@@ -248,6 +332,8 @@ async function runAction(channel: string, args: unknown[], device: Device): Prom
 async function handle(req: IncomingMessage, res: ServerResponse, secure: boolean): Promise<void> {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
   const path = url.pathname
+
+  if (servePwa(path, res)) return
 
   if (path === '/login') return send(res, 200, LOGIN_PAGE, { 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'" })
 
@@ -389,7 +475,7 @@ async function previewProxy(projectId: string): Promise<{ port: number; secure: 
     upstream.on('error', (err) => send(res, 502, { error: `The preview isn't answering: ${err.message}` }))
     req.pipe(upstream)
   }
-  const server = secure ? createHttpsServer(await certificate(), handler) : createHttpServer(handler)
+  const server = secure ? createHttpsServer(await httpsOptions(), handler) : createHttpServer(handler)
   // Live reload (Vite and similar) talks over a WebSocket: tunnel it through.
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer): void => {
     if (!deviceForToken(tokenFrom(req))) {
@@ -438,7 +524,7 @@ export async function applyRemoteSettings(): Promise<void> {
   const secure = remoteAccess === 'lan'
   try {
     const server = secure
-      ? createHttpsServer(await certificate(), (req, res) => void handle(req, res, true).catch((e) => send(res, 500, { error: String(e) })))
+      ? createHttpsServer(await httpsOptions(), (req, res) => void handle(req, res, true).catch((e) => send(res, 500, { error: String(e) })))
       : createHttpServer((req, res) => void handle(req, res, false).catch((e) => send(res, 500, { error: String(e) })))
     const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 })
     server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
@@ -460,6 +546,7 @@ export async function applyRemoteSettings(): Promise<void> {
     running = { server, mode: remoteAccess, port: remotePort, secure, stopEvents: addEventSink(broadcast) }
     ensureApiToken(`${secure ? 'https' : 'http'}://127.0.0.1:${remotePort}`, secure ? (await certificate()).cert : undefined)
     installMcpServer()
+    if (secure) void startTrustedCert()
   } catch (err) {
     lastError = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
       ? `Port ${remotePort} is already in use. Choose another port.`
@@ -472,6 +559,7 @@ export async function stopRemote(): Promise<void> {
   const current = running
   running = undefined
   current?.stopEvents()
+  stopTrustedCert()
   for (const { ws } of sockets) ws.close(1001, 'VibeApp remote access stopped')
   sockets.clear()
   for (const { res } of sseClients) res.end()
@@ -507,10 +595,14 @@ export function remoteStatus(): RemoteStatus {
   const online = new Set([...sockets].map((s) => s.device.id).concat([...sseClients].map((s) => s.device.id)))
   const scheme = running?.secure ? 'https' : 'http'
   const port = running?.port ?? settings.remotePort
+  const trusted = running?.mode === 'lan' ? trustedCert() : undefined
+  const trustedUrl = trusted ? `https://${trusted.name}:${port}` : undefined
   const urls = !running
     ? []
     : running.mode === 'lan'
       ? [
+          // Tailscale's name has a certificate browsers trust (no warning, and phones can install the app).
+          ...(trustedUrl ? [trustedUrl] : []),
           // The computer's name stays the same when its network address changes: best for bookmarks.
           `${scheme}://${hostname()}:${port}`,
           ...lanAddresses().map((ip) => `${scheme}://${ip}:${port}`),
@@ -525,6 +617,8 @@ export function remoteStatus(): RemoteStatus {
     readOnly: settings.remoteReadOnly,
     devices: listDevices().map((d) => ({ ...d, online: online.has(d.id) })),
     mcpCommand: `claude mcp add vibeapp -- node "${mcpScriptPath()}"`,
+    ...(trustedUrl ? { trustedUrl } : {}),
+    ...(running?.mode === 'lan' && !trustedUrl && trustedCertProblem() ? { trustedProblem: trustedCertProblem() } : {}),
     error: lastError
   }
 }

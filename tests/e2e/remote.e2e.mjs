@@ -425,6 +425,71 @@ try {
     await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [join(data, 'vibeapp-mcp.cjs')], env: { ...process.env, VIBEAPP_API_FILE: join(data, 'remote-api.json') } }))
     const list = (await mcp.callTool({ name: 'list_projects', arguments: {} })).content.map((c) => c.text).join('\n')
     if (!/remote-game/.test(list)) throw new Error(list)
+    // What a browser needs to offer "Install app" is public; the app itself still isn't.
+    const get = (path) =>
+      new Promise((done, fail) => {
+        const req = httpsRequest(`https://127.0.0.1:${PORT}${path}`, { ca: api().ca }, (res) => {
+          let body = ''
+          res.on('data', (c) => (body += c))
+          res.on('end', () => done({ status: res.statusCode, type: res.headers['content-type'], body }))
+        })
+        req.on('error', fail)
+        req.end()
+      })
+    const manifest = await get('/manifest.webmanifest')
+    if (manifest.status !== 200 || JSON.parse(manifest.body).display !== 'standalone') throw new Error(`manifest: ${manifest.status} ${manifest.body}`)
+    for (const icon of JSON.parse(manifest.body).icons) {
+      const r = await get(icon.src)
+      if (r.status !== 200 || r.type !== 'image/png') throw new Error(`${icon.src}: ${r.status} ${r.type}`)
+    }
+    if ((await get('/sw.js')).status !== 200) throw new Error('no service worker')
+    if ((await get('/')).status !== 302) throw new Error('the app page answered without pairing')
+  })
+
+  await step('with Tailscale, the trusted address loads with no warning and Chrome can install VibeApp', async () => {
+    let status
+    await until(async () => {
+      status = await desktop.evaluate(`window.vibe.remote.status()`)
+      return status.trustedUrl || status.trustedProblem
+    }, 'Tailscale to give a certificate (or say why not)', 150_000).catch(() => undefined)
+    if (!status?.trustedUrl) {
+      console.log(`  (skipped: ${status?.trustedProblem ?? 'Tailscale is not set up on this computer'})`)
+      return
+    }
+    if (status.urls[0] !== status.trustedUrl) throw new Error(`the trusted address should be listed first: ${status.urls}`)
+    console.log(`  (trusted address: ${status.trustedUrl})`)
+    const other = await openBrowser(mkdtempSync(join(tmpdir(), 'vibeapp-remote-pwa-')), BROWSER_DEBUG + 2)
+    try {
+      const page = other.page
+      // No certificate exceptions in this browser: a warning page would stop it here.
+      await page.send('Page.navigate', { url: `${status.trustedUrl}/` })
+      await waitFor(page, `location.pathname === '/login' && !!document.getElementById('code')`, 'the pairing page over the trusted address')
+      await page.evaluate(`document.getElementById('code').value = ${JSON.stringify(code())}; document.getElementById('name').value = 'Phone app'; document.getElementById('f').requestSubmit(); 1`)
+      await waitFor(page, `window.vibe?.host === 'browser'`, 'the app over the trusted address', 30_000)
+      await waitFor(page, `[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'the app to be ready', 60_000)
+      await waitFor(page, `navigator.serviceWorker.getRegistration().then((r) => !!r?.active)`, 'the offline helper', 30_000)
+      let errors
+      await until(async () => {
+        const m = await page.send('Page.getInstallabilityErrors')
+        errors = m.result?.installabilityErrors ?? m.error
+        return Array.isArray(errors) && errors.length === 0
+      }, 'Chrome to see VibeApp as installable', 30_000).catch(() => undefined)
+      if (!Array.isArray(errors) || errors.length) throw new Error(`not installable: ${JSON.stringify(errors)}`)
+      const m = await page.send('Page.getAppManifest')
+      if (m.result?.errors?.length) throw new Error(`manifest problems: ${JSON.stringify(m.result.errors)}`)
+      const shot = await page.send('Page.captureScreenshot', { format: 'png' })
+      if (shot.result?.data) writeFileSync(join(shots, 'trusted-address-app.png'), Buffer.from(shot.result.data, 'base64'))
+      // The computer out of reach: a friendly page, not the browser's error.
+      await desktop.evaluate(`window.vibe.settings.update({ remoteAccess: 'local' })`)
+      await sleep(1000)
+      await page.send('Page.reload')
+      await waitFor(page, `document.body?.innerText.includes("Can't reach VibeApp")`, 'the offline page', 20_000)
+      const off = await page.send('Page.captureScreenshot', { format: 'png' })
+      if (off.result?.data) writeFileSync(join(shots, 'trusted-address-offline.png'), Buffer.from(off.result.data, 'base64'))
+      await desktop.evaluate(`window.vibe.settings.update({ remoteAccess: 'lan' })`)
+    } finally {
+      await closeBrowser(other)
+    }
   })
 
   await step('switching Remote access off closes the server', async () => {

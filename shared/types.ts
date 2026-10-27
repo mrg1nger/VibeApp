@@ -126,6 +126,10 @@ export interface RemoteStatus {
   devices: RemoteDevice[]
   /** The command that adds VibeApp's tools to Claude Code (the MCP server). */
   mcpCommand: string
+  /** The Tailscale address with a certificate browsers trust (local-network mode, when Tailscale provides one). */
+  trustedUrl?: string
+  /** Why there's no trusted address, when Tailscale is installed but can't give one. */
+  trustedProblem?: string
   error?: string
 }
 

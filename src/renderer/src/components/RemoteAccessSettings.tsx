@@ -124,12 +124,25 @@ function RemoteAccessSettings({ settings, onSettingsChange, onError }: RemoteAcc
                     </li>
                   ))}
                 </ul>
-                {settings.remoteAccess === 'lan' && (
+                {settings.remoteAccess === 'lan' && status.trustedUrl && (
+                  <small className="settings-hint remote-install-hint">
+                    <strong>Use the first address</strong> (from Tailscale): browsers trust it with no warning, it keeps
+                    working when the network changes, and it works anywhere your devices are on Tailscale. To install
+                    VibeApp as an app on a phone, open it in Chrome, pair, then choose ⋮ → <em>Install app</em> (or{' '}
+                    <em>Add to Home screen</em> → <em>Install</em>). On a computer, use the install icon in Chrome or
+                    Edge&apos;s address bar. The other addresses use a certificate VibeApp made itself, so browsers warn
+                    about them the first time.
+                  </small>
+                )}
+                {settings.remoteAccess === 'lan' && !status.trustedUrl && (
                   <small className="settings-hint">
                     Bookmark the first address (this computer's name): it keeps working when the network address
                     changes, so remembered devices stay connected.{' '}
                     The connection is encrypted with a certificate VibeApp made itself, so the browser warns the first
-                    time; choose to continue (Advanced, then Proceed).
+                    time; choose to continue (Advanced, then Proceed).{' '}
+                    {status.trustedProblem
+                      ? `To install VibeApp as an app on a phone, it needs a trusted address from Tailscale. ${status.trustedProblem}`
+                      : 'To install VibeApp as an app on a phone, use Tailscale with "HTTPS Certificates" turned on: VibeApp then gets a trusted address by itself.'}
                   </small>
                 )}
               </div>
