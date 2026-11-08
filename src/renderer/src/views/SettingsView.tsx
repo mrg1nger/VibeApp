@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AppSettings, CodexModelList, ModelOption, ThemeDefinition, UsageSummaryRow } from '@shared/types'
+import UsageReport from '../components/UsageReport'
 import RemoteAccessSettings from '../components/RemoteAccessSettings'
 import BackupSettings from '../components/BackupSettings'
 import ScheduleSettings from '../components/ScheduleSettings'
@@ -482,6 +483,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           Token counts from VibeApp's own log. "request" is Claude working on what you asked; "route", "scribe",
           "tidy", "codemap" and "summary" are the small Haiku helpers; "handoff" and "review" are Codex.
         </small>
+        <UsageReport />
       </section>
 
       <section className="settings-section">

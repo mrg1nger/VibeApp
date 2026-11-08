@@ -2263,6 +2263,36 @@ textarea {
   font-weight: 600;
 }
 
+.usage-report {
+  margin-top: 0.75rem;
+}
+
+.usage-report summary {
+  cursor: pointer;
+}
+
+.usage-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.usage-report-actions button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.usage-report-text {
+  white-space: pre-wrap;
+  font-size: 0.8rem;
+  max-height: 28rem;
+  overflow: auto;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .balance {
   display: flex;
   flex-direction: column;

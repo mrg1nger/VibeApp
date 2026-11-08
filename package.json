@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node scripts/test.mjs unit",
     "smoke": "node scripts/test.mjs smoke",
+    "eval": "node scripts/test.mjs eval",
+    "usage": "node scripts/usage-report.mjs",
     "e2e": "node tests/e2e/app.e2e.mjs",
     "e2e:remote": "node tests/e2e/remote.e2e.mjs",
     "e2e:mobile": "node tests/e2e/mobile.e2e.mjs",

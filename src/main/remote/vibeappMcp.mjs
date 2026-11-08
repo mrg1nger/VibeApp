@@ -465,4 +465,51 @@ server.registerTool(
   })
 )
 
+server.registerTool(
+  'deploy',
+  {
+    description:
+      "Run a project's saved Deploy (the steps the user checked in VibeApp's Deploy window; VibeApp runs them with no AI, then the site check, rolling back if something fails). This puts the project live, so only when the user asked for it. Waits for the result (up to timeout_seconds).",
+    inputSchema: {
+      project: z.string().describe('Project name or id'),
+      timeout_seconds: z.number().optional().describe('How long to wait for the result (default 900).')
+    }
+  },
+  guard(async ({ project, timeout_seconds }) => {
+    const p = await findProject(project)
+    await invoke('vibe:deploy:run', p.id, p.path)
+    const until = Date.now() + (timeout_seconds ?? 900) * 1000
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 3000))
+      if (!(await invoke('vibe:deploy:get', p.id)).running) break
+    }
+    const { entries } = await invoke('vibe:chat:loadRecent', p.id, 3)
+    const last = entries.map((e) => e.event).filter((e) => e?.type === 'deploy_result').pop()
+    if (!last) return text('The deploy is still running (or its result is not in the chat yet). Check again with read_chat.')
+    return text(
+      last.ok
+        ? `Deployed with "${last.name}" in ${last.seconds}s${last.detail ? ` (${last.detail})` : ''}.`
+        : `"${last.name}" ${last.stopped ? 'was stopped' : `failed at "${last.failedStep}"`}${last.rolledBack ? '; rolled back' : ''}${last.detail ? `: ${last.detail}` : ''}.`
+    )
+  })
+)
+
+server.registerTool(
+  'usage_report',
+  {
+    description:
+      "Where the plan usage went: Claude by project and by kind of work, each Build/Plan request's steps by kind (reading, editing, commands, browser checks, server commands, hand-offs, Deploy), how often Codex was used when the slider asked for it, and the most expensive requests. Use it to judge token usage and how well Claude and Codex share the work. requests: true returns the raw per-request rows as JSON instead.",
+    inputSchema: {
+      days: z.number().optional().describe('How far back (default 7, at most 90).'),
+      project: z.string().optional().describe('Only this project (name or id).'),
+      requests: z.boolean().optional().describe('The raw per-request rows as JSON.')
+    }
+  },
+  guard(async ({ days, project, requests }) => {
+    const p = project ? await findProject(project) : undefined
+    if (requests) return text(JSON.stringify(await invoke('vibe:usage:requests', days ?? 7, p?.id), null, 1))
+    return text(await invoke('vibe:usage:report', days ?? 7, p?.id))
+  })
+)
+
 void server.connect(new StdioServerTransport())

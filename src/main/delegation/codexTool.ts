@@ -84,7 +84,9 @@ export function createCodexDelegationServer(
   /** Building an approved plan: Claude reports each step starting and finishing. */
   onPlanProgress?: (step: number, status: 'doing' | 'done') => void,
   /** Registers an MCP server the agent built as an extension (asks the user first). */
-  installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>
+  installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>,
+  /** Runs the project's saved Deploy recipe (no AI) and describes how it went. */
+  runDeploy?: () => Promise<{ ok: boolean; text: string }>
 ): ReturnType<typeof createSdkMcpServer> {
   // Hand-offs share the project folder and the request's Codex session, and each one's
   // "files changed" comes from before/after snapshots, so two at once would edit the same
@@ -102,10 +104,11 @@ export function createCodexDelegationServer(
     tools: [
       tool(
         'plan_progress',
-        'While building a plan the user approved: report that a step (by its number in the plan) has started ("doing") or is finished ("done"). The user sees the plan as a checklist that ticks off as you go.',
+        'While building a plan the user approved: report that a step (by its number in the plan) has started ("doing") or is finished ("done"). When a step finishes, pass next with the step you start now, so one call covers both. The user sees the plan as a checklist that ticks off as you go.',
         {
           step: z.number().int().min(1).describe('The step number in the approved plan.'),
-          status: z.enum(['doing', 'done'])
+          status: z.enum(['doing', 'done']),
+          next: z.number().int().min(1).optional().describe('With status "done": the step you start next.')
         },
         async (args) => {
           // The end-to-end test switches the tool off to check VibeApp's backups (to-do list, honest finish).
@@ -113,7 +116,19 @@ export function createCodexDelegationServer(
             return { content: [{ type: 'text' as const, text: 'Progress reporting is not available right now; carry on.' }] }
           }
           onPlanProgress?.(args.step, args.status)
-          return { content: [{ type: 'text' as const, text: `Step ${args.step}: ${args.status}.` }] }
+          const next = args.status === 'done' && args.next && args.next !== args.step ? args.next : undefined
+          if (next) onPlanProgress?.(next, 'doing')
+          return { content: [{ type: 'text' as const, text: `Step ${args.step}: ${args.status}.${next ? ` Step ${next}: doing.` : ''}` }] }
+        }
+      ),
+      tool(
+        'run_deploy',
+        "Run this project's saved Deploy: VibeApp runs the steps the user checked, with no AI, then the site check (and the rollback steps if something fails), and returns the result. Use it whenever the user asks to deploy or put it live, and for a deploy step in an approved plan, instead of deploying by hand. If the project has no saved Deploy yet, or it hasn't been checked, this says so: then offer to write one with save_deploy_recipe, and deploy by hand only if the user wants it live right now.",
+        {},
+        async () => {
+          if (!runDeploy) return { content: [{ type: 'text' as const, text: 'Deploy is not available here.' }], isError: true }
+          const result = await runDeploy()
+          return { content: [{ type: 'text' as const, text: result.text }], isError: !result.ok }
         }
       ),
       tool(
@@ -245,7 +260,7 @@ export function createCodexDelegationServer(
       ),
       tool(
         'run_codex_subtask',
-        "Delegate a scoped coding subtask to the Codex CLI (a separate AI coding agent) and return its result. Useful for getting a second implementation, a second opinion, or offloading an independent chunk of work. Codex is automatically given the user's original request, the key facts, relevant memories and recent hand-offs, and several hand-offs in one request continue the same Codex session, so a task only needs to say what to do, which files are involved, and what \"done\" looks like. The result is a short summary, the files changed (with a small diff) and the outcome of automatic checks (script syntax, JSON, the project's npm test); the full report is available from the handoffs tool. Hand-offs run one at a time (they share the project folder), so asking for several at once doesn't make them faster.",
+        "Delegate a scoped coding subtask to the Codex CLI (a separate AI coding agent) and return its result. Useful for getting a second implementation, a second opinion, or offloading an independent chunk of work. Codex is automatically given the user's original request, the key facts, relevant memories and recent hand-offs, and several hand-offs in one request continue the same Codex session, so a task only needs to say what to do, which files are involved, what \"done\" looks like, and how to check it (tests to run; for visible changes, what to try in the browser, where Codex has the same Playwright tools). Codex runs those checks and reports them. The result is a short summary, the files changed (with a small diff) and the outcome of automatic checks (script syntax, JSON, the project's npm test); the full report is available from the handoffs tool. Hand-offs run one at a time (they share the project folder), so asking for several at once doesn't make them faster.",
         {
           prompt: z.string().describe('The subtask instructions for Codex to carry out.'),
           timeoutMs: z

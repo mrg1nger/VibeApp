@@ -457,7 +457,9 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
       get: (cli: CliName, force?: boolean): Promise<UsageSnapshot> =>
         ipcRenderer.invoke('vibe:usage:get', cli, force),
       /** Tokens by kind of work over the last N days (from VibeApp's own log). */
-      summary: (days: number): Promise<UsageSummaryRow[]> => ipcRenderer.invoke('vibe:usage:summary', days)
+      summary: (days: number): Promise<UsageSummaryRow[]> => ipcRenderer.invoke('vibe:usage:summary', days),
+      /** A written report: by project, by kind of work, the Claude/Codex split, the most expensive requests. */
+      report: (days: number, projectId?: string): Promise<string> => ipcRenderer.invoke('vibe:usage:report', days, projectId)
     }
   }
 }

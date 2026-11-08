@@ -42,8 +42,15 @@ function keywordClassification(text: string, images: number): Classification {
 
 const CHEAP_MODELS = /haiku|sonnet/i
 
-const CODEX_LED_NOTE =
-  "The user has set VibeApp to Codex-led: you plan and review, Codex builds. Work out what's needed, then call run_codex_subtask with a clear spec and acceptance criteria and let Codex write the code; don't write it yourself except small fixes after you've reviewed Codex's result."
+/**
+ * Codex checks its own work: found on a real install that after a one-step
+ * hand-off Claude spent 50 steps testing in a browser and 15 deploying by
+ * hand, each step re-reading the whole conversation.
+ */
+export const CODEX_CHECKS_NOTE =
+  "Put how to check the work in the task too (which tests to run, and for anything visible a check in the browser with the Playwright tools if you have them, since Codex gets the same extensions, naming the address and what to try), so Codex tests what it built and reports the results. Judge the result from Codex's report, the files changed, the diff and the automatic checks it comes back with: don't re-read the diff with git or repeat the testing yourself. If something failed or a specific doubt is left, hand the fix or the check back to Codex in another run_codex_subtask rather than doing it yourself. To deploy, use mcp__vibe_tools__run_deploy."
+
+const CODEX_LED_NOTE = `The user has set VibeApp to Codex-led: you plan and review, Codex builds and tests. Work out what's needed, then call run_codex_subtask with a clear spec and acceptance criteria and let Codex write the code; don't write it yourself except small fixes after you've reviewed Codex's result. ${CODEX_CHECKS_NOTE}`
 
 const CODEX_NOTES = {
   most: 'This request is mostly straightforward implementation, so Codex should build it: plan the work, then call run_codex_subtask with a clear spec and acceptance criteria before writing the code yourself. Afterwards, review what Codex did and fix anything off.',
@@ -61,13 +68,15 @@ export async function routeMessage(
     notQuick?: boolean
   } = {}
 ): Promise<RouteDecision> {
-  if (!settings.smartRouting) return { model: null, skipReview: false, size: 'normal' }
+  // Smart switching off means no model changes and no Haiku judge, but the
+  // Claude/Codex slider still applies (it used to be skipped altogether).
+  const smart = settings.smartRouting
   const images = context.images ?? 0
   // The Haiku judge also spends Claude plan; stand it down when Claude is nearly out.
-  const labelled = settings.aiRouting && claudeHelpersAllowed()
+  const labelled = smart && settings.aiRouting && claudeHelpersAllowed()
     ? await requestClassifier.classify(text, { images, pointedAt: context.pointedAt, projectId: context.projectId })
     : null
-  let request = labelled ?? keywordClassification(text, images)
+  let request: Classification = labelled ?? (smart ? keywordClassification(text, images) : { size: 'normal', codex: 'none', reason: '' })
   // A quick edit skips Codex, the review and memory, and goes to Haiku: right
   // for "make the title blue", wrong for a plan (a 7-step deploy plan was
   // judged quick and planned and built by Haiku, ignoring the slider).
@@ -95,6 +104,7 @@ export async function routeMessage(
     notes.push(CODEX_LED_NOTE)
   } else if (codex !== 'none') {
     notes.push(CODEX_NOTES[codex])
+    if (lean >= 1) notes.push(CODEX_CHECKS_NOTE)
     if (lean >= 1 && codex === 'some') notes.push('The user prefers that you lean on Codex, so hand that part over.')
     if (claudeLow) notes.push(`Claude plan usage is also low (${Math.round(claudeLeft)}% left), so lean on Codex.`)
   } else if (lean <= -1 && request.size !== 'quick') {
@@ -115,7 +125,7 @@ export async function routeMessage(
   let modelLabel: string | undefined
   let modelReason: string | undefined
   const choseHaiku = !!baseline && /haiku/i.test(baseline)
-  if (!choseHaiku) {
+  if (smart && !choseHaiku) {
     if (request.size === 'quick') {
       model = 'haiku'
       modelLabel = 'Haiku'
@@ -160,7 +170,9 @@ export async function routeMessage(
     detail: `${
       labelled
         ? `Haiku: ${request.size}${request.reason ? ` (${request.reason})` : ''}`
-        : settings.aiRouting
+        : !smart
+          ? 'Smart switching off'
+          : settings.aiRouting
           ? 'Keyword rules (Haiku was unavailable)'
           : 'Keyword rules'
     }${lean !== 0 ? ` · balance: ${BALANCE_LABELS[stepOfLean(lean)]}${balance === 'auto' ? ' (auto)' : ''}` : ''}`,

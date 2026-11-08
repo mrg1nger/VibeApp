@@ -99,7 +99,9 @@ import { runSavePass, runScribe, summarizeConversation, type TurnRecord } from '
 import { getBrief, maybeRefreshBrief, refreshBrief } from '../memory/brief'
 import { cleanCommand, isNotableCommand } from '../memory/commands'
 import { syncAgentsFile } from '../memory/agentsFile'
-import { keyFactsBlock, usageSummary } from '../memory/store'
+import { codexUsageSince, keyFactsBlock, listRequests, logRequest, usageByProject, usageSummary } from '../memory/store'
+import { RequestRecorder, type RequestStart } from '../usage/requestLog'
+import { buildReport } from '../usage/report'
 import {
   addTodo,
   clearDoneTodos,
@@ -138,7 +140,7 @@ import {
   setExtensionEnv
 } from '../extensions/store'
 import { selfTestServer, type SelfTestProbe } from '../extensions/selftest'
-import { deployEvents, getRecipe, isDeploying, removeRecipe, runDeploy, saveRecipe, stopDeploy } from '../deploy/deploy'
+import { deployEvents, getRecipe, isDeploying, removeRecipe, runDeploy, saveRecipe, stopDeploy, type DeployResult } from '../deploy/deploy'
 import { backupDir, backupNow, defaultBackupDir, listBackups, stageRestore } from '../backup/backup'
 import { DEFAULT_NTFY_SERVER, newTopic, sendPhoneAlert, topicUrl } from '../notify/phone'
 import { notifyUser } from '../tray'
@@ -444,6 +446,14 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // Quick edits skip the Codex review: it would take longer than the edit.
       // Planning changes nothing, so there's nothing to review.
       beginTurn(projectId, { projectPath, request: text, snapshot, skipReview: route.skipReview || planning })
+      startRequestLog({
+        projectId,
+        mode: planning ? 'plan' : extra?.approvedPlan ? 'plan_build' : 'build',
+        text,
+        balance: getSettings().agentBalance ?? 'auto',
+        route: route.label ? `${route.label}${route.reason ? ` · ${route.reason}` : ''}${route.detail ? ` [${route.detail}]` : ''}` : null,
+        size: route.size
+      })
       const thumbnails = prepared.map((p) => p.thumbnail)
       appendUserMessage(projectId, text, {
         snapshot,
@@ -784,41 +794,10 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:deploy:remove', (_event, projectId: string) => removeRecipe(projectId))
   ipc.handle('vibe:deploy:stop', (_event, projectId: string) => stopDeploy(projectId))
   ipc.handle('vibe:deploy:run', (_event, projectId: string, projectPath: string) => {
-    const recipe = getRecipe(projectId)
-    if (!recipe?.confirmed) throw new Error('Check the deploy recipe and save it before running it.')
+    // Refused straight away (the window and schedules show why), rather than only in the chat.
+    if (!getRecipe(projectId)?.confirmed) throw new Error('Check the deploy recipe and save it before running it.')
     if (isDeploying(projectId)) throw new Error('A deploy is already running for this project.')
-    void runDeploy(projectId, projectPath)
-      .then((result) => {
-        const event: VibeEvent = {
-          type: 'deploy_result',
-          name: recipe.name,
-          ok: result.ok,
-          seconds: result.seconds,
-          failedStep: result.failedStep,
-          detail: result.checkDetail,
-          rolledBack: result.rolledBack,
-          stopped: result.stopped
-        }
-        appendEvent(projectId, event)
-        getSender()?.send('vibe:chat:event', projectId, event)
-        // Claude hears about it with the next message, like an Undo.
-        const notes = undoNotes.get(projectId) ?? []
-        notes.push(
-          result.ok
-            ? `The user deployed with the Deploy button ("${recipe.name}") and it succeeded${result.checkDetail ? ` (${result.checkDetail})` : ''}.`
-            : `The user ran the Deploy button ("${recipe.name}") and it ${result.stopped ? 'was stopped' : `failed at "${result.failedStep}"`}${result.rolledBack ? '; the rollback steps ran' : ''}.${result.output ? ` Last output:\n${result.output.slice(-1200)}` : ''}`
-        )
-        undoNotes.set(projectId, notes)
-        notifyUser(
-          result.ok ? `${projectName(projectId)}: deployed` : `${projectName(projectId)}: deploy failed`,
-          result.ok ? `${recipe.name} is live (${result.seconds}s).` : `${result.stopped ? 'Stopped' : `Failed at "${result.failedStep}"`}${result.rolledBack ? '; rolled back' : ''}.`
-        )
-      })
-      .catch((err: Error) => {
-        const event: VibeEvent = { type: 'deploy_result', name: recipe.name, ok: false, seconds: 0, failedStep: 'Starting', detail: err.message }
-        appendEvent(projectId, event)
-        getSender()?.send('vibe:chat:event', projectId, event)
-      })
+    void deployNow(projectId, projectPath, 'user', getSender).catch(() => undefined)
     return { started: true }
   })
 
@@ -831,6 +810,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   addEventSink((channel, args) => {
     if (channel !== 'vibe:chat:event') return
     watchChatEvent(args[0] as string, args[1] as VibeEvent)
+    observeRequestLog(args[0] as string, args[1] as VibeEvent)
     if ((args[1] as VibeEvent).type === 'turn_complete') autoBackup(args[0] as string)
   })
   const projectBusy = (projectId: string): boolean =>
@@ -1061,9 +1041,35 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:themes:generate', (_event, description: string) => generateTheme(description))
   ipc.handle('vibe:themes:openFolder', () => shell.openPath(themesDir()))
 
-  ipc.handle('vibe:usage:summary', (_event, days: number) =>
-    usageSummary(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString())
+  ipc.handle('vibe:usage:summary', (_event, days: number, projectId?: string) =>
+    usageSummary(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString(), projectId || undefined)
   )
+  // Per request: mode, route, Claude's steps by kind, hand-offs, Claude and Codex tokens.
+  ipc.handle('vibe:usage:requests', (_event, days: number, projectId?: string) =>
+    listRequests(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString(), projectId || undefined)
+  )
+  // The same, written up: by project, by kind of work, teamwork, the most expensive requests.
+  ipc.handle('vibe:usage:report', async (_event, days: number, projectId?: string) => {
+    const span = Math.max(1, Math.min(90, Number(days) || 7))
+    const since = new Date(Date.now() - span * 86_400_000).toISOString()
+    const projects = listProjects()
+    const only = projectId ? projects.find((p) => p.id === projectId || p.name.toLowerCase() === String(projectId).toLowerCase()) : undefined
+    if (projectId && !only) throw new Error(`No project called "${projectId}".`)
+    const usage = usageByProject(memoryDb(), since).filter((u) => !only || u.projectId === only.id)
+    const plans: string[] = []
+    for (const cli of ['claude', 'codex'] as const) {
+      const u = await getUsage(cli).catch(() => null)
+      for (const w of u?.windows ?? []) plans.push(`${cli === 'claude' ? 'Claude' : 'Codex'} ${w.label} ${w.usedPercent}% used`)
+    }
+    return buildReport({
+      days: span,
+      usage,
+      requests: listRequests(memoryDb(), since, only?.id),
+      projectNames: new Map(projects.map((p) => [p.id, p.name])),
+      plans,
+      only: only?.name
+    })
+  })
 
   ipc.handle('vibe:usage:get',(_event, cli: CliName, force?: boolean) => getUsage(cli, force))
 
@@ -1605,6 +1611,103 @@ function startTakeover(
     .finally(() => takeovers.delete(projectId))
 }
 
+/** The request each project is running, being recorded for the usage report. */
+const requestLogs = new Map<string, RequestRecorder>()
+
+function startRequestLog(start: RequestStart): void {
+  requestLogs.set(start.projectId, new RequestRecorder(start))
+}
+
+function observeRequestLog(projectId: string, event: VibeEvent): void {
+  const recorder = requestLogs.get(projectId)
+  if (!recorder || !recorder.observe(event)) return
+  requestLogs.delete(projectId)
+  try {
+    const db = memoryDb()
+    logRequest(db, recorder.finish(codexUsageSince(db, projectId, recorder.startedAt.toISOString())))
+  } catch (err) {
+    console.warn('Recording the request failed:', (err as Error).message)
+  }
+}
+
+/**
+ * Runs the project's saved Deploy (no AI), for the Deploy button, schedules
+ * and Claude's run_deploy tool. The result goes in the chat; when the user
+ * started it, Claude hears about it with the next message, like an Undo.
+ * Throws before starting if it can't run.
+ */
+async function deployNow(
+  projectId: string,
+  projectPath: string,
+  by: 'user' | 'claude',
+  getSender: () => WebContents | undefined
+): Promise<DeployResult & { name: string }> {
+  const recipe = getRecipe(projectId)
+  if (!recipe) throw new Error('This project has no saved Deploy yet.')
+  if (!recipe.confirmed) throw new Error('Check the deploy recipe and save it before running it.')
+  if (isDeploying(projectId)) throw new Error('A deploy is already running for this project.')
+  const post = (event: VibeEvent): void => {
+    appendEvent(projectId, event)
+    getSender()?.send('vibe:chat:event', projectId, event)
+  }
+  let result: DeployResult
+  try {
+    result = await runDeploy(projectId, projectPath)
+  } catch (err) {
+    post({ type: 'deploy_result', name: recipe.name, ok: false, seconds: 0, failedStep: 'Starting', detail: (err as Error).message })
+    throw err
+  }
+  post({
+    type: 'deploy_result',
+    name: recipe.name,
+    ok: result.ok,
+    seconds: result.seconds,
+    failedStep: result.failedStep,
+    detail: result.checkDetail,
+    rolledBack: result.rolledBack,
+    stopped: result.stopped
+  })
+  if (by === 'user') {
+    const notes = undoNotes.get(projectId) ?? []
+    notes.push(
+      result.ok
+        ? `The user deployed with the Deploy button ("${recipe.name}") and it succeeded${result.checkDetail ? ` (${result.checkDetail})` : ''}.`
+        : `The user ran the Deploy button ("${recipe.name}") and it ${result.stopped ? 'was stopped' : `failed at "${result.failedStep}"`}${result.rolledBack ? '; the rollback steps ran' : ''}.${result.output ? ` Last output:\n${result.output.slice(-1200)}` : ''}`
+    )
+    undoNotes.set(projectId, notes)
+  }
+  notifyUser(
+    result.ok ? `${projectName(projectId)}: deployed` : `${projectName(projectId)}: deploy failed`,
+    result.ok ? `${recipe.name} is live (${result.seconds}s).` : `${result.stopped ? 'Stopped' : `Failed at "${result.failedStep}"`}${result.rolledBack ? '; rolled back' : ''}.`
+  )
+  return { ...result, name: recipe.name }
+}
+
+/** What Claude's run_deploy tool tells it. */
+async function deployForClaude(
+  projectId: string,
+  projectPath: string,
+  getSender: () => WebContents | undefined
+): Promise<{ ok: boolean; text: string }> {
+  try {
+    const r = await deployNow(projectId, projectPath, 'claude', getSender)
+    if (r.ok) return { ok: true, text: `Deployed with "${r.name}" in ${r.seconds}s${r.checkDetail ? ` (${r.checkDetail})` : ''}. The result is in the user's chat.` }
+    return {
+      ok: false,
+      text: `"${r.name}" ${r.stopped ? 'was stopped by the user' : `failed at "${r.failedStep}"`}${r.rolledBack ? '; the rollback steps ran, so the previous version is live' : ''}.${r.checkDetail ? ` ${r.checkDetail}.` : ''}${r.output ? `\nLast output:\n${r.output.slice(-1500)}` : ''}`
+    }
+  } catch (err) {
+    const message = (err as Error).message
+    const recipe = getRecipe(projectId)
+    const hint = !recipe
+      ? ' Offer to write one with save_deploy_recipe from how this project was deployed before.'
+      : !recipe.confirmed
+        ? ' The user needs to check it in the Deploy window (🚀 Deploy) and save it first; tell them.'
+        : ''
+    return { ok: false, text: `Didn't deploy: ${message}${hint}` }
+  }
+}
+
 const wiredSessions = new WeakSet<object>()
 
 function wireSessionEvents(
@@ -1616,6 +1719,10 @@ function wireSessionEvents(
   wiredSessions.add(session)
   // If Claude Code compacts on its own (near its limit), save first.
   session.beforeAutoCompact = () => saveBeforeShrinking(projectId)
+  session.deployRunner = () => {
+    const path = getProject(projectId)?.path
+    return path ? deployForClaude(projectId, path, getSender) : Promise.resolve({ ok: false, text: 'Deploy is not available here.' })
+  }
 
   session.on('event', (event: VibeEvent) => {
     if (event.type === 'claude_limit') {

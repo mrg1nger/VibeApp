@@ -255,6 +255,8 @@ const READ_CHANNELS = new Set([
   'vibe:themes:list',
   'vibe:usage:get',
   'vibe:usage:summary',
+  'vibe:usage:requests',
+  'vibe:usage:report',
   'vibe:preview:state',
   'vibe:preview:log',
   'vibe:secrets:list',

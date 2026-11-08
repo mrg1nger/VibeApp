@@ -51,7 +51,7 @@ You share a persistent memory with Codex through the mcp__vibe_memory tools. The
 4. Never save secrets, credentials, or temporary task state. Use global: true only for preferences that apply to all the user's projects.
 5. For trivial quick edits, don't save anything to memory.
 6. To find where something lives in the code, call mcp__vibe_memory__where first (a map of the source files, each with a one-line summary) instead of searching files yourself. To look up what the user said earlier, use mcp__vibe_memory__history; to see what Codex did in earlier hand-offs, use mcp__vibe_memory__handoffs.
-7. Before any operational job (deploy, publish, release, restart a service, restore or migrate data, run the tests), find out how it was done before: the project brief and key facts below, mcp__vibe_memory__recall (try "deploy" or "procedure") and mcp__vibe_memory__history. Follow the method that worked. Don't write a new script or invent steps when one exists; if you find nothing, say so before working it out.`
+7. To deploy, use mcp__vibe_tools__run_deploy first (the project's saved Deploy). Before any other operational job (publish, release, restart a service, restore or migrate data, run the tests), or a deploy with no saved Deploy, find out how it was done before: the project brief and key facts below, mcp__vibe_memory__recall (try "deploy" or "procedure") and mcp__vibe_memory__history. Follow the method that worked. Don't write a new script or invent steps when one exists; if you find nothing, say so before working it out.`
 
 const APP_INSTRUCTIONS = `# Live preview
 VibeApp shows the user a live preview of their project next to this chat. It starts the preview with \`npm run dev\` (or \`npm start\`) when package.json has that script, otherwise it serves index.html from the project root. For web projects, keep one of those working so the user can see the result, and have dev servers print their local URL. Don't start long-running dev servers yourself; VibeApp runs them.
@@ -61,7 +61,8 @@ Helpers: you can start sub-agents (the Agent tool) for self-contained jobs so th
 VibeApp doesn't commit anything for the user, so the working tree usually holds uncommitted work from earlier requests (some done by Codex while you were unavailable). A whole-tree git diff or git status therefore shows much more than the current request changed. Judge what a request changed from hand-off results, which list their own files and diff, and don't try to untangle or revert earlier uncommitted work unless asked.
 If the user wants a new tool for you and Codex ("add a tool that...", "make an MCP server for..."), build it as a small MCP server in the project, then call mcp__vibe_tools__install_extension so it's available everywhere. Don't edit .mcp.json for that: servers listed there are only seen by you in this project.
 Schedules: when the user wants something to happen on a schedule or after each Deploy ("every morning…", "check the site every 15 minutes"), call mcp__vibe_tools__save_schedule (and list_schedules to see or change existing ones). VibeApp runs those itself. Claude Code's own scheduling (the schedule and loop skills, CronCreate, RemoteTrigger, ScheduleWakeup) doesn't work inside VibeApp: don't use it.
-GitHub: VibeApp uploads the project to its GitHub copy itself (from Publish, after each request when that's on, or on a schedule) and brings in newer work from the user's other computer. Don't push, pull or merge with GitHub yourself unless the user asks. For a backup on a schedule, use save_schedule with the github_backup action.`
+GitHub: VibeApp uploads the project to its GitHub copy itself (from Publish, after each request when that's on, or on a schedule) and brings in newer work from the user's other computer. Don't push, pull or merge with GitHub yourself unless the user asks. For a backup on a schedule, use save_schedule with the github_backup action.
+Deploy: when the user asks to deploy or put it live (or a plan step deploys), call mcp__vibe_tools__run_deploy. VibeApp runs the project's saved, checked Deploy steps with no AI and tells you how it went, which costs far less than deploying step by step yourself. If the project has none yet, offer to write one with save_deploy_recipe.`
 
 /** Claude Code's own scheduling, which doesn't run inside VibeApp: VibeApp's schedules are the way. */
 const OWN_SCHEDULING_TOOLS = new Set(['CronCreate', 'CronDelete', 'CronList', 'RemoteTrigger', 'ScheduleWakeup'])
@@ -164,6 +165,8 @@ export class ClaudeSession extends EventEmitter {
   private compaction: { resolve: (result: CompactResult | null) => void; result: CompactResult | null } | undefined
   /** Runs before Claude Code compacts on its own (near its limit), so what only the conversation knew is saved first. */
   beforeAutoCompact: (() => Promise<void>) | undefined
+  /** Runs the project's saved Deploy for the run_deploy tool (set by the app). */
+  deployRunner: (() => Promise<{ ok: boolean; text: string }>) | undefined
 
   /** The Codex session this request's hand-offs share (reset by each new request). */
   private codexThread: CodexThread | undefined
@@ -286,7 +289,8 @@ export class ClaudeSession extends EventEmitter {
         )
         if (result.ok) refreshExtensionsForAllSessions()
         return result
-      }
+      },
+      () => this.deployRunner?.() ?? Promise.resolve({ ok: false, text: 'Deploy is not available here.' })
     )
 
     const memoryServer = {

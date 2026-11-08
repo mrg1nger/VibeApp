@@ -4,6 +4,10 @@
 //   npm run smoke            smoke tests against the real Claude Code and Codex CLIs
 //                            (needs both logged in; uses a little plan usage, mostly Haiku)
 //   npm run smoke -- takeover   only the smoke files whose name contains "takeover"
+//   npm run eval             the teamwork evaluation: fixed tasks built for real, measuring
+//                            Claude's steps by kind, Claude and Codex tokens and whether the
+//                            result works; saved to test-results/eval/ and compared with the
+//                            last run (uses real plan usage: Sonnet by default)
 //
 // Each test file is bundled with esbuild (Electron swapped for a small stand-in,
 // the app's data folder pointed at a temp dir) next to the built main process,
@@ -18,7 +22,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const kind = process.argv[2] === 'smoke' ? 'smoke' : 'unit'
+const kind = ['smoke', 'eval'].includes(process.argv[2]) ? process.argv[2] : 'unit'
 const filter = process.argv[3]
 const testDir = join(root, 'tests', kind)
 const outDir = join(root, 'out', 'main')
@@ -32,7 +36,7 @@ if (!files.length) {
 }
 
 // Smoke tests start the memory server, which is built with the app.
-if (kind === 'smoke' && !existsSync(join(outDir, 'memory', 'memoryServer.cjs'))) {
+if (kind !== 'unit' && !existsSync(join(outDir, 'memory', 'memoryServer.cjs'))) {
   console.log('Building the app first (the memory server is part of the build)...')
   const built = spawnSync('npx', ['electron-vite', 'build'], { cwd: root, stdio: 'inherit', shell: true })
   if (built.status !== 0) process.exit(built.status ?? 1)

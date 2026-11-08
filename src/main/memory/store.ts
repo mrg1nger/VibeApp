@@ -119,6 +119,31 @@ CREATE TABLE IF NOT EXISTS usage_log (
 );
 CREATE INDEX IF NOT EXISTS usage_at ON usage_log(at);
 
+-- One row per Build/Plan request: who did what (Claude's steps by kind, hand-offs) and what it cost.
+CREATE TABLE IF NOT EXISTS request_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  project_id TEXT NOT NULL DEFAULT '',
+  mode TEXT NOT NULL,
+  balance TEXT,
+  route TEXT,
+  size TEXT,
+  model TEXT,
+  text TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL,
+  seconds INTEGER NOT NULL DEFAULT 0,
+  claude_steps INTEGER NOT NULL DEFAULT 0,
+  tools TEXT NOT NULL DEFAULT '{}',
+  handoffs INTEGER NOT NULL DEFAULT 0,
+  claude_fresh INTEGER NOT NULL DEFAULT 0,
+  claude_cached INTEGER NOT NULL DEFAULT 0,
+  claude_output INTEGER NOT NULL DEFAULT 0,
+  codex_fresh INTEGER NOT NULL DEFAULT 0,
+  codex_cached INTEGER NOT NULL DEFAULT 0,
+  codex_output INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS request_at ON request_log(at);
+
 -- The user's own to-do list and notes for each project (the agents can add to-dos and read both).
 CREATE TABLE IF NOT EXISTS todos (
   id TEXT PRIMARY KEY,
@@ -842,6 +867,7 @@ export function eraseProjectFromMemory(
     const handoffs = count('DELETE FROM handoffs WHERE project_id = ?')
     const files = count('DELETE FROM code_files WHERE project_id = ?')
     count('DELETE FROM usage_log WHERE project_id = ?')
+    count('DELETE FROM request_log WHERE project_id = ?')
     count('DELETE FROM todos WHERE project_id = ?')
     count('DELETE FROM notes WHERE project_id = ?')
     db.prepare('DELETE FROM meta WHERE key IN (?, ?, ?)').run(
@@ -1065,6 +1091,112 @@ export function usageSummary(
     cached: number
     output: number
   }[]
+}
+
+/** Totals by project and agent since a time (for the usage report). */
+export function usageByProject(
+  db: DatabaseSync,
+  sinceIso: string
+): { projectId: string; agent: string; kind: string; model: string | null; runs: number; fresh: number; cached: number; output: number }[] {
+  return db
+    .prepare(
+      `SELECT project_id AS projectId, agent, kind, model, COUNT(*) AS runs, SUM(fresh) AS fresh,
+              SUM(cached) AS cached, SUM(output) AS output
+       FROM usage_log WHERE at >= ? GROUP BY project_id, agent, kind, model`
+    )
+    .all(sinceIso) as { projectId: string; agent: string; kind: string; model: string | null; runs: number; fresh: number; cached: number; output: number }[]
+}
+
+/** Codex tokens for one project since a time (a request's hand-offs, for its request_log row). */
+export function codexUsageSince(db: DatabaseSync, projectId: string, sinceIso: string): { fresh: number; cached: number; output: number } {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(fresh), 0) AS fresh, COALESCE(SUM(cached), 0) AS cached, COALESCE(SUM(output), 0) AS output
+       FROM usage_log WHERE project_id = ? AND agent = 'codex' AND at >= ?`
+    )
+    .get(projectId, sinceIso) as { fresh: number; cached: number; output: number }
+  return { fresh: Number(row.fresh), cached: Number(row.cached), output: Number(row.output) }
+}
+
+export interface RequestLogRow {
+  at: string
+  projectId: string
+  /** build, plan (making one), plan_build (building an approved one), takeover (Codex alone). */
+  mode: string
+  balance: string | null
+  route: string | null
+  size: string | null
+  model: string | null
+  text: string
+  /** done, stopped or error. */
+  outcome: string
+  seconds: number
+  /** Claude's model calls (each re-reads the conversation). */
+  claudeSteps: number
+  /** Claude's own tool calls by kind (see stepKind). */
+  tools: Record<string, number>
+  handoffs: number
+  claude: { fresh: number; cached: number; output: number }
+  codex: { fresh: number; cached: number; output: number }
+}
+
+export function logRequest(db: DatabaseSync, row: RequestLogRow): void {
+  db.prepare(
+    `INSERT INTO request_log (at, project_id, mode, balance, route, size, model, text, outcome, seconds, claude_steps, tools, handoffs,
+       claude_fresh, claude_cached, claude_output, codex_fresh, codex_cached, codex_output)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    row.at,
+    row.projectId,
+    row.mode,
+    row.balance,
+    row.route,
+    row.size,
+    row.model,
+    row.text.slice(0, 300),
+    row.outcome,
+    Math.round(row.seconds),
+    row.claudeSteps,
+    JSON.stringify(row.tools),
+    row.handoffs,
+    Math.round(row.claude.fresh),
+    Math.round(row.claude.cached),
+    Math.round(row.claude.output),
+    Math.round(row.codex.fresh),
+    Math.round(row.codex.cached),
+    Math.round(row.codex.output)
+  )
+}
+
+export function listRequests(db: DatabaseSync, sinceIso: string, projectId?: string): RequestLogRow[] {
+  const rows = db
+    .prepare(`SELECT * FROM request_log WHERE at >= ? ${projectId ? 'AND project_id = ?' : ''} ORDER BY at`)
+    .all(...(projectId ? [sinceIso, projectId] : [sinceIso])) as Record<string, unknown>[]
+  return rows.map((r) => {
+    let tools: Record<string, number> = {}
+    try {
+      tools = JSON.parse(String(r.tools ?? '{}'))
+    } catch {
+      // an unreadable row just has no breakdown
+    }
+    return {
+      at: String(r.at),
+      projectId: String(r.project_id),
+      mode: String(r.mode),
+      balance: (r.balance as string | null) ?? null,
+      route: (r.route as string | null) ?? null,
+      size: (r.size as string | null) ?? null,
+      model: (r.model as string | null) ?? null,
+      text: String(r.text ?? ''),
+      outcome: String(r.outcome),
+      seconds: Number(r.seconds),
+      claudeSteps: Number(r.claude_steps),
+      tools,
+      handoffs: Number(r.handoffs),
+      claude: { fresh: Number(r.claude_fresh), cached: Number(r.claude_cached), output: Number(r.claude_output) },
+      codex: { fresh: Number(r.codex_fresh), cached: Number(r.codex_cached), output: Number(r.codex_output) }
+    }
+  })
 }
 
 // ---- deciding what counts as relevant -------------------------------------------

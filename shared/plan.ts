@@ -10,7 +10,7 @@ export interface PlanStep {
 /** What Claude is told about writing a plan (Claude Code adds its own read-only rules around it). */
 export const PLAN_INSTRUCTIONS = `The user is planning this change before anything is built, and may not be technical. Explore the project read-only to understand what is there: keep it cheap (use the explorer helper and the memory tools mcp__vibe_memory__where / recall before reading many files yourself). Then write the plan in this shape:
 - One short paragraph saying, in plain words, what will be done and how.
-- A section "## Steps" with at most 8 numbered steps. Start each step with "(Claude)" or "(Codex)" for who should do it, following any note about the Claude/Codex balance: give Codex self-contained building steps, and keep design, integration and review with Claude. Say which files each step touches.
+- A section "## Steps" with at most 8 numbered steps. Start each step with "(Claude)" or "(Codex)" for who should do it, following any note about the Claude/Codex balance: give Codex self-contained building steps, and keep design, integration and review with Claude. Say which files each step touches. Checking the work (tests, a look in the browser) belongs in the step that builds it, so whoever builds it checks it; don't make it a separate step for Claude. A deploy is its own last step, "(Claude) Deploy with the saved Deploy", when the user wants it live.
 - A section "## Risks" only if there is something the user should know before saying yes.
 Do not write the code itself in the plan.`
 
@@ -39,7 +39,7 @@ export function parsePlanSteps(plan: string): PlanStep[] {
 
 /** The note that goes with "build it" after the user approves a plan. */
 export function approvedPlanNote(plan: string): string {
-  return `[VibeApp note: the user approved the plan below. Build it now, following its steps in order. When you start a step call mcp__vibe_tools__plan_progress with that step's number and status "doing", and when it is finished call it again with status "done". Hand the steps marked (Codex) to Codex with run_codex_subtask. If something in the plan turns out to be wrong, say so briefly and adapt.]
+  return `[VibeApp note: the user approved the plan below. Build it now, following its steps in order. Report progress with mcp__vibe_tools__plan_progress, one call per step: status "doing" for the first step, then, as each step finishes, status "done" with next set to the step you start next (leave next out after the last one). Hand the steps marked (Codex) to Codex with run_codex_subtask, including how to check them, and judge them from Codex's report rather than testing again yourself. For a deploy step, call mcp__vibe_tools__run_deploy. If something in the plan turns out to be wrong, say so briefly and adapt.]
 
 Approved plan:
 ${plan}`
