@@ -33,6 +33,7 @@ interface ChatViewProps {
   project: ProjectRecord
   onBack: () => void
   onOpenHistory: () => void
+  onOpenMemory: () => void
   onError: (message: string) => void
   thinkingLabel: string
 }
@@ -192,7 +193,7 @@ function readPreviewPref(): boolean {
   }
 }
 
-function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: ChatViewProps) {
+function ChatView({ project, onBack, onOpenHistory, onOpenMemory, onError, thinkingLabel }: ChatViewProps) {
   const [items, setItems] = useState<ChatItem[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -934,6 +935,9 @@ function ChatView({ project, onBack, onOpenHistory, onError, thinkingLabel }: Ch
             title="Run requests, the next to-do, Deploy or a site check on a schedule"
           >
             ⏰ Schedules
+          </button>
+          <button onClick={onOpenMemory} title="What Claude and Codex remember about this project, and about all projects">
+            🧠 Memory
           </button>
           <button onClick={onOpenHistory}>History</button>
           <CheckpointButton

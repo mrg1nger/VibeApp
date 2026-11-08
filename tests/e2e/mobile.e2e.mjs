@@ -238,8 +238,12 @@ try {
     await waitFor(browser, `!!document.querySelector('.schedule-form')`, 'the new-schedule form')
   })
   await browser.evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await screen('09-memory', async () => {
+    await click('Memory', '.chat-header-actions button')
+    await waitFor(browser, `/Project brief/.test(document.body.innerText)`, 'the Memory screen')
+  })
+  await click('Back', '.chat-header button')
   await screen('08-chat-tab', () => click('Chat', '.app-nav-tabs button'))
-  await screen('09-memory', () => click('Memory', '.app-nav-tabs button'))
   await screen('10-extensions', () => click('Extensions', '.app-nav-tabs button'))
   await screen('11-settings', () => click('Settings', '.app-nav-tabs button'))
 } catch (err) {

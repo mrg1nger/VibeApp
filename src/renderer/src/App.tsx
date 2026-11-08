@@ -110,7 +110,7 @@ function App() {
             Accounts
           </button>
           <button
-            className={screen === 'projects' || screen === 'chat' || screen === 'history' ? 'active' : ''}
+            className={screen === 'projects' || screen === 'chat' || screen === 'history' || screen === 'memory' ? 'active' : ''}
             onClick={() => setScreen('projects')}
             disabled={!claudeReady}
             title={claudeReady ? undefined : 'Log in to Claude Code first'}
@@ -119,9 +119,6 @@ function App() {
           </button>
           <button className={screen === 'talk' ? 'active' : ''} onClick={() => setScreen('talk')}>
             Chat
-          </button>
-          <button className={screen === 'memory' ? 'active' : ''} onClick={() => setScreen('memory')}>
-            Memory
           </button>
           <button className={screen === 'extensions' ? 'active' : ''} onClick={() => setScreen('extensions')}>
             Extensions
@@ -182,6 +179,7 @@ function App() {
           project={activeProject}
           onBack={() => setScreen('projects')}
           onOpenHistory={() => setScreen('history')}
+          onOpenMemory={() => setScreen('memory')}
           onError={showError}
           thinkingLabel={activeTheme?.thinkingLabel ?? 'Claude is working…'}
         />
@@ -193,7 +191,9 @@ function App() {
           onError={showError}
         />
       )}
-      {screen === 'memory' && <MemoryView project={activeProject} onError={showError} />}
+      {screen === 'memory' && activeProject && (
+        <MemoryView project={activeProject} onBack={() => setScreen('chat')} onError={showError} />
+      )}
       {screen === 'talk' && <TalkView onError={showError} />}
       {screen === 'extensions' && <ExtensionsView onError={showError} />}
       {screen === 'settings' && settings && (

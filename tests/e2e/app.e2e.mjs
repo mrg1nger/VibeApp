@@ -1066,9 +1066,19 @@ try {
     rmSync(hub, { recursive: true, force: true })
   })
 
-  await step('the Memory screen shows the project brief section', async () => {
-    await click('Memory', '.app-nav-tabs button')
+  await step("the project's Memory screen shows the brief, has All projects, and goes back to the chat", async () => {
+    if (await evaluate(`[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent.trim() === 'Memory')`)) {
+      throw new Error('Memory is still in the top bar')
+    }
+    await click('Projects', '.app-nav-tabs button')
+    await click('e2e-game', 'button.project-row')
+    await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat')
+    await click('🧠 Memory', '.chat-header-actions button')
     await waitFor(`/Project brief/.test(document.body.innerText)`, 'the brief section', 15_000)
+    await click('All projects', '.memory-scope-tabs button')
+    await waitFor(`!/Project brief/.test(document.body.innerText)`, 'the all-projects memory', 10_000)
+    await click('← Back', '.chat-header button')
+    await waitFor(`!!document.querySelector('textarea.chat-input')`, 'the chat again')
   })
 
   await step('nothing was saved to memory while automatic saving was off', async () => {

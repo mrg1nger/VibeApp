@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact, type MemoryScope, type ProjectRecord } from '@shared/types'
 
 interface MemoryViewProps {
-  project: ProjectRecord | null
+  project: ProjectRecord
+  onBack: () => void
   onError?: (message: string) => void
 }
 
@@ -27,7 +28,7 @@ function shortDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : ''
 }
 
-function MemoryView({ project, onError }: MemoryViewProps) {
+function MemoryView({ project, onBack, onError }: MemoryViewProps) {
   const [scope, setScope] = useState<MemoryScope>('project')
   const [facts, setFacts] = useState<MemoryFact[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,9 +43,8 @@ function MemoryView({ project, onError }: MemoryViewProps) {
   const [brief, setBrief] = useState<{ text: string; updatedAt: string } | null>(null)
   const [briefBusy, setBriefBusy] = useState(false)
 
-  const effectiveScope: MemoryScope = project ? scope : 'global'
-  // A stable id is required for project-scoped memory; global scope ignores it.
-  const projectId = project?.id ?? 'none'
+  const effectiveScope = scope
+  const projectId = project.id
   const fail = useCallback((err: unknown) => onError?.((err as Error).message), [onError])
 
   const refresh = useCallback(() => {
@@ -61,12 +61,10 @@ function MemoryView({ project, onError }: MemoryViewProps) {
   }, [refresh])
 
   useEffect(() => {
-    if (!project) return
     window.vibe.brief.get(project.id).then(setBrief).catch(() => undefined)
   }, [project])
 
   const refreshBrief = useCallback(async () => {
-    if (!project) return
     setBriefBusy(true)
     try {
       setBrief(await window.vibe.brief.refresh(project.id, project.path))
@@ -210,21 +208,21 @@ function MemoryView({ project, onError }: MemoryViewProps) {
 
   return (
     <div className="memory-view">
-      <h2>Memory</h2>
+      <div className="chat-header">
+        <button onClick={onBack}>&larr; Back</button>
+        <span className="chat-project-name">{project.name} — Memory</span>
+      </div>
 
-      {project && (
-        <div className="memory-scope-tabs">
-          <button className={scope === 'project' ? 'active' : ''} onClick={() => setScope('project')}>
-            This project: {project.name}
-          </button>
-          <button className={scope === 'global' ? 'active' : ''} onClick={() => setScope('global')}>
-            Global (all projects)
-          </button>
-        </div>
-      )}
-      {!project && <p className="memory-hint">Open a project to see its project-scoped memory too.</p>}
+      <div className="memory-scope-tabs">
+        <button className={scope === 'project' ? 'active' : ''} onClick={() => setScope('project')}>
+          This project
+        </button>
+        <button className={scope === 'global' ? 'active' : ''} onClick={() => setScope('global')}>
+          All projects
+        </button>
+      </div>
 
-      {project && effectiveScope === 'project' && (
+      {effectiveScope === 'project' && (
         <details className="memory-brief" open={!!brief}>
           <summary>
             Project brief{brief ? ` (updated ${new Date(brief.updatedAt).toLocaleString()})` : ' (not written yet)'}
@@ -262,7 +260,7 @@ function MemoryView({ project, onError }: MemoryViewProps) {
         <input
           value={newFact}
           onChange={(e) => setNewFact(e.target.value)}
-          placeholder={`Add a fact to ${effectiveScope === 'global' ? 'global' : 'this project'} memory…`}
+          placeholder={effectiveScope === 'global' ? 'Add a fact for all projects…' : "Add a fact to this project's memory…"}
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleAdd()
           }}
