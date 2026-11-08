@@ -25,6 +25,18 @@ Everything recommended so far, in one place. Tick items off as they ship.
 - [ ] **Automatic app updates.** VibeApp downloads new versions itself instead of reinstalling from a zip. Needs somewhere to host releases, e.g. GitHub Releases.
 - [ ] **Self-editing with a safety net.** Open VibeApp's own source as a project, have Claude change it, then "Rebuild & restart," keeping the last working version and rolling back automatically if the new one won't start.
 - [ ] **Preview for Python apps.** Flask, Django, Streamlit and the like currently show "Nothing to preview."
+- [ ] **Open-sourcing VibeApp (on hold).** Selling it as is looks unlikely: it runs on the user's Claude and ChatGPT subscription sign-ins, which Anthropic's Agent SDK terms don't allow third-party products to offer without approval (check the current wording, and OpenAI's), and free first-party apps overlap heavily. Open source avoids most of that, since each user brings their own subscriptions. A security check (2026-10-28) found nothing that risks the user's accounts:
+  - no real keys anywhere in the 80 commits;
+  - commits use GitHub's private email;
+  - the installer holds only the built app;
+  - sign-ins, secrets and tokens all live outside the repo.
+
+  Before making it public:
+  - trim `patches/node-pty+1.1.0.patch`, whose build files show `C:\Users\Chris\...` paths;
+  - decide whether `package.json`'s author "Chris" and ROADMAP's DevBox/MRG-PC/"yay" mentions can stay;
+  - add a LICENSE (MIT is the usual choice);
+  - post only the current setup.exe, not the old `release\VibeApp-0.1.0-installer.zip`;
+  - turn on GitHub secret scanning.
 
 ## Loose ends to check
 
