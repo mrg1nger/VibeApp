@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { buildSync } from 'esbuild'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
@@ -69,6 +70,9 @@ export default defineConfig({
     }
   },
   renderer: {
+    define: {
+      __APP_VERSION__: JSON.stringify(JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version)
+    },
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

@@ -21,6 +21,20 @@ Everything recommended so far, in one place. Tick items off as they ship.
   - **Windows:** whether it can be launched hidden (no console-window flashes, as fixed for Codex).
 
   Also unknown: no usage API found (dashboard only), so possibly no third meter; model list churns; quality on hard multi-file work is expected to be below Claude and Codex (untested). Check ClinePass terms before selling VibeApp with it built in. Docs: [ClinePass](https://docs.cline.bot/getting-started/clinepass), [CLI](https://docs.cline.bot/cline-cli/getting-started).
+
+  Plan (2026-11-09). The docs now list `--json`, `-p/--plan`, `--auto-approve <bool>`, `-m`, `-P`, `-c/--cwd`, `--config <dir>`, `--data-dir <dir>`, `--thinking`, `-t/--timeout`, and **PreToolUse hooks that can cancel commands**, which could cover the safety gap. Check each one against `cline --help` once it's installed.
+  1. **Trial (user):** `npm i -g cline`, then `cline auth` with ClinePass. **Trial (Claude):** run it headless on the eval game: the JSON events, whether plan mode really leaves files alone, a hook blocking `rm -rf`/`git push --force`, vibe_memory through `--config`, launching with no console window, and whether the output reports tokens.
+  2. **Runner:** `clineRunner.ts` modelled on the Codex runner. Each run gets VibeApp's own `--config`/`--data-dir`, so the user's Cline setup isn't touched. The hook blocks destructive commands, and an undo snapshot is taken first. The run streams to the chat like a Codex hand-off.
+  3. **Claude's tool** `run_cline_subtask`, alongside run_codex_subtask. A routing note covers when to use it: straightforward builds, or when Claude or Codex is low. The fallback order is Claude, then Codex, then Cline.
+  4. **Settings:** a Cline section with sign-in status, the model, and "use Cline for: building / reviewing / custodial jobs". A third meter only if usage numbers turn out to be available.
+  5. **Measure:** `VIBEAPP_EVAL_AGENT=cline` runs the teamwork eval with Cline as the builder, to compare quality, steps and Claude tokens with Codex before routing real work to it.
+  6. **Reviewer:** Cline in plan mode as a second reviewer, only if step 1 shows plan mode can't edit.
+- [ ] **Custodial jobs off Claude's plan (idea).** On DevBox, compaction, tidy, scribe and brief took about 12% of Claude's weighted usage over 7 days, plus the Haiku route judge. They're short and repetitive, so a small model could do them. Cheapest path first:
+  1. ClinePass models, once Cline is wired up.
+  2. Or a small off-the-shelf local model (e.g. a 1–4B Qwen through Ollama). Needs a check of the GPU on DevBox.
+  3. Fine-tune one on VibeApp's own past helper outputs, only if 1 and 2 aren't good enough.
+
+  Training a model from scratch isn't worth it. Measure every option with an eval of the helper jobs (same input, compare against Haiku's output) before switching over.
 - [ ] **Starter templates** (#8). "A website," "a game," "a Discord bot" instead of a blank folder, ready for the preview and Publish.
 - [ ] **Automatic app updates.** VibeApp downloads new versions itself instead of reinstalling from a zip. Needs somewhere to host releases, e.g. GitHub Releases.
 - [ ] **Self-editing with a safety net.** Open VibeApp's own source as a project, have Claude change it, then "Rebuild & restart," keeping the last working version and rolling back automatically if the new one won't start.

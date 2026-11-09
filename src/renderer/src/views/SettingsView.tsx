@@ -105,6 +105,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
   return (
     <div className="settings-view">
       <h2>Settings</h2>
+      <p className="settings-hint">VibeApp {__APP_VERSION__}</p>
 
       <section className="settings-section">
         <h3>Models</h3>
