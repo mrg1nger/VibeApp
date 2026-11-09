@@ -606,6 +606,14 @@ export interface AppSettings {
   stepUpForComplex: boolean
   /** Have Codex review Claude's code changes after each request. */
   codexReview: boolean
+  /** Claude may hand straightforward work to Cline (when it's installed and signed in to ClinePass). */
+  clineHandoffs: boolean
+  /** VibeApp's background jobs (saving memory, tidy-up, brief, summaries) run on Cline instead of Haiku, when Cline is there. */
+  clineHelpers: boolean
+  /** Cline model for hand-offs; null = Cline's own default. */
+  clineModel: string | null
+  /** Cline model for background jobs; null = the hand-off model. */
+  clineHelperModel: string | null
 }
 
 /** Where tokens went over a period, by kind of work. */

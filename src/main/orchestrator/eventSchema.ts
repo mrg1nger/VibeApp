@@ -33,6 +33,8 @@ function friendlyToolLabel(name: string, input: unknown): string {
     }
     case 'mcp__vibe_tools__run_codex_subtask':
       return `Delegated to Codex: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
+    case 'mcp__vibe_tools__run_cline_subtask':
+      return `Delegated to Cline: ${(input as { prompt?: string })?.prompt ?? 'a subtask'}`
     case 'mcp__vibe_memory__recall': {
       const q = (input as { query?: string })?.query?.trim()
       return q ? `Searched memory: ${q}` : 'Checked key facts'

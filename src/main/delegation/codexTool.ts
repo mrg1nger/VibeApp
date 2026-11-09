@@ -4,6 +4,8 @@ import { existsSync } from 'fs'
 import { join } from 'path'
 import * as z from 'zod/v4'
 import { codexReport, runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
+import { runCline } from '../cli/clineExec'
+import { progressNote } from '../cli/codexActivity'
 import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
 import { codeSummariesFor, finishHandoff, keyFactsBlock, reviewConventions, startHandoff } from '../memory/store'
@@ -38,6 +40,9 @@ export interface CodexThread {
 
 /** How long a hand-off may run before it is stopped (real tasks on a big project take a while). */
 const HANDOFF_TIMEOUT_MS = 15 * 60_000
+
+/** Ahead of every Cline hand-off: what VibeApp expects of it. */
+const CLINE_INSTRUCTIONS = `You are working for Claude inside VibeApp, on the user's project in the current folder. Do the task below completely, then check it the way the task says (run the tests it names), and finish with a short report: what you changed, file by file, and how the checks went. Stay inside the project folder. Some things are refused by VibeApp (deleting folders, pushing, anything outside the project): if a command comes back "BLOCKED by VibeApp", don't try another way, just say in your report what was needed. You share a memory with Claude through the vibe_memory tools: recall searches it, where finds which file holds something, handoffs shows earlier hand-offs. Don't save facts unless the task asks you to.`
 
 /** Longest summary returned to Claude; the full report is kept for the handoffs tool. */
 const SUMMARY_CHARS = 1500
@@ -268,168 +273,238 @@ export function createCodexDelegationServer(
             .optional()
             .describe('Optional timeout in milliseconds. Defaults to 15 minutes.')
         },
-        (args) => oneAtATime(async () => {
-          const signal = getStopSignal?.()
-          const request = getRequestContext?.()
-          const projectId = memory?.projectId
-          const unsandboxed = isGoNutzMode()
-
-          // Log it, and note which files change (snapshots before and after).
-          const handoffId = projectId
-            ? attempt(() => startHandoff(memoryDb(), projectId, 'codex', args.prompt, request?.text ?? null))
-            : undefined
-          const before = await takeSnapshot(projectPath, 'before hand-off').catch(() => undefined)
-
-          interface Outcome {
-            changes: FileChange[] | null
-            diff: string
-            checks: string
-            checksOk: boolean | null
-          }
-          const outcome = async (status: 'done' | 'error' | 'stopped', report: string): Promise<Outcome> => {
-            let changes: FileChange[] | null = null
-            let diff = ''
-            let checks = ''
-            let checksOk: boolean | null = null
-            if (before) {
-              const after = await takeSnapshot(projectPath, 'after hand-off').catch(() => undefined)
-              if (after) {
-                changes = await changeStats(projectPath, before, after).catch(() => null)
-                if (changes?.length && status === 'done') {
-                  diff = await diffSnapshots(projectPath, before, after).catch(() => '')
-                }
-              }
-            }
-            // Only worth running when Codex finished normally and changed something.
-            if (status === 'done' && changes?.length) {
-              const verdict = await verifyChanges(
-                projectPath,
-                changes.map((c) => c.path)
-              ).catch(() => ({ ok: null, summary: '' }))
-              checks = verdict.summary
-              checksOk = verdict.ok
-            }
-            if (handoffId !== undefined) {
-              attempt(() =>
-                finishHandoff(memoryDb(), handoffId, {
-                  status,
-                  report: [report, checks].filter(Boolean).join('\n\n'),
-                  files: changes?.map((c) => c.path) ?? null
-                })
-              )
-            }
-            return { changes, diff, checks, checksOk }
-          }
-
-          try {
-            const images = (request?.images ?? []).filter((p) => existsSync(p))
-            const context = memory ? attempt(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
-            const run = (resumeThreadId?: string): Promise<CodexExecResult> =>
-              runCodexExec(
-                {
-                  prompt: args.prompt,
-                  cwd: projectPath,
-                  timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
-                  unsandboxed,
-                  model: getSettings().codexModel ?? undefined,
-                  effort: getSettings().codexEffort ?? undefined,
-                  images,
-                  resumeThreadId,
-                  // Read fresh at hand-off time: Claude may have just saved some.
-                  memory: memory
-                    ? {
-                        ...memory,
-                        keyFacts: currentKeyFacts(memory.projectId),
-                        brief: attempt(() => briefBlock(memory.projectId)),
-                        context,
-                        autoMemory: getSettings().autoMemory
-                      }
-                    : undefined,
-                  signal
-                },
-                onProgress,
-                onActivity
-              )
-
-            // Pick up this request's earlier Codex session, if it's still valid.
-            const thread = codexThread?.get()
-            const resumeId = thread && thread.unsandboxed === unsandboxed ? thread.id : undefined
-            let result = await run(resumeId)
-            let continued = !!resumeId
-            if (resumeId && result.exitCode !== 0 && !result.finalMessage) {
-              // The old session couldn't be resumed: start a new one instead.
-              codexThread?.set(undefined)
-              recordUsage(projectId, 'handoff', 'codex', countsFromCodexEvents(result.events))
-              result = await run(undefined)
-              continued = false
-            }
-            if (result.threadId && result.exitCode === 0) codexThread?.set({ id: result.threadId, unsandboxed })
-            recordUsage(projectId, 'handoff', 'codex', countsFromCodexEvents(result.events))
-
-            const full = `${continued ? '(Continued the earlier Codex session from this request.)\n' : ''}${
-              codexReport(result)
-            }`
-            const status = result.exitCode === 0 ? 'done' : 'error'
-            const { changes, diff, checks, checksOk } = await outcome(status, full)
-
-            const summary =
-              full.length > SUMMARY_CHARS
-                ? `${full.slice(0, SUMMARY_CHARS)}\n… (shortened; the full report is saved: handoffs tool, id ${handoffId ?? '?'})`
-                : full
-            const parts = [`Hand-off${handoffId !== undefined ? ` #${handoffId}` : ''}`]
-            if (changes) parts.push(changes.length ? `files changed: ${describeChanges(changes)}` : 'no files changed')
-            const lines = [summary, `[${parts.join(' · ')}]`]
-            if (checks) lines.push(`[${checks}]`)
-            if (diff.trim()) {
-              if (diff.length <= DIFF_INLINE_CHARS) {
-                lines.push(`Diff:\n${diff.trim()}`)
-              } else {
-                // Too big to hand back whole: a digest built from the code map and the request.
-                const summaries =
-                  (projectId && changes
-                    ? attempt(() =>
-                        codeSummariesFor(
-                          memoryDb(),
-                          projectId,
-                          changes.map((c) => c.path)
-                        )
-                      )
-                    : undefined) ?? new Map<string, string>()
-                lines.push(digestDiff(diff, changes ?? [], `${request?.text ?? ''} ${args.prompt}`, summaries))
-              }
-            }
-            // Remembered conventions that bear on this change, so the review checks against them.
-            if (projectId && changes?.length) {
-              const text = [request?.text, args.prompt, ...changes.map((c) => c.path)].filter(Boolean).join(' ')
-              const rules = attempt(() => reviewConventions(memoryDb(), projectId, text))
-              if (rules?.length) {
-                lines.push(
-                  `[Remembered conventions that apply here; check the change against them:\n${rules
-                    .map((r) => `- ${r.text}`)
-                    .join('\n')}]`
+        (args) =>
+          oneAtATime(() => {
+            const unsandboxed = isGoNutzMode()
+            const signal = getStopSignal?.()
+            const request = getRequestContext?.()
+            return handOff('Codex', args.prompt, async () => {
+              const images = (request?.images ?? []).filter((p) => existsSync(p))
+              const context = memory ? attempt(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
+              const run = (resumeThreadId?: string): Promise<CodexExecResult> =>
+                runCodexExec(
+                  {
+                    prompt: args.prompt,
+                    cwd: projectPath,
+                    timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
+                    unsandboxed,
+                    model: getSettings().codexModel ?? undefined,
+                    effort: getSettings().codexEffort ?? undefined,
+                    images,
+                    resumeThreadId,
+                    // Read fresh at hand-off time: Claude may have just saved some.
+                    memory: memory
+                      ? {
+                          ...memory,
+                          keyFacts: currentKeyFacts(memory.projectId),
+                          brief: attempt(() => briefBlock(memory.projectId)),
+                          context,
+                          autoMemory: getSettings().autoMemory
+                        }
+                      : undefined,
+                    signal
+                  },
+                  onProgress,
+                  onActivity
                 )
+
+              // Pick up this request's earlier Codex session, if it's still valid.
+              const thread = codexThread?.get()
+              const resumeId = thread && thread.unsandboxed === unsandboxed ? thread.id : undefined
+              let result = await run(resumeId)
+              let continued = !!resumeId
+              if (resumeId && result.exitCode !== 0 && !result.finalMessage) {
+                // The old session couldn't be resumed: start a new one instead.
+                codexThread?.set(undefined)
+                recordUsage(memory?.projectId, 'handoff', 'codex', countsFromCodexEvents(result.events))
+                result = await run(undefined)
+                continued = false
               }
-            }
-            return {
-              content: [{ type: 'text' as const, text: lines.join('\n\n') }],
-              isError: result.exitCode !== 0 || checksOk === false
-            }
-          } catch (err) {
-            const message = (err as Error).message
-            const partial = await outcome(signal?.aborted ? 'stopped' : 'error', message).catch(() => undefined)
-            // Codex may have changed files before it failed or was stopped; say which, so
-            // nobody assumes the project is as it was.
-            const touched = partial?.changes?.length
-              ? `
-[Files Codex changed before it stopped: ${describeChanges(partial.changes)}. Check them before continuing; they may be half-done.]`
-              : ''
-            return {
-              content: [{ type: 'text' as const, text: `Codex delegation failed: ${message}${touched}` }],
-              isError: true
-            }
-          }
-        })
+              if (result.threadId && result.exitCode === 0) codexThread?.set({ id: result.threadId, unsandboxed })
+              recordUsage(memory?.projectId, 'handoff', 'codex', countsFromCodexEvents(result.events))
+              return {
+                report: `${continued ? '(Continued the earlier Codex session from this request.)\n' : ''}${codexReport(result)}`,
+                ok: result.exitCode === 0
+              }
+            })
+          })
+      ),
+      tool(
+        'run_cline_subtask',
+        "Delegate a scoped coding subtask to Cline (a third AI coding agent, running open-weight models on the user's separate ClinePass plan, so it spends neither Claude's nor Codex's plan) and return its result. Best for straightforward, well-specified work: a clear change in named files, boilerplate, tests for existing code, simple fixes. Prefer Codex for tricky or wide-reaching work. Like a Codex hand-off, it gets the user's request, the key facts and relevant memories, so say what to do, which files, what \"done\" looks like and how to check it. Cline works only inside the project: VibeApp refuses commands that delete, push or reach outside it, and Cline reports anything it couldn't do. The result is its report, the files changed (with a small diff) and the automatic checks. Hand-offs run one at a time.",
+        {
+          prompt: z.string().describe('The subtask instructions for Cline to carry out.'),
+          timeoutMs: z.number().optional().describe('Optional timeout in milliseconds. Defaults to 15 minutes.')
+        },
+        (args) =>
+          oneAtATime(() => {
+            const signal = getStopSignal?.()
+            const request = getRequestContext?.()
+            return handOff('Cline', args.prompt, async () => {
+              const settings = getSettings()
+              if (!settings.clineHandoffs) {
+                return { report: 'Hand-offs to Cline are switched off in VibeApp\'s Settings. Do the work yourself or hand it to Codex.', ok: false }
+              }
+              const context = memory ? attempt(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
+              const prompt = [
+                CLINE_INSTRUCTIONS,
+                memory ? `Key facts:\n${currentKeyFacts(memory.projectId) ?? '(none yet)'}` : undefined,
+                memory ? attempt(() => briefBlock(memory.projectId)) : undefined,
+                context,
+                `Task from Claude:\n${args.prompt}`
+              ]
+                .filter(Boolean)
+                .join('\n\n')
+              const result = await runCline(
+                {
+                  prompt,
+                  mode: 'build',
+                  cwd: projectPath,
+                  model: settings.clineModel ?? undefined,
+                  goNutz: isGoNutzMode(),
+                  timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
+                  signal,
+                  memory: memory ? { scriptPath: memory.scriptPath, dbPath: memory.dbPath, projectId: memory.projectId, projectPath: memory.projectPath } : undefined
+                },
+                (activity) => {
+                  onActivity?.(activity)
+                  const note = progressNote(activity)
+                  if (note) onProgress(note)
+                }
+              )
+              recordUsage(memory?.projectId, 'handoff', 'cline', result.usage)
+              if (signal?.aborted) throw new Error('Cline run was cancelled')
+              const blocked = result.blocked.length
+                ? `\n[VibeApp refused ${result.blocked.length === 1 ? 'one thing' : `${result.blocked.length} things`} Cline tried: ${[...new Set(result.blocked)].join('; ')}. If it's needed, ask the user or do it yourself.]`
+                : ''
+              return {
+                report: `${result.text || result.error || '(Cline finished with no final message.)'}${result.ok || !result.text || !result.error ? '' : `\n[${result.error}]`}${blocked}`,
+                ok: result.ok
+              }
+            })
+          })
       )
     ]
   })
+
+  /**
+   * One hand-off: logged in memory, with snapshots before and after so the
+   * files changed (and a diff) come back to Claude, and the automatic checks.
+   */
+  async function handOff(
+    agent: 'Codex' | 'Cline',
+    prompt: string,
+    execute: () => Promise<{ report: string; ok: boolean }>
+  ): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
+    const signal = getStopSignal?.()
+    const request = getRequestContext?.()
+    const projectId = memory?.projectId
+
+    const handoffId = projectId
+      ? attempt(() => startHandoff(memoryDb(), projectId, agent.toLowerCase(), prompt, request?.text ?? null))
+      : undefined
+    const before = await takeSnapshot(projectPath, 'before hand-off').catch(() => undefined)
+
+    interface Outcome {
+      changes: FileChange[] | null
+      diff: string
+      checks: string
+      checksOk: boolean | null
+    }
+    const outcome = async (status: 'done' | 'error' | 'stopped', report: string): Promise<Outcome> => {
+      let changes: FileChange[] | null = null
+      let diff = ''
+      let checks = ''
+      let checksOk: boolean | null = null
+      if (before) {
+        const after = await takeSnapshot(projectPath, 'after hand-off').catch(() => undefined)
+        if (after) {
+          changes = await changeStats(projectPath, before, after).catch(() => null)
+          if (changes?.length && status === 'done') {
+            diff = await diffSnapshots(projectPath, before, after).catch(() => '')
+          }
+        }
+      }
+      // Only worth running when the agent finished normally and changed something.
+      if (status === 'done' && changes?.length) {
+        const verdict = await verifyChanges(
+          projectPath,
+          changes.map((c) => c.path)
+        ).catch(() => ({ ok: null, summary: '' }))
+        checks = verdict.summary
+        checksOk = verdict.ok
+      }
+      if (handoffId !== undefined) {
+        attempt(() =>
+          finishHandoff(memoryDb(), handoffId, {
+            status,
+            report: [report, checks].filter(Boolean).join('\n\n'),
+            files: changes?.map((c) => c.path) ?? null
+          })
+        )
+      }
+      return { changes, diff, checks, checksOk }
+    }
+
+    try {
+      const { report: full, ok } = await execute()
+      const { changes, diff, checks, checksOk } = await outcome(ok ? 'done' : 'error', full)
+
+      const summary =
+        full.length > SUMMARY_CHARS
+          ? `${full.slice(0, SUMMARY_CHARS)}\n… (shortened; the full report is saved: handoffs tool, id ${handoffId ?? '?'})`
+          : full
+      const parts = [`${agent === 'Codex' ? 'Hand-off' : 'Cline hand-off'}${handoffId !== undefined ? ` #${handoffId}` : ''}`]
+      if (changes) parts.push(changes.length ? `files changed: ${describeChanges(changes)}` : 'no files changed')
+      const lines = [summary, `[${parts.join(' · ')}]`]
+      if (checks) lines.push(`[${checks}]`)
+      if (diff.trim()) {
+        if (diff.length <= DIFF_INLINE_CHARS) {
+          lines.push(`Diff:\n${diff.trim()}`)
+        } else {
+          // Too big to hand back whole: a digest built from the code map and the request.
+          const summaries =
+            (projectId && changes
+              ? attempt(() =>
+                  codeSummariesFor(
+                    memoryDb(),
+                    projectId,
+                    changes.map((c) => c.path)
+                  )
+                )
+              : undefined) ?? new Map<string, string>()
+          lines.push(digestDiff(diff, changes ?? [], `${request?.text ?? ''} ${prompt}`, summaries))
+        }
+      }
+      // Remembered conventions that bear on this change, so the review checks against them.
+      if (projectId && changes?.length) {
+        const text = [request?.text, prompt, ...changes.map((c) => c.path)].filter(Boolean).join(' ')
+        const rules = attempt(() => reviewConventions(memoryDb(), projectId, text))
+        if (rules?.length) {
+          lines.push(
+            `[Remembered conventions that apply here; check the change against them:\n${rules
+              .map((r) => `- ${r.text}`)
+              .join('\n')}]`
+          )
+        }
+      }
+      return {
+        content: [{ type: 'text' as const, text: lines.join('\n\n') }],
+        isError: !ok || checksOk === false
+      }
+    } catch (err) {
+      const message = (err as Error).message
+      const partial = await outcome(signal?.aborted ? 'stopped' : 'error', message).catch(() => undefined)
+      // The agent may have changed files before it failed or was stopped; say which, so
+      // nobody assumes the project is as it was.
+      const touched = partial?.changes?.length
+        ? `
+[Files ${agent} changed before it stopped: ${describeChanges(partial.changes)}. Check them before continuing; they may be half-done.]`
+        : ''
+      return {
+        content: [{ type: 'text' as const, text: `${agent} delegation failed: ${message}${touched}` }],
+        isError: true
+      }
+    }
+  }
 }

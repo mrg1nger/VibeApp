@@ -2,6 +2,7 @@ import type { AppSettings } from '@shared/types'
 import { claudeHelpersAllowed, peekUsage, percentLeft } from '../usage/usage'
 import { requestClassifier, type Classification } from './classifier'
 import { BALANCE_LABELS, applyBalance, leanFor, stepOfLean } from '@shared/balance'
+import { clineUnavailable, resolveClineLaunch } from '../cli/clineExec'
 
 export interface RouteDecision {
   /** Model to use for this message; null = the user's chosen model (or account default). */
@@ -52,6 +53,15 @@ export const CODEX_CHECKS_NOTE =
 
 const CODEX_LED_NOTE = `The user has set VibeApp to Codex-led: you plan and review, Codex builds and tests. Work out what's needed, then call run_codex_subtask with a clear spec and acceptance criteria and let Codex write the code; don't write it yourself except small fixes after you've reviewed Codex's result. ${CODEX_CHECKS_NOTE}`
 
+const CLINE_OPTION_NOTE =
+  "Cline (run_cline_subtask) is also available, on the user's separate ClinePass plan: hand it the simple, well-specified parts (a clear change in named files, boilerplate, tests for existing code) and keep tricky or wide-reaching work with Codex."
+
+/** Whether Claude may hand work to Cline right now: switched on, installed, and not out of plan. */
+export async function clineReadyForHandoffs(settings: AppSettings): Promise<boolean> {
+  if (!settings.clineHandoffs || clineUnavailable()) return false
+  return !!(await resolveClineLaunch())
+}
+
 const CODEX_NOTES = {
   most: 'This request is mostly straightforward implementation, so Codex should build it: plan the work, then call run_codex_subtask with a clear spec and acceptance criteria before writing the code yourself. Afterwards, review what Codex did and fix anything off.',
   some: 'Part of this request is independent and well-scoped. Consider handing that part to Codex with run_codex_subtask while you do the rest; skip it if doing it yourself is clearly quicker.'
@@ -66,6 +76,8 @@ export async function routeMessage(
     projectId?: string
     /** Planning, or building an approved plan: never a quick edit, however short the words typed. */
     notQuick?: boolean
+    /** Whether Cline can take hand-offs (looked up when not given). */
+    clineReady?: boolean
   } = {}
 ): Promise<RouteDecision> {
   // Smart switching off means no model changes and no Haiku judge, but the
@@ -97,20 +109,30 @@ export async function routeMessage(
   if (codexLow) codex = 'none'
   else if (claudeLow && codex === 'some') codex = 'most'
 
+  // Cline (a third agent on its own ClinePass plan), when it's set up for hand-offs.
+  const cline = request.size !== 'quick' && (context.clineReady ?? (await clineReadyForHandoffs(settings)))
+
   const notes: string[] = []
   if (codexLow) {
-    notes.push(`Codex plan usage is nearly used up (${Math.round(codexLeft)}% left). Don't delegate to Codex for this request; do the work yourself.`)
+    notes.push(
+      cline
+        ? `Codex plan usage is nearly used up (${Math.round(codexLeft)}% left). Don't delegate to Codex for this request: hand straightforward, well-specified implementation to Cline with run_cline_subtask (its own plan), and do the tricky parts yourself.`
+        : `Codex plan usage is nearly used up (${Math.round(codexLeft)}% left). Don't delegate to Codex for this request; do the work yourself.`
+    )
   } else if (codex === 'most' && lean >= 2) {
     notes.push(CODEX_LED_NOTE)
+    if (cline) notes.push(CLINE_OPTION_NOTE)
   } else if (codex !== 'none') {
     notes.push(CODEX_NOTES[codex])
     if (lean >= 1) notes.push(CODEX_CHECKS_NOTE)
     if (lean >= 1 && codex === 'some') notes.push('The user prefers that you lean on Codex, so hand that part over.')
     if (claudeLow) notes.push(`Claude plan usage is also low (${Math.round(claudeLeft)}% left), so lean on Codex.`)
+    if (cline) notes.push(CLINE_OPTION_NOTE)
   } else if (lean <= -1 && request.size !== 'quick') {
     notes.push('The user prefers that you do the work yourself rather than hand it to Codex.')
   } else if (claudeLow && codexLeft !== undefined && request.size !== 'quick') {
     notes.push(`Claude plan usage is low (${Math.round(claudeLeft)}% left). Delegate implementation work to Codex with run_codex_subtask wherever it's reasonable, and keep your own work to planning, coordination and review.`)
+    if (cline) notes.push(CLINE_OPTION_NOTE)
   }
   // Checking and saving memory would cost more than a quick edit itself.
   if (request.size === 'quick') {

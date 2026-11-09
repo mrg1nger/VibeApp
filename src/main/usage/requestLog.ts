@@ -13,6 +13,7 @@ export type StepKind =
   | 'server' // commands on another machine (ssh, scp, rsync): usually deploying by hand
   | 'browser' // Playwright: checking the app in a browser
   | 'handoff' // giving work to Codex
+  | 'cline' // giving work to Cline
   | 'deploy' // the saved Deploy (no AI)
   | 'progress' // ticking off plan steps
   | 'memory' // memory, history, to-dos
@@ -23,6 +24,7 @@ const SERVER_COMMAND = /\b(ssh|scp|rsync|sftp)\b/
 
 export function stepKind(name: string, input?: unknown): StepKind {
   if (/run_codex_subtask$/.test(name)) return 'handoff'
+  if (/run_cline_subtask$/.test(name)) return 'cline'
   if (/run_deploy$/.test(name)) return 'deploy'
   if (/plan_progress$/.test(name)) return 'progress'
   if (/playwright|browser_/i.test(name)) return 'browser'
@@ -94,7 +96,10 @@ export class RequestRecorder {
     return false
   }
 
-  finish(codex: RequestLogRow['codex'] = { fresh: 0, cached: 0, output: 0 }): RequestLogRow {
+  finish(
+    codex: RequestLogRow['codex'] = { fresh: 0, cached: 0, output: 0 },
+    cline: RequestLogRow['cline'] = { fresh: 0, cached: 0, output: 0 }
+  ): RequestLogRow {
     return {
       at: this.startedAt.toISOString(),
       projectId: this.start.projectId,
@@ -110,7 +115,8 @@ export class RequestRecorder {
       tools: { ...this.tools },
       handoffs: this.handoffs,
       claude: { ...this.claude },
-      codex
+      codex,
+      cline
     }
   }
 }

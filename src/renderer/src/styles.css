@@ -2802,6 +2802,24 @@ textarea {
   opacity: 0.75;
 }
 
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 10px;
+}
+
+.settings-ok {
+  color: var(--success-text);
+  font-size: 13px;
+}
+
+.settings-warn {
+  color: var(--danger-text, #e5534b);
+  font-size: 13px;
+}
+
 /* ---- Phones (VibeApp in a phone's browser through Remote access) ------------------------
    One column, a compact top bar whose tabs scroll sideways, the chat and the preview as
    two panes you switch between, controls large enough to tap, and text inputs at 16px

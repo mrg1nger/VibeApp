@@ -453,6 +453,13 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         ipcRenderer.invoke('vibe:publish:vercelResult', sessionId)
     },
 
+    cline: {
+      /** Whether the Cline CLI is installed (and why it can't take work right now, if it can't). */
+      status: (): Promise<{ installed: boolean; version?: string; unavailable?: string }> => ipcRenderer.invoke('vibe:cline:status'),
+      /** A tiny live run: signed in to ClinePass and answering? */
+      check: (): Promise<{ ok: boolean; message: string; model?: string; seconds: number }> => ipcRenderer.invoke('vibe:cline:check')
+    },
+
     usage: {
       get: (cli: CliName, force?: boolean): Promise<UsageSnapshot> =>
         ipcRenderer.invoke('vibe:usage:get', cli, force),

@@ -9,11 +9,16 @@ import { finishHandoff, getMeta, keyFactsBlock, setMeta, startHandoff } from '..
 import { verifyChanges } from '../review/checks'
 import { getSettings } from '../settings/store'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
+import { peekUsage, percentLeft } from '../usage/usage'
+import { runCline } from '../cli/clineExec'
+import { clineReadyForHandoffs } from './routing'
 
 // When Claude's plan is used up, Codex takes the user's request directly:
 // same chat, same memory, same checks, just without Claude in the middle.
+// When Codex is out too, Cline does (if it's set up).
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
+const CLINE_TOOL_NAME = 'mcp__vibe_tools__run_cline_subtask'
 const TIMEOUT_MS = 15 * 60_000
 
 /** Per project: the Codex session takeovers continue, so follow-ups keep their context. */
@@ -93,7 +98,7 @@ export function takeCatchUpNote(projectId: string): string | undefined {
   const first = items.find((i) => i.snapshot)?.snapshot
   return [
     `[VibeApp note: while Claude's plan limit was reached, Codex handled ${many ? 'these requests' : 'this request'} directly, so ${many ? 'they are' : 'it is'} not in this conversation.`,
-    "Those changes are in the working tree as uncommitted edits (VibeApp doesn't commit for the user), so git status and git diff will show them mixed in with everything else. That is expected and is not part of the new request unless the user says so; don't try to untangle or revert them.",
+    "(Where an outcome says \"by Cline\", Cline did it because Codex was out too.) Those changes are in the working tree as uncommitted edits (VibeApp doesn't commit for the user), so git status and git diff will show them mixed in with everything else. That is expected and is not part of the new request unless the user says so; don't try to untangle or revert them.",
     first ? `To see exactly what Codex changed in that time: git diff ${first} (plus git status --short for new files).` : '',
     'Judge what changed during a request from the hand-off results (they list their own files and diff), not from a whole-tree git diff. The handoffs tool has the full reports.',
     'What Codex did:',
@@ -115,6 +120,12 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
   const request = { text: req.text, element: req.element, images: req.images }
   const prompt = [req.text, req.element].filter(Boolean).join('\n\n')
 
+  // Codex takes it; Cline only when Codex's plan is used up too (and Cline is set up).
+  const codexLeft = percentLeft(peekUsage('codex'))
+  const codexOut = codexLeft !== undefined && codexLeft < CODEX_OUT_BELOW
+  const clineReady = await clineReadyForHandoffs(getSettings())
+  if (codexOut && clineReady) return runClineTakeover(req)
+
   emit({ type: 'takeover_started', resetsAt: req.resetsAt })
   emit({
     type: 'tool_call',
@@ -130,6 +141,7 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
   let report = ''
   let changes: FileChange[] | null = null
   let checks = ''
+  let passToCline = false
 
   try {
     const memory = {
@@ -199,21 +211,27 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
       const after = await takeSnapshot(projectPath, 'after takeover').catch(() => undefined)
       if (after) changes = await changeStats(projectPath, before, after).catch(() => null)
     }
-    let checksOk = true
-    if (status === 'done' && changes?.length) {
-      const verdict = await verifyChanges(
-        projectPath,
-        changes.map((c) => c.path)
-      ).catch(() => ({ ok: null as boolean | null, summary: '' }))
-      checks = verdict.summary
-      checksOk = verdict.ok !== false
+    // Codex hit its own limit before changing anything: Cline takes the request instead.
+    if (status === 'error' && clineReady && !changes?.length && /plan limit|usage limit|turned Codex away/i.test(report)) {
+      passToCline = true
+      emit({ type: 'tool_result', toolUseId, ok: false, summary: `Codex is out too: ${report.slice(0, 200)}`, raw: null })
+    } else {
+      let checksOk = true
+      if (status === 'done' && changes?.length) {
+        const verdict = await verifyChanges(
+          projectPath,
+          changes.map((c) => c.path)
+        ).catch(() => ({ ok: null as boolean | null, summary: '' }))
+        checks = verdict.summary
+        checksOk = verdict.ok !== false
+      }
+      emit({ type: 'tool_result', toolUseId, ok: status === 'done' && checksOk, summary: report.slice(0, 300), raw: null })
+      emit({
+        type: 'assistant_text',
+        text: [report, checks && !checksOk ? `Automatic checks found a problem: ${checks}` : ''].filter(Boolean).join('\n\n'),
+        partial: false
+      })
     }
-    emit({ type: 'tool_result', toolUseId, ok: status === 'done' && checksOk, summary: report.slice(0, 300), raw: null })
-    emit({
-      type: 'assistant_text',
-      text: [report, checks && !checksOk ? `Automatic checks found a problem: ${checks}` : ''].filter(Boolean).join('\n\n'),
-      partial: false
-    })
   } catch (err) {
     if (signal.aborted) {
       status = 'stopped'
@@ -235,14 +253,107 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
         })
       )
     }
+    if (!passToCline) {
+      writeCatchUp(projectId, [
+        ...readCatchUp(projectId),
+        {
+          request: req.text,
+          outcome: `${status}. ${report}`,
+          files: changes?.map((c) => c.path) ?? [],
+          snapshot: req.snapshot
+        }
+      ])
+      emit({ type: 'turn_complete' })
+    }
+  }
+  if (passToCline) await runClineTakeover(req, true)
+}
+
+/** Below this share of Codex's plan left, a takeover goes to Cline (when it's set up). */
+const CODEX_OUT_BELOW = 3
+
+/** The request on Cline, when Claude and Codex are both out. */
+async function runClineTakeover(req: TakeoverRequest, afterCodex = false): Promise<void> {
+  const { projectId, projectPath, emit, signal } = req
+  const toolUseId = `takeover-cline-${Date.now()}`
+  const prompt = [req.text, req.element].filter(Boolean).join('\n\n')
+  if (!afterCodex) emit({ type: 'takeover_started', resetsAt: req.resetsAt })
+  emit({
+    type: 'tool_call',
+    toolUseId,
+    name: CLINE_TOOL_NAME,
+    input: { prompt: req.text },
+    friendlyLabel: 'Cline is handling your request (Claude and Codex are both out)'
+  })
+  const handoffId = attempt(() => startHandoff(memoryDb(), projectId, 'cline', prompt, req.text))
+  const before = await takeSnapshot(projectPath, 'before takeover').catch(() => undefined)
+  let status: 'done' | 'error' | 'stopped' = 'error'
+  let report = ''
+  let changes: FileChange[] | null = null
+  let checks = ''
+  try {
+    const settings = getSettings()
+    const context = attempt(() => handoffContext(projectId, prompt, { text: req.text, element: req.element, images: req.images }))
+    const result = await runCline(
+      {
+        prompt: [
+          "You are working inside VibeApp on the user's project in the current folder, because Claude and Codex are both at their plan limits. Do the user's request below completely, check it (run the project's tests if it has them), and finish with a short report of what you changed, file by file. Stay inside the project folder. If a command comes back \"BLOCKED by VibeApp\", don't try another way: say in your report what the user needs to do. You share a memory with Claude and Codex through the vibe_memory tools (recall, where, history, handoffs); save anything worth keeping with remember.",
+          `Key facts:\n${attempt(() => keyFactsBlock(memoryDb(), projectId)) ?? '(none yet)'}`,
+          attempt(() => briefBlock(projectId)),
+          context,
+          `The user's request:\n${prompt}`
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        mode: 'build',
+        cwd: projectPath,
+        model: settings.clineModel ?? undefined,
+        goNutz: req.unsandboxed,
+        timeoutMs: TIMEOUT_MS,
+        signal,
+        memory: { scriptPath: memoryServerScriptPath(), dbPath: memoryDbPath(), projectId, projectPath }
+      },
+      (activity) => emit({ type: 'delegation_activity', activity })
+    )
+    recordUsage(projectId, 'takeover', 'cline', result.usage)
+    if (signal.aborted) throw new Error('Stopped by the user.')
+    status = result.ok ? 'done' : 'error'
+    report = result.text || result.error || '(Cline finished with no final message.)'
+    if (result.blocked.length) report += `\n\nVibeApp refused: ${[...new Set(result.blocked)].join('; ')}.`
+    if (before) {
+      const after = await takeSnapshot(projectPath, 'after takeover').catch(() => undefined)
+      if (after) changes = await changeStats(projectPath, before, after).catch(() => null)
+    }
+    let checksOk = true
+    if (status === 'done' && changes?.length) {
+      const verdict = await verifyChanges(projectPath, changes.map((c) => c.path)).catch(() => ({ ok: null as boolean | null, summary: '' }))
+      checks = verdict.summary
+      checksOk = verdict.ok !== false
+    }
+    emit({ type: 'tool_result', toolUseId, ok: status === 'done' && checksOk, summary: report.slice(0, 300), raw: null })
+    emit({
+      type: 'assistant_text',
+      text: [report, checks && !checksOk ? `Automatic checks found a problem: ${checks}` : ''].filter(Boolean).join('\n\n'),
+      partial: false
+    })
+  } catch (err) {
+    if (signal.aborted) {
+      status = 'stopped'
+      report = 'Stopped by the user.'
+      emit({ type: 'tool_result', toolUseId, ok: false, summary: 'Stopped.', raw: null })
+      emit({ type: 'stopped' })
+    } else {
+      report = (err as Error).message
+      emit({ type: 'tool_result', toolUseId, ok: false, summary: report, raw: null })
+      emit({ type: 'error', message: `Cline couldn't finish this: ${report}` })
+    }
+  } finally {
+    if (handoffId !== undefined) {
+      attempt(() => finishHandoff(memoryDb(), handoffId, { status, report: [report, checks].filter(Boolean).join('\n\n'), files: changes?.map((c) => c.path) ?? null }))
+    }
     writeCatchUp(projectId, [
       ...readCatchUp(projectId),
-      {
-        request: req.text,
-        outcome: `${status}. ${report}`,
-        files: changes?.map((c) => c.path) ?? [],
-        snapshot: req.snapshot
-      }
+      { request: req.text, outcome: `${status} (by Cline). ${report}`, files: changes?.map((c) => c.path) ?? [], snapshot: req.snapshot }
     ])
     emit({ type: 'turn_complete' })
   }

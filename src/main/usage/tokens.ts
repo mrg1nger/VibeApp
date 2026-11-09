@@ -70,7 +70,7 @@ export function countsFromCodexEvents(events: CodexEventLike[]): TokenCounts {
 export function recordUsage(
   projectId: string | undefined,
   kind: UsageKind,
-  agent: 'claude' | 'codex',
+  agent: 'claude' | 'codex' | 'cline',
   counts: TokenCounts
 ): void {
   try {

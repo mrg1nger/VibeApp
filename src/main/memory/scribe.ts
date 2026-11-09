@@ -1,11 +1,6 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
-import { mkdtempSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryCategory } from '@shared/types'
 import { detectSecrets } from '@shared/secretPatterns'
-import { resolveClaudeExecutable } from '../cli/claudeBinary'
-import { countsFromSdkResult, recordUsage } from '../usage/tokens'
+import { runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
 import { recentNotableCommands } from './commands'
 import {
@@ -19,7 +14,7 @@ import {
   searchFacts
 } from './store'
 
-// After each request, a cheap Haiku pass decides what (if anything) is worth
+// After each request, a cheap background pass (Cline, or Haiku) decides what (if anything) is worth
 // remembering. Having Claude and Codex do it themselves cost each of them an
 // extra step per request, and depended on them remembering to.
 
@@ -44,7 +39,7 @@ export interface ScribeResult {
   forgotten: number
 }
 
-const SCHEMA = {
+const SCHEMA: JsonSchema = {
   type: 'object',
   properties: {
     add: {
@@ -178,31 +173,13 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
   const topic = `${turn.request} ${turn.replies.join(' ')}`.slice(0, 1500)
   for (const f of searchFacts(db, projectId, topic, 15)) consider(f.id, f.category, f.text, projectId)
 
-  const session = query({
+  const answer = await runHelperJob({
+    kind: 'scribe',
+    projectId,
     prompt: buildPrompt(turn, [...seen.values()].slice(0, 45)),
-    options: {
-      cwd: mkdtempSync(join(tmpdir(), 'vibeapp-scribe-')),
-      pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      model: 'haiku',
-      tools: [],
-      settingSources: [],
-      strictMcpConfig: true,
-      mcpServers: {},
-      settings: { disableClaudeAiConnectors: true },
-      thinking: { type: 'disabled' },
-      maxTurns: 3,
-      outputFormat: { type: 'json_schema', schema: SCHEMA }
-    }
+    schema: SCHEMA
   })
-  let plan: Plan | undefined
-  for await (const message of session) {
-    if (message.type !== 'result') continue
-    recordUsage(projectId, 'scribe', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-    if (message.subtype !== 'success' || !message.structured_output) {
-      throw new Error(`Saving memory failed (${message.subtype}).`)
-    }
-    plan = message.structured_output as Plan
-  }
+  const plan = answer.structured as Plan | undefined
   if (!plan) return result
 
   const mine = (id: string): boolean => {
@@ -303,27 +280,10 @@ export async function summarizeConversation(projectId: string): Promise<string> 
   const work = handoffs.length
     ? `\n\nWork handed to Codex recently:\n${handoffs.map((h) => `- ${clip(h.brief, 160)} (${h.status})`).join('\n')}`
     : ''
-  const session = query({
-    prompt: `Summarise this conversation between a user and an AI coding assistant, so a fresh session can pick it up without the history. At most 350 words, plain text, no greeting. Use these headings, leaving out any that are empty: STANDING RULES (anything the user said never to do, to leave alone, or always to do, quoted as closely as possible, including files or areas they said not to touch); IN PROGRESS (what was being worked on and what is left); DONE (briefly); DECISIONS (choices made and why, and user preferences that aren't obvious from the code); OPEN (questions or ideas the user raised that are unresolved). Be precise about names of files, features and settings. Don't repeat setup details (how to run it) that are saved elsewhere.\n\n${transcript}${work}`,
-    options: {
-      cwd: mkdtempSync(join(tmpdir(), 'vibeapp-summary-')),
-      pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      model: 'haiku',
-      tools: [],
-      settingSources: [],
-      strictMcpConfig: true,
-      mcpServers: {},
-      settings: { disableClaudeAiConnectors: true },
-      thinking: { type: 'disabled' },
-      maxTurns: 2
-    }
+  const answer = await runHelperJob({
+    kind: 'summary',
+    projectId,
+    prompt: `Summarise this conversation between a user and an AI coding assistant, so a fresh session can pick it up without the history. At most 350 words, plain text, no greeting. Use these headings, leaving out any that are empty: STANDING RULES (anything the user said never to do, to leave alone, or always to do, quoted as closely as possible, including files or areas they said not to touch); IN PROGRESS (what was being worked on and what is left); DONE (briefly); DECISIONS (choices made and why, and user preferences that aren't obvious from the code); OPEN (questions or ideas the user raised that are unresolved). Be precise about names of files, features and settings. Don't repeat setup details (how to run it) that are saved elsewhere.\n\n${transcript}${work}`
   })
-  for await (const message of session) {
-    if (message.type !== 'result') continue
-    recordUsage(projectId, 'summary', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-    // A refusal (e.g. the plan limit) also arrives as "success", flagged is_error: its text isn't a summary.
-    if (message.subtype === 'success' && !(message as { is_error?: boolean }).is_error) return message.result.trim()
-    throw new Error(`Summarising the conversation failed (${message.subtype}).`)
-  }
-  return ''
+  return answer.text
 }

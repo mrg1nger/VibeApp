@@ -48,6 +48,8 @@ type ChatItem =
       status: 'running' | 'ok' | 'error'
       summary?: string
       isDelegation: boolean
+      /** Which agent a hand-off went to. */
+      agent?: 'Codex' | 'Cline'
       progressNote?: string
       /** Codex's steps during a hand-off. */
       activity?: DelegationActivity[]
@@ -86,6 +88,7 @@ type ChatItem =
     }
 
 const DELEGATION_TOOL_NAME = 'mcp__vibe_tools__run_codex_subtask'
+const CLINE_TOOL_NAME = 'mcp__vibe_tools__run_cline_subtask'
 const PREVIEW_PREF_KEY = 'vibeapp.showPreview'
 const SIDE_PREF_KEY = 'vibeapp.sidePane'
 const ASK_PREF_KEY = 'vibeapp.askMode'
@@ -357,7 +360,8 @@ function ChatView({ project, onBack, onOpenHistory, onOpenMemory, onError, think
                 toolUseId: event.toolUseId,
                 label: event.friendlyLabel,
                 status: 'running',
-                isDelegation: event.name === DELEGATION_TOOL_NAME,
+                isDelegation: event.name === DELEGATION_TOOL_NAME || event.name === CLINE_TOOL_NAME,
+                agent: event.name === CLINE_TOOL_NAME ? 'Cline' : 'Codex',
                 startedAt: Date.now()
               }
             ]
@@ -1068,6 +1072,7 @@ function ChatView({ project, onBack, onOpenHistory, onOpenMemory, onError, think
                     running={item.status === 'running'}
                     startedAt={item.startedAt}
                     projectPath={project.path}
+                    agent={item.agent}
                   />
                 )}
                 {item.kind === 'error' && <p className="chat-error">{item.message}</p>}

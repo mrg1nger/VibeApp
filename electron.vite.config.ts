@@ -38,6 +38,17 @@ function bundleMemoryServerPlugin() {
         format: 'cjs',
         logLevel: 'warning'
       })
+      // Cline's safety hook: Cline runs it with its own Node for every tool call.
+      buildSync({
+        entryPoints: [resolve('src/main/cline/hookMain.ts')],
+        outfile: resolve('out/main/cline/clineHook.cjs'),
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        target: 'node18',
+        alias: { '@shared': resolve('shared') },
+        logLevel: 'warning'
+      })
       buildSync({
         entryPoints: [resolve('src/main/memory/memoryServer.mjs')],
         outfile: resolve('out/main/memory/memoryServer.cjs'),

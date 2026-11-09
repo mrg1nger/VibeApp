@@ -1,19 +1,15 @@
 import { execFile } from 'child_process'
-import { mkdtempSync, readFileSync, statSync } from 'fs'
-import { tmpdir } from 'os'
+import { readFileSync, statSync } from 'fs'
 import { extname, join } from 'path'
 import { promisify } from 'util'
-import { query } from '@anthropic-ai/claude-agent-sdk'
-import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { getSettings } from '../settings/store'
-import { claudeHelpersAllowed } from '../usage/usage'
-import { countsFromSdkResult, recordUsage } from '../usage/tokens'
+import { helpersAllowed, runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
 import { codeHashes, countCodeFiles, hashFile, removeCodeFiles, saveCodeSummaries, type CodeFile } from './store'
 
 const execFileAsync = promisify(execFile)
 
-// A one-line summary per source file, written by Haiku and refreshed only
+// A one-line summary per source file, written in the background (Cline or Haiku) and refreshed only
 // for files whose content changed. It's what lets an agent answer "which
 // file handles X?" with one search instead of exploring the project.
 
@@ -33,7 +29,7 @@ const BATCH = 20
 const HEAD_CHARS = 1200
 const MIN_GAP_MS = 30_000
 
-const SCHEMA = {
+const SCHEMA: JsonSchema = {
   type: 'object',
   properties: {
     files: {
@@ -76,35 +72,12 @@ async function summarize(projectId: string, entries: { path: string; head: strin
   const prompt = `Below are source files from a software project (the start of each). For every file, write one plain sentence of at most 14 words saying what it is for or contains, concrete enough that someone searching for a feature would find it ("Player movement, collision with walls and enemies", not "Game logic"). Return every path exactly as given.
 
 ${entries.map((e) => `### ${e.path}\n${e.head}`).join('\n\n')}`
-  const session = query({
-    prompt,
-    options: {
-      cwd: mkdtempSync(join(tmpdir(), 'vibeapp-codemap-')),
-      pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      model: 'haiku',
-      tools: [],
-      settingSources: [],
-      strictMcpConfig: true,
-      mcpServers: {},
-      settings: { disableClaudeAiConnectors: true },
-      thinking: { type: 'disabled' },
-      maxTurns: 3,
-      outputFormat: { type: 'json_schema', schema: SCHEMA }
-    }
-  })
-  for await (const message of session) {
-    if (message.type !== 'result') continue
-    recordUsage(projectId, 'codemap', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-    if (message.subtype !== 'success' || !message.structured_output) {
-      throw new Error(`Code map summary failed (${message.subtype}).`)
-    }
-    const out = new Map<string, string>()
-    for (const f of (message.structured_output as { files: { path: string; summary: string }[] }).files) {
-      if (f.path && f.summary?.trim()) out.set(f.path.replace(/\\/g, '/'), f.summary.trim())
-    }
-    return out
+  const answer = await runHelperJob({ kind: 'codemap', projectId, prompt, schema: SCHEMA })
+  const out = new Map<string, string>()
+  for (const f of (answer.structured as { files: { path: string; summary: string }[] }).files) {
+    if (f.path && f.summary?.trim()) out.set(f.path.replace(/\\/g, '/'), f.summary.trim())
   }
-  throw new Error('Code map summary ended without a result.')
+  return out
 }
 
 export interface CodeMapResult {
@@ -172,9 +145,10 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
 /** Refreshes in the background if the setting is on and it hasn't just run. Never throws. */
 export function maybeRefreshCodeMap(projectId: string, projectPath: string): void {
   try {
-    if (!getSettings().codeMap || running.has(projectId) || !claudeHelpersAllowed()) return
+    if (!getSettings().codeMap || running.has(projectId)) return
     if (Date.now() - (lastRun.get(projectId) ?? 0) < MIN_GAP_MS) return
-    refreshCodeMap(projectId, projectPath)
+    helpersAllowed()
+      .then((allowed) => (allowed ? refreshCodeMap(projectId, projectPath) : { summarized: 0, removed: 0, pending: 0 }))
       .then((r) => {
         // A big project is mapped over several runs.
         if (r.pending > 0) setTimeout(() => maybeRefreshCodeMap(projectId, projectPath), MIN_GAP_MS)

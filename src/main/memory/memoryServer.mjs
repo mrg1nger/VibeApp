@@ -33,11 +33,14 @@ import {
   getNotes
 } from './store'
 
-const dbPath = process.argv[2]
-const projectId = process.argv[3]
-const agentSource = process.argv[4] ?? 'claude'
+// The arguments can also come as a JSON list in VIBE_MEMORY_ARGS: Cline starts
+// tool servers through a shell, which splits paths with spaces in them.
+const argv = process.env.VIBE_MEMORY_ARGS ? JSON.parse(process.env.VIBE_MEMORY_ARGS) : process.argv.slice(2)
+const dbPath = argv[0]
+const projectId = argv[1]
+const agentSource = argv[2] ?? 'claude'
 // Used to tell whether a file summary is out of date.
-const projectPath = process.argv[5] ?? ''
+const projectPath = argv[3] ?? ''
 
 if (!dbPath || !projectId) {
   process.stderr.write('Usage: memoryServer <dbPath> <projectId> <agentSource> [projectPath]\n')

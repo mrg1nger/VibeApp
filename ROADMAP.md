@@ -10,7 +10,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Bigger features
 
-- [ ] **Cline as a third agent (ClinePass).** Add the Cline CLI alongside Claude and Codex, signed in with a ClinePass subscription ($9.99/month flat, open-weight models such as Qwen, GLM, Kimi and DeepSeek, its own 5-hour/weekly/monthly limits, separate from the Claude and Codex plans). What it would add:
+- [x] **Cline as a third agent (ClinePass).** Add the Cline CLI alongside Claude and Codex, signed in with a ClinePass subscription ($9.99/month flat, open-weight models such as Qwen, GLM, Kimi and DeepSeek, its own 5-hour/weekly/monthly limits, separate from the Claude and Codex plans). What it would add:
   - a cheap place for straightforward implementation work Claude would otherwise spend its own plan on;
   - a more independent second reviewer (a different model family from Claude and Codex);
   - a fallback when Claude's limit is reached (order: Claude, then Codex, then Cline).
@@ -22,15 +22,39 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
   Also unknown: no usage API found (dashboard only), so possibly no third meter; model list churns; quality on hard multi-file work is expected to be below Claude and Codex (untested). Check ClinePass terms before selling VibeApp with it built in. Docs: [ClinePass](https://docs.cline.bot/getting-started/clinepass), [CLI](https://docs.cline.bot/cline-cli/getting-started).
 
-  Plan (2026-11-09). The docs now list `--json`, `-p/--plan`, `--auto-approve <bool>`, `-m`, `-P`, `-c/--cwd`, `--config <dir>`, `--data-dir <dir>`, `--thinking`, `-t/--timeout`, and **PreToolUse hooks that can cancel commands**, which could cover the safety gap. Check each one against `cline --help` once it's installed.
-  1. **Trial (user):** `npm i -g cline`, then `cline auth` with ClinePass. **Trial (Claude):** run it headless on the eval game: the JSON events, whether plan mode really leaves files alone, a hook blocking `rm -rf`/`git push --force`, vibe_memory through `--config`, launching with no console window, and whether the output reports tokens.
-  2. **Runner:** `clineRunner.ts` modelled on the Codex runner. Each run gets VibeApp's own `--config`/`--data-dir`, so the user's Cline setup isn't touched. The hook blocks destructive commands, and an undo snapshot is taken first. The run streams to the chat like a Codex hand-off.
-  3. **Claude's tool** `run_cline_subtask`, alongside run_codex_subtask. A routing note covers when to use it: straightforward builds, or when Claude or Codex is low. The fallback order is Claude, then Codex, then Cline.
-  4. **Settings:** a Cline section with sign-in status, the model, and "use Cline for: building / reviewing / custodial jobs". A third meter only if usage numbers turn out to be available.
-  5. **Measure:** `VIBEAPP_EVAL_AGENT=cline` runs the teamwork eval with Cline as the builder, to compare quality, steps and Claude tokens with Codex before routing real work to it.
-  6. **Reviewer:** Cline in plan mode as a second reviewer, only if step 1 shows plan mode can't edit.
-- [ ] **Custodial jobs off Claude's plan (idea).** On DevBox, compaction, tidy, scribe and brief took about 12% of Claude's weighted usage over 7 days, plus the Haiku route judge. They're short and repetitive, so a small model could do them. Cheapest path first:
-  1. ClinePass models, once Cline is wired up.
+  **Built (0.3.0, 2026-11-09).** Trial findings, against cline 3.0.74 on Windows:
+  - `--hooks-dir` is ignored; `CLINE_DIR` gives VibeApp its own Cline folder (hook, settings), while `CLINE_DATA_DIR` keeps the user's sign-in.
+  - Piped stdin isn't seen, and an open stdin pipe makes every run hang, so the prompt goes on the command line (or in a task file past 20,000 characters).
+  - Plan mode (`-p`) still runs shell commands, so it isn't a read-only mode by itself.
+  - Cline offers the user's account connectors (Composio: Gmail, Drive, Docs). With its editor off, it went looking for a Drive tool to edit a file with.
+  - Tool servers are started through a shell, so any space in a path breaks them.
+  - No usage API: the CLI reports tokens per run, but not the plan's limits.
+
+  What was built:
+  - `clineExec.ts` runner.
+  - The PreToolUse hook (`hookPolicy.ts`): an allow-list per mode (build, review, background job). It confines work to the project and swaps destructive commands for a "BLOCKED" echo, and it checks itself before every run.
+  - The connector tools switched off by name.
+  - Shared memory with the paths passed in the environment.
+  - `run_cline_subtask`, with Codex reviewing Cline's work.
+  - Routing notes when Codex or Claude is low.
+  - Cline as the last takeover after Codex.
+  - Background jobs (scribe, summary, tidy, brief, code map) on Cline, with Haiku as the fallback.
+  - A Settings section with Test Cline.
+  - Usage log and report columns.
+  - 14 unit tests and 11 live smoke tests; `VIBEAPP_EVAL_BUILDER=cline` and `npm run eval -- helpers`.
+
+  First evals (2026-11-09):
+  - **Teamwork eval, Cline building (Sonnet):** all 3 tasks work. Claude's cost is about the same as with Codex (265k vs 262k weighted). Cline uses more tokens than Codex, but on its own plan (feature 223k vs Codex 71k) and takes slightly longer (1.7-2.6 min).
+  - **Memory-saving cases:** Haiku 5/5, Qwen3.7 Plus 5/5, GLM-5.3 Flash 5/5, DeepSeek V4.1 Flash 4/5 (missed "in every project" as a global rule).
+
+  Still open:
+  - Watch real use (usage report → Cline) before routing more than "simple, well-specified" work to Cline.
+  - Whether to pin a background-job model (now Cline's own default, Qwen3.7 Plus on this account; DeepSeek did worse).
+  - Cline as a second reviewer (review mode now exists and can't change files).
+  - A ClinePass meter, if Cline ever exposes the limits.
+  - Check ClinePass terms before selling VibeApp with it built in.
+- [ ] **Custodial jobs off Claude's plan.** On DevBox, compaction, tidy, scribe and brief took about 12% of Claude's weighted usage over 7 days, plus the Haiku route judge. They're short and repetitive, so a small model could do them. Cheapest path first:
+  1. ClinePass models: **done in 0.3.0** for scribe, summary, tidy, brief and code map. Left on Claude: the route judge (it needs an answer in under 5 s; a Cline run starts cold in 4-12 s) and compaction (Claude compacting its own conversation).
   2. Or a small off-the-shelf local model (e.g. a 1–4B Qwen through Ollama). Needs a check of the GPU on DevBox.
   3. Fine-tune one on VibeApp's own past helper outputs, only if 1 and 2 aren't good enough.
 

@@ -176,6 +176,11 @@ export function openMemory(dbPath: string): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000')
   db.exec('PRAGMA journal_mode = WAL')
   db.exec(SCHEMA)
+  // Columns added after a table first shipped.
+  const requestColumns = new Set((db.prepare('PRAGMA table_info(request_log)').all() as { name: string }[]).map((c) => c.name))
+  for (const column of ['cline_fresh', 'cline_cached', 'cline_output']) {
+    if (!requestColumns.has(column)) db.exec(`ALTER TABLE request_log ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`)
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   databases.set(dbPath, db)
   return db
@@ -1038,11 +1043,12 @@ export type UsageKind =
   | 'chat' // a question answered without building (Ask mode or the Chat tab)
   | 'brief' // Haiku writing the project brief
   | 'compact' // Claude compacting a long conversation (estimated: the SDK doesn't report it)
+// (A background job's agent is "claude" when Haiku did it, "cline" when Cline did.)
 
 export interface UsageRecord {
   projectId?: string
   kind: UsageKind
-  agent: 'claude' | 'codex'
+  agent: 'claude' | 'codex' | 'cline'
   model?: string
   /** Tokens that were newly processed (not served from the cache), input side. */
   fresh: number
@@ -1109,12 +1115,22 @@ export function usageByProject(
 
 /** Codex tokens for one project since a time (a request's hand-offs, for its request_log row). */
 export function codexUsageSince(db: DatabaseSync, projectId: string, sinceIso: string): { fresh: number; cached: number; output: number } {
+  return agentUsageSince(db, projectId, sinceIso, 'codex')
+}
+
+/** One agent's tokens for one project since a time (Cline: its hand-offs only, not background jobs). */
+export function agentUsageSince(
+  db: DatabaseSync,
+  projectId: string,
+  sinceIso: string,
+  agent: 'codex' | 'cline'
+): { fresh: number; cached: number; output: number } {
   const row = db
     .prepare(
       `SELECT COALESCE(SUM(fresh), 0) AS fresh, COALESCE(SUM(cached), 0) AS cached, COALESCE(SUM(output), 0) AS output
-       FROM usage_log WHERE project_id = ? AND agent = 'codex' AND at >= ?`
+       FROM usage_log WHERE project_id = ? AND agent = ? AND at >= ? ${agent === 'cline' ? "AND kind = 'handoff'" : ''}`
     )
-    .get(projectId, sinceIso) as { fresh: number; cached: number; output: number }
+    .get(projectId, agent, sinceIso) as { fresh: number; cached: number; output: number }
   return { fresh: Number(row.fresh), cached: Number(row.cached), output: Number(row.output) }
 }
 
@@ -1138,13 +1154,14 @@ export interface RequestLogRow {
   handoffs: number
   claude: { fresh: number; cached: number; output: number }
   codex: { fresh: number; cached: number; output: number }
+  cline: { fresh: number; cached: number; output: number }
 }
 
 export function logRequest(db: DatabaseSync, row: RequestLogRow): void {
   db.prepare(
     `INSERT INTO request_log (at, project_id, mode, balance, route, size, model, text, outcome, seconds, claude_steps, tools, handoffs,
-       claude_fresh, claude_cached, claude_output, codex_fresh, codex_cached, codex_output)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       claude_fresh, claude_cached, claude_output, codex_fresh, codex_cached, codex_output, cline_fresh, cline_cached, cline_output)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     row.at,
     row.projectId,
@@ -1164,7 +1181,10 @@ export function logRequest(db: DatabaseSync, row: RequestLogRow): void {
     Math.round(row.claude.output),
     Math.round(row.codex.fresh),
     Math.round(row.codex.cached),
-    Math.round(row.codex.output)
+    Math.round(row.codex.output),
+    Math.round(row.cline.fresh),
+    Math.round(row.cline.cached),
+    Math.round(row.cline.output)
   )
 }
 
@@ -1194,7 +1214,8 @@ export function listRequests(db: DatabaseSync, sinceIso: string, projectId?: str
       tools,
       handoffs: Number(r.handoffs),
       claude: { fresh: Number(r.claude_fresh), cached: Number(r.claude_cached), output: Number(r.claude_output) },
-      codex: { fresh: Number(r.codex_fresh), cached: Number(r.codex_cached), output: Number(r.codex_output) }
+      codex: { fresh: Number(r.codex_fresh), cached: Number(r.codex_cached), output: Number(r.codex_output) },
+      cline: { fresh: Number(r.cline_fresh ?? 0), cached: Number(r.cline_cached ?? 0), output: Number(r.cline_output ?? 0) }
     }
   })
 }

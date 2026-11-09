@@ -99,7 +99,7 @@ import { runSavePass, runScribe, summarizeConversation, type TurnRecord } from '
 import { getBrief, maybeRefreshBrief, refreshBrief } from '../memory/brief'
 import { cleanCommand, isNotableCommand } from '../memory/commands'
 import { syncAgentsFile } from '../memory/agentsFile'
-import { codexUsageSince, keyFactsBlock, listRequests, logRequest, usageByProject, usageSummary } from '../memory/store'
+import { agentUsageSince, codexUsageSince, keyFactsBlock, listRequests, logRequest, usageByProject, usageSummary } from '../memory/store'
 import { RequestRecorder, type RequestStart } from '../usage/requestLog'
 import { buildReport } from '../usage/report'
 import {
@@ -118,7 +118,9 @@ import { listClaudeModels } from '../cli/claudeModels'
 import { listCodexModels } from '../cli/codexModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
 import { generateTheme } from '../themes/generate'
-import { claudeBlockedUntil, claudeHelpersAllowed, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
+import { claudeBlockedUntil, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
+import { helpersAllowed } from '../helpers/helperJob'
+import { checkCline, clineStatus } from '../cli/clineExec'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
@@ -1048,6 +1050,13 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:usage:requests', (_event, days: number, projectId?: string) =>
     listRequests(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString(), projectId || undefined)
   )
+  // Cline (a third agent on the user's ClinePass plan): installed? and a quick live check.
+  ipc.handle('vibe:cline:status', () => clineStatus())
+  ipc.handle('vibe:cline:check', () => {
+    const settings = getSettings()
+    return checkCline(settings.clineHelperModel ?? settings.clineModel ?? undefined)
+  })
+
   // The same, written up: by project, by kind of work, teamwork, the most expensive requests.
   ipc.handle('vibe:usage:report', async (_event, days: number, projectId?: string) => {
     const span = Math.max(1, Math.min(90, Number(days) || 7))
@@ -1624,7 +1633,8 @@ function observeRequestLog(projectId: string, event: VibeEvent): void {
   requestLogs.delete(projectId)
   try {
     const db = memoryDb()
-    logRequest(db, recorder.finish(codexUsageSince(db, projectId, recorder.startedAt.toISOString())))
+    const since = recorder.startedAt.toISOString()
+    logRequest(db, recorder.finish(codexUsageSince(db, projectId, since), agentUsageSince(db, projectId, since, 'cline')))
   } catch (err) {
     console.warn('Recording the request failed:', (err as Error).message)
   }
@@ -1830,8 +1840,10 @@ function wireSessionEvents(
             stopped: !!(built.stopped || finished?.stopped || finished?.hadError)
           } satisfies VibeEvent)
         }
-        if (finished && getSettings().autoMemory && claudeHelpersAllowed()) {
-          runScribe(projectId, finished)
+        if (finished && getSettings().autoMemory) {
+          // On Cline when it's set up, otherwise Haiku if Claude has room.
+          helpersAllowed()
+            .then((allowed) => (allowed ? runScribe(projectId, finished) : undefined))
             .catch((err: Error) => console.warn('Saving memory failed:', err.message))
             .finally(() => {
               if (path) syncAgentsFile(projectId, path)

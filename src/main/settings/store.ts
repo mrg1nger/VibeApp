@@ -35,7 +35,11 @@ const DEFAULTS: AppSettings = {
   freshSessions: false,
   exportAgentsFile: false,
   stepUpForComplex: false,
-  codexReview: true
+  codexReview: true,
+  clineHandoffs: true,
+  clineHelpers: true,
+  clineModel: null,
+  clineHelperModel: null
 }
 
 function settingsPath(): string {

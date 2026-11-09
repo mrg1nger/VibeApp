@@ -1,12 +1,8 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
 import { createHash } from 'crypto'
-import { existsSync, mkdtempSync, readFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { detectSecrets } from '@shared/secretPatterns'
-import { resolveClaudeExecutable } from '../cli/claudeBinary'
-import { countsFromSdkResult, recordUsage } from '../usage/tokens'
-import { claudeHelpersAllowed } from '../usage/usage'
+import { helpersAllowed, runHelperJob } from '../helpers/helperJob'
 import { recentNotableCommands } from './commands'
 import { memoryDb } from './paths'
 import { getMeta, listCodeFiles, listFacts, setMeta } from './store'
@@ -192,37 +188,14 @@ export async function refreshBrief(
   if (factCount < 2 && !stored) return undefined // nothing to base one on yet
   running.add(projectId)
   try {
-    const session = query({
-      prompt,
-      options: {
-        cwd: mkdtempSync(join(tmpdir(), 'vibeapp-brief-')),
-        pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-        model: 'haiku',
-        tools: [],
-        settingSources: [],
-        strictMcpConfig: true,
-        mcpServers: {},
-        settings: { disableClaudeAiConnectors: true },
-        thinking: { type: 'disabled' },
-        maxTurns: 2
-      }
-    })
-    for await (const message of session) {
-      if (message.type !== 'result') continue
-      recordUsage(projectId, 'brief', 'claude', countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0]))
-      // A refusal (e.g. the plan limit) also arrives as "success", flagged is_error: its text isn't a brief.
-      if (message.subtype !== 'success' || (message as { is_error?: boolean }).is_error) {
-        throw new Error(`Writing the project brief failed (${message.subtype}).`)
-      }
-      const text = capBrief(String(message.result).trim())
-      if (!text) return undefined
-      // A brief that picked up something secret-looking is dropped, not saved.
-      if (detectSecrets(text).length) return undefined
-      const saved: StoredBrief = { text, updatedAt: new Date().toISOString(), basis, facts, other }
-      setMeta(memoryDb(), key(projectId), JSON.stringify(saved))
-      return { text, updatedAt: saved.updatedAt }
-    }
-    return undefined
+    const answer = await runHelperJob({ kind: 'brief', projectId, prompt })
+    const text = capBrief(answer.text)
+    if (!text) return undefined
+    // A brief that picked up something secret-looking is dropped, not saved.
+    if (detectSecrets(text).length) return undefined
+    const saved: StoredBrief = { text, updatedAt: new Date().toISOString(), basis, facts, other }
+    setMeta(memoryDb(), key(projectId), JSON.stringify(saved))
+    return { text, updatedAt: saved.updatedAt }
   } finally {
     running.delete(projectId)
   }
@@ -233,12 +206,14 @@ const lastTry = new Map<string, number>()
 /** Refreshes in the background when it's worth it and Claude has room. Never throws. */
 export function maybeRefreshBrief(projectId: string, projectPath: string): void {
   try {
-    if (!claudeHelpersAllowed() || running.has(projectId)) return
+    if (running.has(projectId)) return
     if (Date.now() - (lastTry.get(projectId) ?? 0) < MIN_GAP_MS) return
     const existing = read(projectId)
     if (!existing && listFacts(memoryDb(), projectId).length < MIN_FACTS) return
     lastTry.set(projectId, Date.now())
-    refreshBrief(projectId, projectPath, { minChanges: MIN_CHANGES }).catch((err) => console.warn('Project brief refresh failed:', (err as Error).message))
+    helpersAllowed()
+      .then((allowed) => (allowed ? refreshBrief(projectId, projectPath, { minChanges: MIN_CHANGES }) : undefined))
+      .catch((err) => console.warn('Project brief refresh failed:', (err as Error).message))
   } catch (err) {
     console.warn('Project brief check failed:', (err as Error).message)
   }

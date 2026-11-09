@@ -36,7 +36,7 @@ if (!files.length) {
 }
 
 // Smoke tests start the memory server, which is built with the app.
-if (kind !== 'unit' && !existsSync(join(outDir, 'memory', 'memoryServer.cjs'))) {
+if (kind !== 'unit' && !['memory/memoryServer.cjs', 'cline/clineHook.cjs'].every((f) => existsSync(join(outDir, f)))) {
   console.log('Building the app first (the memory server is part of the build)...')
   const built = spawnSync('npx', ['electron-vite', 'build'], { cwd: root, stdio: 'inherit', shell: true })
   if (built.status !== 0) process.exit(built.status ?? 1)

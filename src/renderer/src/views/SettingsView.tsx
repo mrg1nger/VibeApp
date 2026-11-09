@@ -5,6 +5,7 @@ import RemoteAccessSettings from '../components/RemoteAccessSettings'
 import BackupSettings from '../components/BackupSettings'
 import ScheduleSettings from '../components/ScheduleSettings'
 import PhoneAlertSettings from '../components/PhoneAlertSettings'
+import ClineSettings from '../components/ClineSettings'
 
 interface SettingsViewProps {
   settings: AppSettings
@@ -300,7 +301,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Save memory automatically
             <small>
-              After each request a quick Haiku pass decides what's worth remembering, so Claude and Codex don't
+              After each request a quick background pass (Cline when it's set up, otherwise Haiku) decides what's worth remembering, so Claude and Codex don't
               each spend a step on it. Applies to new chats. Saved facts are labelled "Saved automatically" on
               the Memory screen.
             </small>
@@ -367,9 +368,9 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Keep a map of your code
             <small>
-              Haiku writes a one-line summary of each source file (only for files that changed), so Claude and
-              Codex can find where things live with one search instead of exploring the project. Uses a little
-              Claude usage in the background after requests.
+              A one-line summary of each source file (only for files that changed), so Claude and Codex can find
+              where things live with one search instead of exploring the project. Written in the background after
+              requests, by Cline when it's set up, otherwise by Haiku (a little Claude usage).
             </small>
           </span>
         </label>
@@ -390,6 +391,8 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           </span>
         </label>
       </section>
+
+      <ClineSettings settings={settings} onSettingsChange={onSettingsChange} />
 
       <section className="settings-section">
         <h3>Running in the background</h3>

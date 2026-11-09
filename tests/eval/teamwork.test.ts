@@ -9,7 +9,7 @@ import { routeMessage } from '../../src/main/orchestrator/routing'
 import { requestClassifier } from '../../src/main/orchestrator/classifier'
 import { getSettings, updateSettings } from '../../src/main/settings/store'
 import { memoryDb } from '../../src/main/memory/paths'
-import { codexUsageSince, type RequestLogRow } from '../../src/main/memory/store'
+import { agentUsageSince, codexUsageSince, type RequestLogRow } from '../../src/main/memory/store'
 import { runDeploy, saveRecipe } from '../../src/main/deploy/deploy'
 import { RequestRecorder } from '../../src/main/usage/requestLog'
 import { stepMix, weight } from '../../src/main/usage/report'
@@ -29,10 +29,15 @@ import { answerPrompts, makeProject, projectId, turn } from '../support/fixtures
 //   VIBEAPP_EVAL_BALANCE=claude npm run eval       Claude-led (for comparison)
 //   VIBEAPP_EVAL_MODEL=haiku npm run eval          cheaper, less like real use
 //   VIBEAPP_EVAL_ONLY=bugfix npm run eval          only tasks whose name matches
+//   VIBEAPP_EVAL_BUILDER=cline npm run eval        Cline builds instead of Codex
 
 const BALANCE = (process.env.VIBEAPP_EVAL_BALANCE ?? 'codex') as AgentBalance
 const MODEL = process.env.VIBEAPP_EVAL_MODEL ?? 'sonnet'
 const ONLY = process.env.VIBEAPP_EVAL_ONLY ? new RegExp(process.env.VIBEAPP_EVAL_ONLY, 'i') : null
+/** cline: the building goes to Cline instead of Codex (the same tasks, to compare the two). */
+const BUILDER = process.env.VIBEAPP_EVAL_BUILDER === 'cline' ? 'cline' : 'codex'
+const CLINE_BUILDS =
+  '[VibeApp note: for this request, hand the implementation to Cline with run_cline_subtask instead of Codex: give it a clear spec, the files and how to check it, then judge its report the way you would judge a Codex hand-off. Don\'t call run_codex_subtask.]'
 
 const FILES: Record<string, string> = {
   'package.json': JSON.stringify({ name: 'eval-game', version: '1.0.0', scripts: { test: 'node --test' } }, null, 2),
@@ -103,6 +108,7 @@ interface Result {
   claudeSteps: number
   claudeWeight: number
   codexWeight: number
+  clineWeight?: number
   handoffs: number
   toolCalls: Record<string, number>
   minutes: number
@@ -117,8 +123,8 @@ after(() => {
 
 for (const task of TASKS) {
   if (ONLY && !ONLY.test(task.name)) continue
-  test(`teamwork eval: ${task.name} (${BALANCE}, ${MODEL})`, { timeout: 1_200_000 }, async () => {
-    updateSettings({ claudeModel: MODEL, agentBalance: BALANCE, smartRouting: true, aiRouting: true, autoMemory: false, codeMap: false })
+  test(`teamwork eval: ${task.name} (${BALANCE}, ${MODEL}${BUILDER === 'cline' ? ', Cline builds' : ''})`, { timeout: 1_200_000 }, async () => {
+    updateSettings({ claudeModel: MODEL, agentBalance: BALANCE, smartRouting: true, aiRouting: true, autoMemory: false, codeMap: false, clineHandoffs: BUILDER === 'cline' })
     const pid = projectId(`eval_${task.name}`)
     const dir = makeProject(FILES)
     const live = mkdtempSync(join(tmpdir(), 'vibeapp-eval-live-'))
@@ -138,10 +144,18 @@ for (const task of TASKS) {
     let row: RequestLogRow | undefined
     try {
       await s.useModel(route.model).catch(() => undefined)
-      const message = [route.note, task.mode === 'plan_build' ? approvedPlanNote(PLAN) : undefined, task.text].filter(Boolean).join('\n\n')
+      const message = [
+        route.note,
+        BUILDER === 'cline' ? CLINE_BUILDS : undefined,
+        task.mode === 'plan_build' ? approvedPlanNote(PLAN) : undefined,
+        task.text
+      ]
+        .filter(Boolean)
+        .join('\n\n')
       const events: VibeEvent[] = await turn(s, message, 1_100_000)
       for (const e of events) recorder.observe(e)
-      row = recorder.finish(codexUsageSince(memoryDb(), pid, recorder.startedAt.toISOString()))
+      const since = recorder.startedAt.toISOString()
+      row = recorder.finish(codexUsageSince(memoryDb(), pid, since), agentUsageSince(memoryDb(), pid, since, 'cline'))
       let problem: string | undefined
       try {
         task.accept(dir, live)
@@ -156,7 +170,8 @@ for (const task of TASKS) {
         claudeSteps: row.claudeSteps,
         claudeWeight: Math.round(weight(row.claude, row.model)),
         codexWeight: Math.round(weight(row.codex)),
-        handoffs: row.handoffs,
+        clineWeight: Math.round(weight(row.cline)),
+        handoffs: row.handoffs + (row.tools.cline ?? 0),
         toolCalls: { ...row.tools, ...(task.mode === 'plan_build' ? { progressCalls } : {}) },
         minutes: Math.round(row.seconds / 6) / 10,
         route: row.route ?? '-'
@@ -175,8 +190,9 @@ function report(): void {
   if (!results.length) return
   const outDir = join(process.cwd(), 'test-results', 'eval')
   mkdirSync(outDir, { recursive: true })
-  const prefix = `teamwork-${BALANCE}-${MODEL}-`
-  const previousFile = readdirSync(outDir).filter((f) => f.startsWith(prefix)).sort().pop()
+  const prefix = `teamwork-${BALANCE}-${MODEL}-${BUILDER === 'cline' ? 'cline-' : ''}`
+  // A Codex run's file name has no builder in it, so don't let it match a Cline run's (or the other way round).
+  const previousFile = readdirSync(outDir).filter((f) => f.startsWith(prefix) && (BUILDER === 'cline' || !f.slice(prefix.length).startsWith('cline-'))).sort().pop()
   const previous: Result[] = previousFile ? JSON.parse(readFileSync(join(outDir, previousFile), 'utf-8')).results : []
   const file = `${prefix}${new Date().toISOString().replace(/[:.]/g, '-')}.json`
   writeFileSync(join(outDir, file), JSON.stringify({ balance: BALANCE, model: MODEL, at: new Date().toISOString(), results }, null, 2))
@@ -191,7 +207,7 @@ function report(): void {
     const p = previous.find((x) => x.task === r.task)
     const mix = stepMix(Object.fromEntries(Object.entries(r.toolCalls).filter(([key]) => key !== 'progressCalls')))
     console.log(
-      `- ${r.task}: ${r.ok ? 'works' : `BROKEN (${r.problem})`} · Claude ${r.claudeSteps} steps${delta(r.claudeSteps, p?.claudeSteps)}, ${k(r.claudeWeight)}${delta(r.claudeWeight, p?.claudeWeight)} · Codex ${k(r.codexWeight)}${delta(r.codexWeight, p?.codexWeight)}, ${r.handoffs} hand-off(s) · ${r.minutes} min\n    Claude's tool calls: ${mix}${r.toolCalls.progressCalls !== undefined ? ` · plan ticks: ${r.toolCalls.progressCalls}` : ''}`
+      `- ${r.task}: ${r.ok ? 'works' : `BROKEN (${r.problem})`} · Claude ${r.claudeSteps} steps${delta(r.claudeSteps, p?.claudeSteps)}, ${k(r.claudeWeight)}${delta(r.claudeWeight, p?.claudeWeight)} · Codex ${k(r.codexWeight)}${delta(r.codexWeight, p?.codexWeight)}${r.clineWeight ? ` · Cline ${k(r.clineWeight)}` : ''}, ${r.handoffs} hand-off(s) · ${r.minutes} min\n    Claude's tool calls: ${mix}${r.toolCalls.progressCalls !== undefined ? ` · plan ticks: ${r.toolCalls.progressCalls}` : ''}`
     )
   }
   const total = (xs: Result[], f: (r: Result) => number): number => xs.reduce((a, r) => a + f(r), 0)

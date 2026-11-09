@@ -8,6 +8,8 @@ interface CodexFeedProps {
   /** When the hand-off started (ms), for the elapsed clock. */
   startedAt?: number
   projectPath: string
+  /** Who's doing the hand-off (default Codex). */
+  agent?: 'Codex' | 'Cline'
 }
 
 function clock(ms: number): string {
@@ -20,7 +22,7 @@ function clock(ms: number): string {
  * changes, and the commands it runs with their output. Open while it works,
  * folded away once it's done.
  */
-function CodexFeed({ steps, running, startedAt, projectPath }: CodexFeedProps) {
+function CodexFeed({ steps, running, startedAt, projectPath, agent = 'Codex' }: CodexFeedProps) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!running) return
@@ -36,8 +38,8 @@ function CodexFeed({ steps, running, startedAt, projectPath }: CodexFeedProps) {
     <details className="codex-feed" open={running}>
       <summary>
         {running
-          ? `Codex is working${startedAt ? ` · ${clock(now - startedAt)}` : ''}`
-          : `Codex's work · ${finished} step${finished === 1 ? '' : 's'}`}
+          ? `${agent} is working${startedAt ? ` · ${clock(now - startedAt)}` : ''}`
+          : `${agent}'s work · ${finished} step${finished === 1 ? '' : 's'}`}
       </summary>
       <ul>
         {steps.length === 0 && <li className="codex-step codex-step-wait">Starting up…</li>}

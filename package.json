@@ -1,6 +1,6 @@
 {
   "name": "vibeapp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A friendly desktop app for vibe coding with Claude Code and Codex together",
   "main": "./out/main/index.js",
   "author": "Chris",

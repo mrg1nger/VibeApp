@@ -1,11 +1,5 @@
-import { query } from '@anthropic-ai/claude-agent-sdk'
-import { mkdtempSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryFact, type MemoryTidyResult } from '@shared/types'
-import { resolveClaudeExecutable } from '../cli/claudeBinary'
-import { countsFromSdkResult, recordUsage } from '../usage/tokens'
-import { claudeHelpersAllowed } from '../usage/usage'
+import { helpersAllowed, runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
 import {
   countFacts,
@@ -26,7 +20,7 @@ const TIDY_ABOVE = 50
 const TIDY_EVERY_MS = 24 * 60 * 60 * 1000
 const TIDY_AFTER_NEW = 20
 
-const TIDY_SCHEMA = {
+const TIDY_SCHEMA: JsonSchema = {
   type: 'object',
   properties: {
     facts: {
@@ -98,35 +92,14 @@ ${lines.join('\n')}`
 }
 
 async function planBatch(scope: string, facts: MemoryFact[], unclassified: Set<string>): Promise<TidyPlan> {
-  const session = query({
+  const answer = await runHelperJob({
+    kind: 'tidy',
+    projectId: scope === GLOBAL_SCOPE ? undefined : scope,
     prompt: prompt(facts, unclassified),
-    options: {
-      cwd: mkdtempSync(join(tmpdir(), 'vibeapp-tidy-')),
-      pathToClaudeCodeExecutable: resolveClaudeExecutable(),
-      model: 'haiku',
-      tools: [],
-      settingSources: [],
-      strictMcpConfig: true,
-      mcpServers: {},
-      settings: { disableClaudeAiConnectors: true },
-      maxTurns: 3,
-      outputFormat: { type: 'json_schema', schema: TIDY_SCHEMA }
-    }
+    schema: TIDY_SCHEMA,
+    thinking: true
   })
-  for await (const message of session) {
-    if (message.type !== 'result') continue
-    recordUsage(
-      scope === GLOBAL_SCOPE ? undefined : scope,
-      'tidy',
-      'claude',
-      countsFromSdkResult(message as Parameters<typeof countsFromSdkResult>[0])
-    )
-    if (message.subtype !== 'success' || !message.structured_output) {
-      throw new Error(`Memory tidy-up failed (${message.subtype}).`)
-    }
-    return message.structured_output as TidyPlan
-  }
-  throw new Error('Memory tidy-up ended without a result.')
+  return answer.structured as TidyPlan
 }
 
 const running = new Set<string>()
@@ -200,8 +173,15 @@ export async function tidyMemory(scope: string): Promise<MemoryTidyResult> {
 
 /** Starts a background tidy-up if this scope needs one. Never throws. */
 export function maybeTidy(scope: string): void {
+  helpersAllowed()
+    .then((allowed) => {
+      if (allowed) tidyIfDue(scope)
+    })
+    .catch((err) => console.warn('Memory tidy-up check failed:', (err as Error).message))
+}
+
+function tidyIfDue(scope: string): void {
   try {
-    if (!claudeHelpersAllowed()) return
     const db = memoryDb()
     const { active, unclassified } = countFacts(db, scope)
     const last = JSON.parse(getMeta(db, `tidy:${scope}`) ?? 'null') as { at: number; count: number } | null
