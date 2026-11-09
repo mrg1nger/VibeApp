@@ -114,6 +114,13 @@ export function revokeAll(): void {
 
 const failures = new Map<string, number[]>()
 const lockedUntil = new Map<string, number>()
+/**
+ * Wrong codes from every address together: guessing from many addresses (IPv6, a botnet) is still
+ * capped. Past this, pairing pauses for everyone and the code changes, so guesses so far are wasted.
+ */
+const MAX_ALL_FAILURES = 20
+let allFailures: number[] = []
+let allLockedUntil = 0
 
 export class PairingError extends Error {
   constructor(
@@ -133,7 +140,7 @@ export function pair(
   remember = true
 ): { token: string; device: Device } {
   const now = Date.now()
-  if ((lockedUntil.get(address) ?? 0) > now) {
+  if ((lockedUntil.get(address) ?? 0) > now || allLockedUntil > now) {
     throw new PairingError('Too many wrong codes. Try again in a few minutes.', 429)
   }
   const data = read()
@@ -146,6 +153,14 @@ export function pair(
     if (recent.length >= MAX_FAILURES) {
       lockedUntil.set(address, now + LOCKOUT_MS)
       failures.delete(address)
+    }
+    allFailures = allFailures.filter((t) => now - t < FAILURE_WINDOW_MS)
+    allFailures.push(now)
+    if (allFailures.length >= MAX_ALL_FAILURES) {
+      allLockedUntil = now + LOCKOUT_MS
+      allFailures = []
+      data.pairingCode = newCode()
+      write(data)
     }
     throw new PairingError("That code isn't right. Check the code in VibeApp's Settings.", 401)
   }

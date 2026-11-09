@@ -80,3 +80,19 @@ test('a device that was not remembered lapses after 12 hours unused; a remembere
   assert.equal(deviceForToken(kept.token)?.id, kept.device.id, 'the remembered one still works')
   assert.ok(!listDevices().some((d) => d.id === temp.device.id), 'and it is gone from the list')
 })
+
+// Last: it pauses pairing for every address.
+test('guessing from many addresses is capped too: pairing pauses and the code changes', () => {
+  const before = pairingCode()
+  let refused = 0
+  for (let i = 0; i < 25; i++) {
+    try {
+      pair('000000x', 'x', `10.1.${i}.1`, false)
+    } catch (err) {
+      if ((err as PairingError).status === 429) refused++
+    }
+  }
+  assert.ok(refused > 0, 'later guesses are refused, whatever the address')
+  assert.notEqual(pairingCode(), before, 'and the code was changed')
+  assert.throws(() => pair(pairingCode(), 'x', '10.2.0.1', false), (err: PairingError) => err.status === 429)
+})

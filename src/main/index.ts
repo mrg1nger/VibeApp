@@ -80,9 +80,16 @@ function createWindow(): void {
     if (!quitting && keepRunningInTray()) noteStillRunning()
   })
 
+  // Only web and mail links leave the app: file:, ms-*: and other handlers could start programs.
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (/^(https?:\/\/|mailto:)/i.test(details.url)) shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+  // The window keeps VibeApp's own screens: any other page would get the preload's full API.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url === mainWindow.webContents.getURL()) return
+    event.preventDefault()
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

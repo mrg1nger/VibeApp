@@ -69,8 +69,9 @@ Everything recommended so far, in one place. Tick items off as they ship.
   - the installer holds only the built app;
   - sign-ins, secrets and tokens all live outside the repo.
 
+  A second check (2026-11-09, 0.3.1) found no secrets in the 85 commits and fixed three weak spots (links could open any program handler, pairing guesses were capped only per address, DNS rebinding in "This computer" mode), updated the dependencies with known problems, and trimmed the node-pty patch (older commits still hold its build files with the user's folder names; harmless, but a history rewrite would remove them).
+
   Before making it public:
-  - trim `patches/node-pty+1.1.0.patch`, whose build files show `C:\Users\Chris\...` paths;
   - decide whether `package.json`'s author "Chris" and ROADMAP's DevBox/MRG-PC/"yay" mentions can stay;
   - add a LICENSE (MIT is the usual choice);
   - post only the current setup.exe, not the old `release\VibeApp-0.1.0-installer.zip`;

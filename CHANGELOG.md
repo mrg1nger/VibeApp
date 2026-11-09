@@ -2,6 +2,15 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.3.1 (2026-11-09)
+
+Security check before the code goes public:
+- **Links can only open web pages or email.** The window used to hand any kind of link (file:, ms-…: and other program launchers) to Windows, and nothing stopped it leaving VibeApp's own screens.
+- **Pairing codes can't be guessed from many addresses.** After 20 wrong codes from anywhere in 10 minutes, pairing pauses for everyone and the code changes.
+- **Remote access "This computer" mode only answers to localhost**, so a website can't reach it by pointing its own name at this computer (DNS rebinding).
+- Updated dependencies with known security problems (zod and others); `npm audit` finds none in what the app ships.
+- The node-pty patch holds only its one real change, no build files.
+
 ## 0.3.0 (2026-11-09)
 
 Cline (on the ClinePass plan) joins Claude and Codex:

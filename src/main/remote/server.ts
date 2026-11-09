@@ -71,6 +71,16 @@ function usesCookie(req: IncomingMessage): boolean {
   return !req.headers.authorization && new RegExp(`(?:^|;\\s*)${COOKIE}=`).test(req.headers.cookie ?? '')
 }
 
+/**
+ * "This computer" mode answers only to local names. A website that points its own name at
+ * 127.0.0.1 (DNS rebinding) would otherwise count as VibeApp's own origin and could try pairing codes.
+ */
+function hostOk(req: IncomingMessage, secure: boolean): boolean {
+  if (secure) return true
+  const host = (req.headers.host ?? '').toLowerCase().replace(/:\d+$/, '')
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
+}
+
 function ownOrigin(req: IncomingMessage, secure: boolean): string {
   return `${secure ? 'https' : 'http'}://${req.headers.host ?? ''}`
 }
@@ -345,6 +355,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, secure: boolean
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
   const path = url.pathname
 
+  if (!hostOk(req, secure)) return send(res, 421, { error: 'Open VibeApp at localhost.' })
   if (servePwa(path, res)) return
 
   if (path === '/login') return send(res, 200, LOGIN_PAGE, { 'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'" })
@@ -458,7 +469,7 @@ async function previewProxy(projectId: string): Promise<{ port: number; secure: 
   const { secure } = running
   const entry = { server: undefined as unknown as Server, port: 0, target }
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    if (!deviceForToken(tokenFrom(req))) return send(res, 401, { error: 'Not paired.' })
+    if (!hostOk(req, secure) || !deviceForToken(tokenFrom(req))) return send(res, 401, { error: 'Not paired.' })
     if (req.url === '/__vibeapp/preview-helper.js') return serveFile(res, remoteAsset('preview-helper.js'))
     const to = new URL(req.url ?? '/', entry.target)
     const headers = { ...req.headers, host: to.host }
@@ -490,7 +501,7 @@ async function previewProxy(projectId: string): Promise<{ port: number; secure: 
   const server = secure ? createHttpsServer(await httpsOptions(), handler) : createHttpServer(handler)
   // Live reload (Vite and similar) talks over a WebSocket: tunnel it through.
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer): void => {
-    if (!deviceForToken(tokenFrom(req))) {
+    if (!hostOk(req, secure) || !deviceForToken(tokenFrom(req))) {
       socket.destroy()
       return
     }
@@ -544,7 +555,7 @@ export async function applyRemoteSettings(): Promise<void> {
       const device = url.pathname === '/ws' ? deviceForToken(tokenFrom(req, url)) : null
       // A browser always sends its page's origin: it has to be VibeApp's own.
       const origin = req.headers.origin
-      if (!device || (origin && origin !== ownOrigin(req, secure))) {
+      if (!device || !hostOk(req, secure) || (origin && origin !== ownOrigin(req, secure))) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
         socket.destroy()
         return
