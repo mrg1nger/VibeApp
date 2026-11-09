@@ -4,6 +4,7 @@
   "description": "A friendly desktop app for vibe coding with Claude Code and Codex together",
   "main": "./out/main/index.js",
   "author": "Chris",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",

@@ -73,7 +73,6 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
   Before making it public:
   - decide whether `package.json`'s author "Chris" and ROADMAP's DevBox/MRG-PC/"yay" mentions can stay;
-  - add a LICENSE (MIT is the usual choice);
   - post only the current setup.exe, not the old `release\VibeApp-0.1.0-installer.zip`;
   - turn on GitHub secret scanning.
 
