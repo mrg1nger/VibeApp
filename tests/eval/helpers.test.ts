@@ -17,7 +17,9 @@ import { projectId } from '../support/fixtures'
 //   npm run eval -- helpers
 //   VIBEAPP_EVAL_HELPERS="haiku,cline-pass/glm-5.3-flash" npm run eval -- helpers
 
-const BACKENDS = (process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/glm-5.3-flash,cline-pass/deepseek-v4.1-flash-1017,cline-pass/qwen3.7-plus')
+// 2026-11-10: minimax-m3.1-flash 15/15 over three runs (the pick), deepseek-v4.1-flash 13/15;
+// qwen3.7-plus, qwen3.7-max and mimo-v2.6-flash are listed by ClinePass but refused.
+const BACKENDS = (process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/minimax-m3.1-flash,cline-pass/deepseek-v4.1-flash,cline-pass/qwen3.8-max')
   .split(',')
   .map((b) => b.trim())
   .filter(Boolean)

@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { decideToolCall, hookOutput, type ClinePolicy } from '../../src/main/cline/hookPolicy'
 import { clineFailure, countsFromClineResult, describeClineActivity } from '../../src/main/cli/clineExec'
-import { extractJson, schemaProblem, type JsonSchema } from '../../src/main/helpers/helperJob'
+import { extractJson, fillEmptyLists, schemaProblem, type JsonSchema } from '../../src/main/helpers/helperJob'
 import { routeMessage } from '../../src/main/orchestrator/routing'
 import { stepKind } from '../../src/main/usage/requestLog'
 import { buildReport } from '../../src/main/usage/report'
@@ -164,6 +164,11 @@ test("a background job's JSON answer is found and checked against its format", (
   assert.match(schemaProblem({ add: [] }, schema) ?? '', /forget is missing/)
   assert.match(schemaProblem({ add: [{ text: 'x', key: 'yes', category: 'setup' }], forget: [] }, schema) ?? '', /key isn't true\/false/)
   assert.match(schemaProblem({ add: [{ text: 'x', key: true, category: 'nope' }], forget: [] }, schema) ?? '', /isn't one of/)
+  // A left-out list means an empty one (qwen3.8-max drops them now and then); other gaps still count.
+  assert.deepEqual(fillEmptyLists({ forget: [] }, schema), { add: [], forget: [] })
+  assert.equal(schemaProblem(fillEmptyLists({}, schema), schema), null)
+  assert.match(schemaProblem(fillEmptyLists({ add: [{ text: 'x', category: 'setup' }] }, schema), schema) ?? '', /key is missing/)
+  assert.equal(fillEmptyLists('not an object', schema), 'not an object')
 })
 
 test('routing offers Cline only when it can take work, and when Codex is low it goes to Cline instead', async () => {

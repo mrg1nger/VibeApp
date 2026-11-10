@@ -90,7 +90,8 @@ async function onCline(job: HelperJob): Promise<HelperResult> {
       if (!result.text.trim()) throw new Error('Cline returned nothing.')
       return { text: result.text.trim(), by: 'cline' }
     }
-    const structured = extractJson(result.text)
+    const raw = extractJson(result.text)
+    const structured = raw === undefined ? undefined : fillEmptyLists(raw, job.schema)
     const problem = structured === undefined ? 'the answer had no JSON in it' : schemaProblem(structured, job.schema)
     if (problem) throw new Error(`Cline's answer didn't follow the format (${problem}).`)
     return { text: result.text, structured, by: 'cline' }
@@ -142,6 +143,21 @@ export function extractJson(text: string): unknown {
     }
   }
   return undefined
+}
+
+/**
+ * Fills in lists the answer left out as empty ("add" missing means nothing to add).
+ * Seen with cline-pass/qwen3.8-max, which drops empty lists now and then; anything
+ * else missing is still a problem.
+ */
+export function fillEmptyLists(value: unknown, schema: JsonSchema): unknown {
+  if (schema.type !== 'object' || typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  const record = { ...(value as Record<string, unknown>) }
+  for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+    if (!(key in record) && sub.type === 'array') record[key] = []
+    else if (key in record) record[key] = fillEmptyLists(record[key], sub)
+  }
+  return record
 }
 
 /** What's wrong with a value against the (simple) schemas VibeApp uses, or null if it fits. */
