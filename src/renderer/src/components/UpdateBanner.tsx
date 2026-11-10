@@ -19,6 +19,7 @@ function UpdateBanner({ settings, onSettingsChange }: UpdateBannerProps) {
   /** Projects still working when Update was pressed: ask before stopping them. */
   const [busy, setBusy] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [updatedSeen, setUpdatedSeen] = useState(false)
   const remote = window.vibe.host === 'browser'
 
   useEffect(() => {
@@ -26,7 +27,24 @@ function UpdateBanner({ settings, onSettingsChange }: UpdateBannerProps) {
     return window.vibe.update.onChanged(setUpdate)
   }, [])
 
-  if (!update?.version || !bannerWanted(update, settings.skippedVersion) || dismissed === update.version) return null
+  if (!update) return null
+  // Just updated: say so once (until dismissed or the next start).
+  if (!bannerWanted(update, settings.skippedVersion) && update.updatedFrom && !updatedSeen) {
+    return (
+      <div className="github-banner update-banner" role="status">
+        <div>
+          <strong>VibeApp was updated to {update.current}</strong> (from {update.updatedFrom}).{' '}
+          <a href={`${update.releasesUrl}/tag/v${update.current}`} target="_blank" rel="noreferrer">
+            What&apos;s new
+          </a>
+        </div>
+        <div className="github-banner-actions">
+          <button onClick={() => setUpdatedSeen(true)}>OK</button>
+        </div>
+      </div>
+    )
+  }
+  if (!update.version || !bannerWanted(update, settings.skippedVersion) || dismissed === update.version) return null
   const { version } = update
   const failure = problem ?? (update.status === 'error' ? update.error : undefined)
 

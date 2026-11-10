@@ -12,6 +12,11 @@ export function isNewer(a: string, b: string): boolean {
   return !xPre && !!yPre
 }
 
+/** The older version this one replaced since the last run, if it was updated (unknown before 0.4.1 recorded it). */
+export function justUpdatedFrom(lastRun: string | null, current: string): string | undefined {
+  return lastRun && isNewer(current, lastRun) ? lastRun : undefined
+}
+
 /** The update banner shows for a newer version the user hasn't skipped. */
 export function bannerWanted(s: UpdateState, skipped: string | null): boolean {
   return (

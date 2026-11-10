@@ -618,6 +618,8 @@ export interface AppSettings {
   updateChecks: boolean
   /** A version the user chose to skip: no banner for it (a newer one still shows). */
   skippedVersion: string | null
+  /** The version that ran last time, to notice an update and say so once. */
+  lastRunVersion: string | null
 }
 
 /** A new VibeApp version on GitHub Releases, and how far installing it has got. */
@@ -637,6 +639,8 @@ export interface UpdateState {
   checkedAt?: string
   /** False when running from source (npm run dev): there's nothing to install over. */
   canInstall: boolean
+  /** Updated since last time: the version it was (for a one-time "updated" note). */
+  updatedFrom?: string
 }
 
 /** Where tokens went over a period, by kind of work. */

@@ -41,7 +41,8 @@ const DEFAULTS: AppSettings = {
   clineModel: null,
   clineHelperModel: null,
   updateChecks: true,
-  skippedVersion: null
+  skippedVersion: null,
+  lastRunVersion: null
 }
 
 function settingsPath(): string {

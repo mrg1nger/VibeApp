@@ -70,7 +70,9 @@ writeFileSync(
     autoMemory: false,
     codeMap: false,
     // Optional: when OpenAI is turning the usual Codex model away, test with another one.
-    codexModel: E2E_CODEX_MODEL || null
+    codexModel: E2E_CODEX_MODEL || null,
+    // As if an older version ran last: the app should say once that it was updated.
+    lastRunVersion: '0.0.1'
   })
 )
 
@@ -297,6 +299,14 @@ try {
 
   await step('the app opens with both accounts ready', async () => {
     await waitFor(`[...document.querySelectorAll('.app-nav-tabs button')].some((b) => b.textContent === 'Projects' && !b.disabled)`, 'Claude to be ready', 90_000)
+  })
+
+  await step('after an update, VibeApp says so once', async () => {
+    await waitFor(`/VibeApp was updated to [\\d.]+ \\(from 0\\.0\\.1\\)/.test(document.querySelector('.update-banner')?.innerText ?? '')`, 'the "updated" note', 10_000)
+    await click('OK', '.update-banner button')
+    await waitFor(`!document.querySelector('.update-banner')`, 'the note to go', 5000)
+    const saved = JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8'))
+    if (saved.lastRunVersion === '0.0.1') throw new Error('the running version was not recorded')
   })
 
   await step('both usage meters show numbers', async () => {

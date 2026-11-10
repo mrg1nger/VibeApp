@@ -2,8 +2,8 @@ import { app } from 'electron'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import type { UpdateState } from '@shared/types'
-import { isNewer } from '@shared/update'
-import { getSettings } from '../settings/store'
+import { isNewer, justUpdatedFrom } from '@shared/update'
+import { getSettings, updateSettings } from '../settings/store'
 
 // New versions come from the GitHub repository's Releases (the installer plus the
 // latest.yml electron-builder writes next to it). electron-updater checks there,
@@ -136,7 +136,9 @@ export async function installUpdate(busy: string[], anyway = false): Promise<Upd
 /** Checks soon after start and every few hours, while "Look for updates" is on. */
 export function startUpdateChecks(sendToScreens: Send): void {
   send = sendToScreens
-  state = { ...state, canInstall: app.isPackaged }
+  const { lastRunVersion } = getSettings()
+  state = { ...state, canInstall: app.isPackaged, updatedFrom: justUpdatedFrom(lastRunVersion, state.current) }
+  if (lastRunVersion !== state.current) updateSettings({ lastRunVersion: state.current })
   const due = (): void => {
     if (getSettings().updateChecks) void checkForUpdate()
   }

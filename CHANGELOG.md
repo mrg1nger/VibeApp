@@ -2,6 +2,10 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.4.1 (2026-11-10)
+
+- **After an update, VibeApp says so once:** "VibeApp was updated to 0.4.2 (from 0.4.1)", with a What's new link. It starts with the update after this one, since versions before 0.4.1 didn't record which version ran last.
+
 ## 0.4.0 (2026-11-10)
 
 VibeApp updates itself from GitHub Releases:
