@@ -9,6 +9,7 @@ import { decideToolCall, type ClineMode, type ClinePolicy } from '../cline/hookP
 import { commandParts, scrubSecrets } from './codexActivity'
 import { killTree, trackChild } from './codexExec'
 import type { TokenCounts } from '../usage/tokens'
+import { runClineHosted } from './clineAcp'
 
 // Runs the Cline CLI (a third coding agent, on the user's ClinePass plan) for
 // VibeApp. Verified against cline 3.0.74 on Windows:
@@ -146,7 +147,7 @@ function hookSourcePath(): string {
   return join(__dirname, 'cline', 'clineHook.cjs')
 }
 
-interface PreparedHome {
+export interface PreparedHome {
   dir: string
   node: string
   blockedNote: string
@@ -231,7 +232,7 @@ export function clineUnavailable(): string | undefined {
   return undefined
 }
 
-function markUnavailable(reason: string, ms: number): void {
+export function markUnavailable(reason: string, ms: number): void {
   unavailable = { reason, until: Date.now() + ms }
 }
 
@@ -252,6 +253,8 @@ export interface ClineRunArgs {
   signal?: AbortSignal
   /** VibeApp's shared memory, as an MCP server for this run. */
   memory?: { scriptPath: string; dbPath: string; projectId: string; projectPath: string }
+  /** Runs with the same key carry on one Cline conversation (hand-offs within one request). */
+  session?: string
 }
 
 export interface ClineRunResult {
@@ -393,11 +396,71 @@ export function describeClineActivity(e: ClineEvent): DelegationActivity | null 
   }
 }
 
+/**
+ * The memory tools for a run, through the same server Claude and Codex use, written to Cline's
+ * MCP settings file. Cline starts tool servers through a shell, which splits any path with a
+ * space in it (C:\Program Files\nodejs, a user or project folder name; still so over ACP), so the
+ * command line has none: the paths go in the environment. The server is copied out of app.asar
+ * for the Node that runs it. Returns a note for the prompt when the tools aren't available.
+ */
+export function writeMcpSettings(mcpPath: string, home: PreparedHome, memory: ClineRunArgs['memory']): string {
+  let memoryNote = ''
+  let memoryServer: object | undefined
+  if (memory) {
+    const script = join(home.dir, 'memoryServer.cjs')
+    try {
+      const source = readFileSync(memory.scriptPath)
+      if (!existsSync(script) || !readFileSync(script).equals(source)) writeFileSync(script, source)
+      if (!home.nodeHasSqlite) throw new Error('needs Node 22.5 or newer')
+      memoryServer = {
+        command: 'node',
+        args: ['-e', 'require(process.env.VIBE_MEMORY_SCRIPT)'],
+        env: {
+          VIBE_MEMORY_SCRIPT: script,
+          VIBE_MEMORY_ARGS: JSON.stringify([memory.dbPath, memory.projectId, 'cline', memory.projectPath])
+        },
+        disabled: false
+      }
+    } catch (err) {
+      memoryNote = `\n\n(The shared memory tools aren't available in this run: ${(err as Error).message}.)`
+    }
+  }
+  writeFileSync(mcpPath, JSON.stringify({ mcpServers: memoryServer ? { vibe_memory: memoryServer } : {} }))
+  return memoryNote
+}
+
+/** Cline's environment for a run: VibeApp's own Cline folder and hook, the user's sign-in, this run's policy. */
+export function clineEnv(launch: ClineLaunch, home: PreparedHome, mode: ClineMode, mcpPath: string, policy: ClinePolicy, hookLog: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...launch.env,
+    CLINE_DIR: home.dir,
+    CLINE_DATA_DIR: clineDataDir(),
+    CLINE_SESSION_BACKEND_MODE: 'local',
+    CLINE_GLOBAL_SETTINGS_PATH: join(home.dir, `settings-${mode}.json`),
+    CLINE_MCP_SETTINGS_PATH: mcpPath,
+    VIBEAPP_CLINE_POLICY: JSON.stringify(policy),
+    VIBEAPP_CLINE_HOOK_LOG: hookLog,
+    PATH: `${dirname(home.node)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? process.env.Path ?? ''}`
+  }
+  delete env.Path
+  // A run started from inside an Electron app must not make Cline's own Node behave like Electron.
+  if (!launch.env.ELECTRON_RUN_AS_NODE) delete env.ELECTRON_RUN_AS_NODE
+  return env
+}
+
 /** Runs Cline once and returns its report. Never throws for Cline's own failures; they're in error. */
 export async function runCline(args: ClineRunArgs, onActivity?: (activity: DelegationActivity) => void): Promise<ClineRunResult> {
   const fail = (error: string): ClineRunResult => ({ text: '', finishReason: 'error', ok: false, usage: { fresh: 0, cached: 0, output: 0, steps: 1 }, error, blocked: [] })
   const reason = clineUnavailable()
   if (reason) return fail(reason)
+  // Building work goes to a Cline that keeps running (ACP), as an editor hosts it: no cold
+  // start, and later hand-offs in the same request carry on its conversation. If that can't
+  // start, the one-off run below does the job as before.
+  if (args.mode === 'build' && !args.system && process.env.VIBEAPP_CLINE_CLI !== '1') {
+    const hosted = await runClineHosted(args, onActivity)
+    if (hosted) return hosted
+  }
   const launch = await resolveClineLaunch()
   if (!launch) return fail("Cline isn't installed on this computer (in a terminal: npm i -g cline, then cline auth).")
   let home: PreparedHome
@@ -417,34 +480,8 @@ export async function runCline(args: ClineRunArgs, onActivity?: (activity: Deleg
     policy.readFiles!.push(taskFile)
     prompt = `Your task is in the file ${taskFile}. Read the whole file with read_files first, then do exactly what it says.`
   }
-  // The memory tools, through the same server Claude and Codex use. Cline starts tool servers
-  // through a shell, which splits any path with a space in it (C:\Program Files\nodejs, a user
-  // or project folder name), so the command line has none: the paths go in the environment.
-  // The server is copied out of app.asar for the Node that runs it.
   const mcpPath = join(temp, 'mcp.json')
-  let memoryNote = ''
-  let memoryServer: object | undefined
-  if (args.memory) {
-    const script = join(home.dir, 'memoryServer.cjs')
-    try {
-      const source = readFileSync(args.memory.scriptPath)
-      if (!existsSync(script) || !readFileSync(script).equals(source)) writeFileSync(script, source)
-      if (!home.nodeHasSqlite) throw new Error('needs Node 22.5 or newer')
-      memoryServer = {
-        command: 'node',
-        args: ['-e', 'require(process.env.VIBE_MEMORY_SCRIPT)'],
-        env: {
-          VIBE_MEMORY_SCRIPT: script,
-          VIBE_MEMORY_ARGS: JSON.stringify([args.memory.dbPath, args.memory.projectId, 'cline', args.memory.projectPath])
-        },
-        disabled: false
-      }
-    } catch (err) {
-      memoryNote = `\n\n(The shared memory tools aren't available in this run: ${(err as Error).message}.)`
-    }
-  }
-  writeFileSync(mcpPath, JSON.stringify({ mcpServers: memoryServer ? { vibe_memory: memoryServer } : {} }))
-  prompt += memoryNote
+  prompt += writeMcpSettings(mcpPath, home, args.memory)
   // A last check, here in VibeApp, that the policy itself refuses an unknown tool.
   if (decideToolCall(policy, { name: 'composio_search_tools' }).allow) return fail('VibeApp\'s Cline policy check failed, so Cline wasn\'t started.')
 
@@ -457,21 +494,7 @@ export async function runCline(args: ClineRunArgs, onActivity?: (activity: Deleg
   if (args.timeoutMs) cliArgs.push('-t', String(Math.max(30, Math.round(args.timeoutMs / 1000) - 5)))
   cliArgs.push(prompt)
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...launch.env,
-    CLINE_DIR: home.dir,
-    CLINE_DATA_DIR: clineDataDir(),
-    CLINE_SESSION_BACKEND_MODE: 'local',
-    CLINE_GLOBAL_SETTINGS_PATH: join(home.dir, `settings-${args.mode}.json`),
-    CLINE_MCP_SETTINGS_PATH: mcpPath,
-    VIBEAPP_CLINE_POLICY: JSON.stringify(policy),
-    VIBEAPP_CLINE_HOOK_LOG: hookLog,
-    PATH: `${dirname(home.node)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? process.env.Path ?? ''}`
-  }
-  delete env.Path
-  // A run started from inside an Electron app must not make Cline's own Node behave like Electron.
-  if (!launch.env.ELECTRON_RUN_AS_NODE) delete env.ELECTRON_RUN_AS_NODE
+  const env = clineEnv(launch, home, args.mode, mcpPath, policy, hookLog)
 
   let final: ClineEvent | undefined
   let lastError = ''

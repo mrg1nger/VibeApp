@@ -74,6 +74,7 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 - **Hand-offs carry the full context.** When Claude hands a task to Codex or Cline, the request goes with your own words, pasted images, the project brief and the key facts. The result comes back with the files changed and a short diff, and VibeApp runs automatic checks (script syntax, JSON, the project's `npm test`).
 - **Every change gets a second look.** Codex reviews Claude's changes, and Claude judges Codex's.
 - **Codex can be left out.** VibeApp works with Claude Code alone, and Codex and Cline add capacity. If Cline isn't installed, everything it would do falls back to Claude.
+- **Cline stays running for hand-offs**, the way an editor hosts it (`cline --acp`): no start-up wait, and a second hand-off in the same request carries on where the first left off. It always runs on ClinePass, never Cline's pay-as-you-go billing.
 
 ---
 
@@ -130,7 +131,7 @@ Then go to **Projects**. Start a new project in an empty folder, open an existin
 **How it's protected**
 - **Secrets** are encrypted with your Windows account (DPAPI) and stored outside your projects. Some are never given to the agents at all. VibeApp warns before a key ends up in the chat, a file, a commit or a published site.
 - **Destructive commands need your OK** outside Go Nutz.
-- **Cline approves its own actions**, so VibeApp checks every one before it runs:
+- **Cline approves its own actions**, so VibeApp checks every one before it runs (twice for hand-offs: its safety hook, then Cline asks VibeApp's permission for each step):
   - Cline only works inside the project.
   - Commands that delete folders, push or wipe history are replaced with a "blocked" message.
   - Cline's account connectors (Gmail, Drive and the like) are switched off.

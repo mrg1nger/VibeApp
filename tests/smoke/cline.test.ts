@@ -1,4 +1,5 @@
-import { test } from 'node:test'
+import { after, test } from 'node:test'
+import { stopHostedCline } from '../../src/main/cli/clineAcp'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -17,6 +18,32 @@ import { makeProject, projectId, testSession, turn } from '../support/fixtures'
 // plan with its own limits; Claude (Haiku) is only used by the last test.
 
 const MINUTES = 60_000
+
+// Building runs go to a hosted Cline (ACP) unless VIBEAPP_CLINE_CLI=1; it keeps running, so end it.
+after(() => stopHostedCline())
+const ROUTE = process.env.VIBEAPP_CLINE_CLI === '1' ? 'one-off CLI runs' : 'hosted Cline (ACP) for building'
+console.log(`  (Cline route: ${ROUTE})`)
+
+test('a hosted Cline carries a conversation across hand-offs, quickly, on ClinePass', { timeout: 6 * MINUTES, skip: process.env.VIBEAPP_CLINE_CLI === '1' }, async () => {
+  const { hostedClineCount } = await import('../../src/main/cli/clineAcp')
+  const dir = makeProject({ 'shop.js': 'module.exports = { potion: 25 }\n' })
+  const session = `smoke-${Date.now()}`
+  let started = Date.now()
+  const first = await runCline({ prompt: 'Change the potion price in shop.js to 30. Remember the codeword HERON for later. Reply in one line.', mode: 'build', cwd: dir, timeoutMs: 4 * MINUTES, session })
+  const firstSeconds = (Date.now() - started) / 1000
+  assert.ok(first.ok, first.error)
+  assert.match(readFileSync(join(dir, 'shop.js'), 'utf8'), /30/)
+  assert.match(first.model ?? '', /^cline-pass\//, `on ClinePass (${first.model})`)
+  assert.ok(first.usage.fresh + first.usage.cached > 0, 'tokens counted from the session file')
+  assert.equal(hostedClineCount(), 1, 'one Cline is running')
+  started = Date.now()
+  const second = await runCline({ prompt: 'What codeword did I give you, and what did you change? One line, no tools.', mode: 'build', cwd: dir, timeoutMs: 2 * MINUTES, session })
+  const secondSeconds = (Date.now() - started) / 1000
+  assert.ok(second.ok, second.error)
+  assert.match(second.text, /HERON/i, 'the second hand-off remembers the first')
+  assert.equal(hostedClineCount(), 1, 'the same Cline took both')
+  console.log(`  first ${firstSeconds.toFixed(1)} s, follow-up ${secondSeconds.toFixed(1)} s, model ${first.model}`)
+})
 
 function collect(): { steps: DelegationActivity[]; on: (a: DelegationActivity) => void } {
   const steps: DelegationActivity[] = []

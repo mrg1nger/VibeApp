@@ -57,6 +57,17 @@ function currentKeyFacts(projectId: string): string | undefined {
   }
 }
 
+/** One Cline conversation per user request (a new request starts a new one). */
+const clineSessions = new WeakMap<RequestContext, string>()
+function clineSessionFor(request: RequestContext): string {
+  let key = clineSessions.get(request)
+  if (!key) {
+    key = `request-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    clineSessions.set(request, key)
+  }
+  return key
+}
+
 /** Never lets bookkeeping failures get in the way of the hand-off itself. */
 function attempt<T>(work: () => T): T | undefined {
   try {
@@ -380,7 +391,9 @@ export function createCodexDelegationServer(
                   goNutz: isGoNutzMode(),
                   timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
                   signal,
-                  memory: memory ? { scriptPath: memory.scriptPath, dbPath: memory.dbPath, projectId: memory.projectId, projectPath: memory.projectPath } : undefined
+                  memory: memory ? { scriptPath: memory.scriptPath, dbPath: memory.dbPath, projectId: memory.projectId, projectPath: memory.projectPath } : undefined,
+                  // Later hand-offs in the same request carry on Cline's conversation.
+                  session: request ? clineSessionFor(request) : undefined
                 },
                 (activity) => {
                   onActivity?.(activity)
