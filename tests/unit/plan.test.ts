@@ -1,6 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { approvedPlanNote, looksBig, matchTodosToSteps, parsePlanSteps, progressMarkers } from '@shared/plan'
+import { approvedPlanFact, approvedPlanNote, looksBig, matchTodosToSteps, parsePlanSteps, progressMarkers } from '@shared/plan'
+
+test('an approved plan without steps is remembered word for word, on one line', () => {
+  const plan = '# Security review of FNotes\n\nThis was a read-only   review.\nNo files changed.'
+  assert.equal(approvedPlanFact(plan), 'Plan the user approved: # Security review of FNotes This was a read-only review. No files changed.')
+})
 
 test("a plan's steps are read from its Steps section, with who does each", () => {
   const plan = `Add a sell price to the shop.

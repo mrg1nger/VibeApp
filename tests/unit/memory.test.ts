@@ -31,6 +31,16 @@ test('facts may only state numbers the exchange actually contained', () => {
   assert.equal(grounded('The app uses nginx (on port 8080).', evidence), 'The app uses nginx.')
 })
 
+test('plan facts saved with their s taken out are forgotten; real ones stay', async () => {
+  const { forgetDamagedPlanFacts } = await import('../../src/main/memory/store')
+  const damaged = rememberFact(db, 'p-plan', 'Plan the user approved: # Overview of fab ticky / FNote Thi reque t wa ju t to look over the project — no change needed.', 'user', { category: 'decision' })
+  const fine = rememberFact(db, 'p-plan', 'Plan the user approved: # Add a sell price. Shields sell for half; tests check every item in the shop.', 'user', { category: 'decision' })
+  assert.equal(forgetDamagedPlanFacts(db), 1)
+  const left = listFacts(db, 'p-plan').map((f) => f.id)
+  assert.ok(!left.includes(damaged.fact.id), 'damaged one forgotten')
+  assert.ok(left.includes(fine.fact.id), 'good one kept')
+})
+
 test('a near-duplicate fact updates the old one instead of adding a second', () => {
   rememberFact(db, 'p1', 'The game uses a canvas renderer for the map.', 'user', { category: 'about' })
   const result = rememberFact(db, 'p1', 'The game uses a canvas renderer for the map view.', 'user', { category: 'about' })

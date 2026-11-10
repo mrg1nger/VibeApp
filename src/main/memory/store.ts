@@ -182,8 +182,28 @@ export function openMemory(dbPath: string): DatabaseSync {
     if (!requestColumns.has(column)) db.exec(`ALTER TABLE request_log ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`)
   }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
+  if (!getMeta(db, 'fixed_plan_facts_without_s')) {
+    forgetDamagedPlanFacts(db)
+    setMeta(db, 'fixed_plan_facts_without_s', now())
+  }
   databases.set(dbPath, db)
   return db
+}
+
+/**
+ * Before 0.5.4 an approved plan without numbered steps was saved with every "s" taken
+ * out. The letters can't be put back, so those facts are forgotten (still restorable).
+ * Plain text that long with no lowercase "s" doesn't happen otherwise.
+ */
+export function forgetDamagedPlanFacts(db: DatabaseSync): number {
+  const prefix = 'Plan the user approved: '
+  const result = db
+    .prepare(
+      `UPDATE facts SET forgotten_at = ?, forgotten_reason = ?
+       WHERE forgotten_at IS NULL AND substr(text, 1, ?) = ? AND length(text) > ? AND instr(substr(text, ?), 's') = 0`
+    )
+    .run(now(), 'Saved with letters missing (a bug fixed in 0.5.4)', prefix.length, prefix, prefix.length + 60, prefix.length + 1)
+  return Number(result.changes)
 }
 
 export function closeMemory(): void {

@@ -17,6 +17,15 @@ Do not write the code itself in the plan.`
 /** Claude's plan mode only (Codex plans in a read-only sandbox and has no leave_plan_mode). */
 export const CLAUDE_PLAN_LIMITS = `While planning, VibeApp turns away anything that changes something: editing files, commands that aren't read-only (ssh included), Deploy and hand-offs to Codex or Cline. Put those in the plan as steps. If the user's message needs something done now rather than planned (for example "done, go ahead and deploy"), call mcp__vibe_tools__leave_plan_mode once with what and why; VibeApp asks the user.`
 
+/** The memory fact kept for an approved plan: its steps, or the whole plan on one line if it has none. */
+export function approvedPlanFact(plan: string): string {
+  const steps = parsePlanSteps(plan)
+  const summary = steps.length
+    ? steps.map((s, i) => `${i + 1}. ${s.who ? `(${s.who}) ` : ''}${s.text}`).join(' ')
+    : plan.replace(/\s+/g, ' ').trim()
+  return `Plan the user approved: ${summary}`.slice(0, 950)
+}
+
 /** The numbered steps of a plan's "Steps" section (or of the first numbered list, if there is no such section). */
 export function parsePlanSteps(plan: string): PlanStep[] {
   const lines = plan.replace(/\r\n/g, '\n').split('\n')

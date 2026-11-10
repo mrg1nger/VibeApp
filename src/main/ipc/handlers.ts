@@ -126,7 +126,7 @@ import { checkCline, clineStatus } from '../cli/clineExec'
 import { clineModelFor, listClineModels } from '../cli/clineAcp'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
-import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
+import { approvedPlanFact, approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
 import { briefBlock } from '../memory/brief'
 import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents } from '../usage/tokens'
@@ -1367,11 +1367,7 @@ async function runCodexPlan(
 /** Keeps an approved plan's steps in memory, so a compaction or a fresh session knows what was agreed. */
 function rememberApprovedPlan(projectId: string, plan: string): void {
   try {
-    const steps = parsePlanSteps(plan)
-    const summary = steps.length
-      ? steps.map((s, i) => `${i + 1}. ${s.who ? `(${s.who}) ` : ''}${s.text}`).join(' ')
-      : plan.replace(/s+/g, ' ')
-    rememberFact(memoryDb(), projectId, `Plan the user approved: ${summary}`.slice(0, 950), 'user', { category: 'decision' })
+    rememberFact(memoryDb(), projectId, approvedPlanFact(plan), 'user', { category: 'decision' })
   } catch (err) {
     console.warn('Saving the approved plan failed:', (err as Error).message)
   }
