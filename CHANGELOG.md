@@ -2,6 +2,11 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.5.3 (2026-11-10)
+
+- **Publish remembers the last GitHub backup after a restart.** The time was only kept in memory, so after an update (which restarts VibeApp) Publish said nothing about the last backup until the next one. Backups themselves were never affected.
+- **A Cline model typed into Settings can't undo a newer choice.** The text box (used only when Cline's model list can't be read) kept the value it opened with and saved it back when clicked out of, over a change made from another window, a phone or the API. Seen on 0.5.0's box, which put a background-job model back.
+
 ## 0.5.2 (2026-11-10)
 
 - **"Default" means the same Cline model everywhere.** With no model chosen, hand-offs ran on ClinePass's default (Kimi K3.1 Pro) but background jobs and Test Cline on whatever the computer's own Cline setup defaulted to (MiniMax on one machine). They now all use ClinePass's default, so "Same as hand-offs" is true.

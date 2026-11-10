@@ -101,6 +101,14 @@ export function setGitHubAutoBackup(projectId: string, enabled: boolean): void {
   writeStore(data)
 }
 
+export function setGitHubLastBackup(projectId: string, at: string): void {
+  const data = readStore()
+  const project = data.projects.find((p) => p.id === projectId)
+  if (!project) return
+  project.githubLastBackupAt = at
+  writeStore(data)
+}
+
 export function setDeployUrl(projectId: string, url: string): void {
   const data = readStore()
   const project = data.projects.find((p) => p.id === projectId)

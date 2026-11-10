@@ -300,6 +300,8 @@ export interface ProjectRecord {
   deployUrl?: string
   /** Upload to GitHub by itself after each request (once the project has a GitHub copy). Turned on when the copy is made or downloaded in VibeApp. */
   githubAutoBackup?: boolean
+  /** When the last GitHub backup went up (kept across restarts, for Publish). */
+  githubLastBackupAt?: string
 }
 
 /** How the project on this computer compares with its copy on GitHub. */

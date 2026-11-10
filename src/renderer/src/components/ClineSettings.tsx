@@ -24,6 +24,9 @@ interface ModelPickerProps {
 /** A menu of the ClinePass models Cline offers now; a text box if the list can't be read. */
 function ModelPicker({ label, use, value, list, failed, emptyLabel, onChange }: ModelPickerProps) {
   const [typed, setTyped] = useState(value ?? '')
+  // Follow changes made elsewhere (another window, a phone, the API): a box that kept the value
+  // it opened with saved it back over a newer choice when clicked out of (found on 0.5.0).
+  useEffect(() => setTyped(value ?? ''), [value])
   if (failed || !list?.models.length) {
     return (
       <label className="settings-field">
@@ -32,7 +35,9 @@ function ModelPicker({ label, use, value, list, failed, emptyLabel, onChange }: 
           value={typed}
           placeholder={list === null && !failed ? 'Loading the models…' : emptyLabel}
           onChange={(e) => setTyped(e.target.value)}
-          onBlur={() => onChange(typed.trim() || null)}
+          onBlur={() => {
+            if ((typed.trim() || null) !== value) onChange(typed.trim() || null)
+          }}
         />
         {failed && <small className="settings-warn">Couldn't read the model list from Cline; type a model id (for example cline-pass/glm-5.3).</small>}
       </label>

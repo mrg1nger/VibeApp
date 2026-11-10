@@ -5,7 +5,7 @@ import { promisify } from 'util'
 import type { GitHubGetResult, GitHubRepoInfo, GitHubSync } from '@shared/types'
 import { isCliOnPath } from '../cli/execCli'
 import { checkpoint, ensureIdentity, hasUncommittedChanges } from '../git/repo'
-import { getProject } from '../projects/store'
+import { getProject, setGitHubLastBackup } from '../projects/store'
 import { describeLeaks, scanDiff, scanProject } from '../secrets/leakScan'
 import { secretValues } from '../secrets/vault'
 
@@ -53,10 +53,12 @@ function locked<T>(projectPath: string, job: () => Promise<T>): Promise<T> {
   return next
 }
 
-/** What this project last heard from GitHub (this run of VibeApp). */
+/** What this project last heard from GitHub (the problem: this run of VibeApp; the backup time is also saved). */
 const last = new Map<string, { problem?: string; lastBackupAt?: string }>()
 function note(projectId: string, patch: { problem?: string; lastBackupAt?: string }): void {
   last.set(projectId, { ...last.get(projectId), ...patch })
+  // Kept with the project, so Publish still says when the last backup went up after a restart (an update restarts VibeApp).
+  if (patch.lastBackupAt) setGitHubLastBackup(projectId, patch.lastBackupAt)
 }
 
 /** Short, plain words from git's output. */
@@ -101,7 +103,8 @@ export async function syncStatus(projectId: string, projectPath: string, fetch =
   const autoBackup = !!getProject(projectId)?.githubAutoBackup
   const url = await githubUrl(projectPath)
   const branch = await currentBranch(projectPath)
-  const base: GitHubSync = { linked: !!url, url, branch, ahead: 0, behind: 0, dirty: false, autoBackup, ...last.get(projectId) }
+  const saved = getProject(projectId)?.githubLastBackupAt
+  const base: GitHubSync = { linked: !!url, url, branch, ahead: 0, behind: 0, dirty: false, autoBackup, ...(saved ? { lastBackupAt: saved } : {}), ...last.get(projectId) }
   if (!url) return base
   let problem = base.problem
   if (fetch) {

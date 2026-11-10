@@ -104,6 +104,16 @@ test('back up to GitHub, and the other computer sees the newer work and gets it'
   assert.deepEqual(await getLatest('pb', b), { status: 'up_to_date' })
 })
 
+test('the last backup time is kept with the project, so Publish still shows it after a restart', async () => {
+  const { recordProjectOpened, getProject } = await import('../../src/main/projects/store')
+  const project = recordProjectOpened(a)
+  writeFileSync(join(a, 'a.txt'), 'one\ntwo\nthree\n')
+  assert.equal(await uploadToGitHub(project.id, a, 'Backup: three'), true)
+  const saved = getProject(project.id)?.githubLastBackupAt
+  assert.ok(saved && Date.now() - Date.parse(saved) < 60_000, `saved: ${saved}`)
+  assert.equal((await syncStatus(project.id, a, false)).lastBackupAt, saved)
+})
+
 test("both computers changed different files: combined, and B's unsaved work is kept", async () => {
   writeFileSync(join(a, 'a.txt'), 'one\ntwo\nthree\n')
   await uploadToGitHub('pa', a, 'Backup: add three')
