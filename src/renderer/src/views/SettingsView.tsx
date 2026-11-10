@@ -6,6 +6,7 @@ import BackupSettings from '../components/BackupSettings'
 import ScheduleSettings from '../components/ScheduleSettings'
 import PhoneAlertSettings from '../components/PhoneAlertSettings'
 import ClineSettings from '../components/ClineSettings'
+import UpdateSettings from '../components/UpdateSettings'
 
 interface SettingsViewProps {
   settings: AppSettings
@@ -106,7 +107,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
   return (
     <div className="settings-view">
       <h2>Settings</h2>
-      <p className="settings-hint">VibeApp {__APP_VERSION__}</p>
+      <UpdateSettings settings={settings} onSettingsChange={onSettingsChange} />
 
       <section className="settings-section">
         <h3>Models</h3>

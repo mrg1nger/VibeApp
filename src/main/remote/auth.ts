@@ -258,6 +258,7 @@ const READ_CHANNELS = new Set([
   'vibe:models:claude',
   'vibe:models:codex',
   'vibe:cline:status',
+  'vibe:update:state',
   'vibe:todos:list',
   'vibe:deploy:get',
   'vibe:schedules:list',
@@ -284,8 +285,11 @@ const READ_CHANNELS = new Set([
   'vibe:fs:listDirs'
 ])
 
-/** Managing Remote access itself stays on the computer, so a remote device can't widen its own access. */
-const DESKTOP_ONLY = /^vibe:remote:(?!previewUrl$)/
+/**
+ * Managing Remote access itself stays on the computer, so a remote device can't widen its own access.
+ * So does installing an update: it restarts VibeApp, and someone should be at the computer for that.
+ */
+const DESKTOP_ONLY = /^vibe:remote:(?!previewUrl$)|^vibe:update:install$/
 const REMOTE_SETTINGS = ['remoteAccess', 'remotePort', 'remoteReadOnly'] as const
 
 export interface CallCheck {
@@ -297,7 +301,12 @@ export interface CallCheck {
 
 export function checkRemoteCall(channel: string, args: unknown[], readOnly: boolean): CallCheck {
   if (DESKTOP_ONLY.test(channel)) {
-    return { allowed: false, reason: 'Remote access settings can only be changed on the computer running VibeApp.' }
+    return {
+      allowed: false,
+      reason: channel.startsWith('vibe:update:')
+        ? 'Updates are installed on the computer running VibeApp.'
+        : 'Remote access settings can only be changed on the computer running VibeApp.'
+    }
   }
   if (readOnly && !READ_CHANNELS.has(channel)) {
     return { allowed: false, reason: 'This connection is read-only.' }

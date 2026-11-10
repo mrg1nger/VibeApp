@@ -46,6 +46,11 @@ async function refreshNames(): Promise<void> {
 
 const nameOf = (projectId: string): string => projectNames.get(projectId) ?? 'A project'
 
+/** Names of the projects with a request running right now (an update restart would stop them). */
+export function workingProjects(): string[] {
+  return [...working.keys()].map(nameOf)
+}
+
 function notify(title: string, body: string): void {
   notifyUser(title, body)
 }

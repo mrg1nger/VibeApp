@@ -114,6 +114,8 @@ import {
   updateTodo
 } from '../memory/store'
 import { getSettings, updateSettings } from '../settings/store'
+import { checkForUpdate, installUpdate, updateState } from '../updates/updates'
+import { workingProjects } from '../tray'
 import { listClaudeModels } from '../cli/claudeModels'
 import { listCodexModels } from '../cli/codexModels'
 import { listThemes, deleteTheme, themesDir } from '../themes/store'
@@ -1051,6 +1053,11 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
     listRequests(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString(), projectId || undefined)
   )
   // Cline (a third agent on the user's ClinePass plan): installed? and a quick live check.
+  // New versions on GitHub Releases.
+  ipc.handle('vibe:update:state', () => updateState())
+  ipc.handle('vibe:update:check', () => checkForUpdate())
+  ipc.handle('vibe:update:install', (_event, anyway?: boolean) => installUpdate(workingProjects(), !!anyway))
+
   ipc.handle('vibe:cline:status', () => clineStatus())
   ipc.handle('vibe:cline:check', () => {
     const settings = getSettings()

@@ -614,6 +614,29 @@ export interface AppSettings {
   clineModel: string | null
   /** Cline model for background jobs; null = the hand-off model. */
   clineHelperModel: string | null
+  /** Look for new versions on GitHub Releases (at start and every few hours). */
+  updateChecks: boolean
+  /** A version the user chose to skip: no banner for it (a newer one still shows). */
+  skippedVersion: string | null
+}
+
+/** A new VibeApp version on GitHub Releases, and how far installing it has got. */
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'ready' | 'error'
+  /** The running version. */
+  current: string
+  /** The newest version found. */
+  version?: string
+  /** That version's release page ("What's new"). */
+  releaseUrl?: string
+  /** All releases. */
+  releasesUrl: string
+  /** Download progress, 0-100. */
+  percent?: number
+  error?: string
+  checkedAt?: string
+  /** False when running from source (npm run dev): there's nothing to install over. */
+  canInstall: boolean
 }
 
 /** Where tokens went over a period, by kind of work. */

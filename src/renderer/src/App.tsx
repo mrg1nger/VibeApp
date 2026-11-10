@@ -10,6 +10,7 @@ import ExtensionsView from './views/ExtensionsView'
 import TalkView from './views/TalkView'
 import ToastHost from './components/ToastHost'
 import UsageMeters from './components/UsageMeters'
+import UpdateBanner from './components/UpdateBanner'
 import { useToasts } from './lib/useToasts'
 import { applyTheme } from './lib/theme'
 
@@ -149,6 +150,8 @@ function App() {
           onBalanceChange={(agentBalance) => changeSettings({ agentBalance }).catch(() => undefined)}
         />
       </div>
+
+      {settings && <UpdateBanner settings={settings} onSettingsChange={changeSettings} />}
 
       {screen === 'accounts' && <AccountsView statuses={statuses} onRefresh={refreshStatus} />}
 

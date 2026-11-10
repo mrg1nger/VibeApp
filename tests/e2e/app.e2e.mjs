@@ -1094,6 +1094,42 @@ try {
     await waitFor(`!/e2e-game/.test(document.body.innerText)`, 'the project to leave the list', 10_000)
   })
 
+  await step('a new version shows a banner: what\'s new, skip it, not now, update', async () => {
+    const switchFile = join(data, 'test-update-version')
+    const banner = `document.querySelector('.update-banner')?.innerText ?? ''`
+    try {
+      writeFileSync(switchFile, '99.0.0')
+      await evaluate(`window.vibe.update.check()`)
+      await waitFor(`(${banner}).includes('VibeApp 99.0.0 is available')`, 'the update banner', 10_000)
+      await shot('update-banner')
+      const link = await evaluate(`[...document.querySelectorAll('.update-banner a')].find((a) => a.textContent.includes("What's new"))?.href`)
+      if (link !== 'https://github.com/mrg1nger/VibeApp/releases/tag/v99.0.0') throw new Error(`What's new goes to ${link}`)
+      // Skip: gone, remembered, and Settings can bring it back.
+      await click('Skip this version', '.update-banner button')
+      await waitFor(`!document.querySelector('.update-banner')`, 'the banner to go after Skip', 5000)
+      if ((await evaluate(`window.vibe.settings.get()`)).skippedVersion !== '99.0.0') throw new Error('the skipped version was not saved')
+      await click('Settings', '.app-nav-tabs button')
+      await waitFor(`document.querySelector('.settings-view')?.innerText.includes('Skipped: version 99.0.0')`, 'the skipped version in Settings', 5000)
+      await click('Remind me again')
+      await waitFor(`(${banner}).includes('99.0.0')`, 'the banner to come back', 5000)
+      // Not now: gone, and another check of the same version doesn't bring it back.
+      await click('Not now', '.update-banner button')
+      await waitFor(`!document.querySelector('.update-banner')`, 'the banner to go after Not now', 5000)
+      await evaluate(`window.vibe.update.check()`)
+      await sleep(800)
+      if (await evaluate(`!!document.querySelector('.update-banner')`)) throw new Error('Not now came back for the same version')
+      // A newer one shows again; Update downloads and installs (the test app only pretends to).
+      writeFileSync(switchFile, '99.1.0')
+      await evaluate(`window.vibe.update.check()`)
+      await waitFor(`(${banner}).includes('VibeApp 99.1.0 is available')`, 'the banner for a newer version', 10_000)
+      await click('Update and restart', '.update-banner button')
+      await waitFor(`(${banner}).includes('Installing VibeApp 99.1.0')`, 'the download and install', 10_000)
+      await waitFor(`!document.querySelector('.update-banner')`, 'the banner to clear', 10_000)
+    } finally {
+      rmSync(switchFile, { force: true })
+    }
+  })
+
   // Last, since it closes the app.
   await step('closing VibeApp in the middle of a Codex job leaves nothing running', async () => {
     if (process.platform !== 'win32') return

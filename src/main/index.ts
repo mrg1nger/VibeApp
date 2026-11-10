@@ -11,6 +11,7 @@ import { requestClassifier } from './orchestrator/classifier'
 import { getSettings } from './settings/store'
 import { applyLoginItem, noteStillRunning, setupTray } from './tray'
 import { applyPendingRestore, scheduleBackups } from './backup/backup'
+import { startUpdateChecks, stopUpdateChecks } from './updates/updates'
 
 let currentWindow: BrowserWindow | undefined
 /** Started with --tray (e.g. with Windows): no window until the user asks for one. */
@@ -128,8 +129,11 @@ app.whenReady().then(() => {
   applyPendingRestore()
 
   // Events go to the desktop window and to any Remote access screens.
-  registerIpcHandlers(broadcaster(() => currentWindow?.webContents))
+  const toScreens = broadcaster(() => currentWindow?.webContents)
+  registerIpcHandlers(toScreens)
   registerRemoteHandlers()
+  // New versions on GitHub Releases (a banner when there's one).
+  startUpdateChecks((channel, ...args) => toScreens()?.send(channel, ...args))
   // Remote access, if the user switched it on.
   applyRemoteSettings().catch((err) => console.warn('Remote access failed to start:', (err as Error).message))
 
@@ -162,6 +166,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   stopAllPreviews()
+  stopUpdateChecks()
   // Codex jobs, test runs and tool checks still going: nothing keeps working after VibeApp is closed.
   stopAllChildren()
   void stopRemote()

@@ -2,6 +2,15 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.4.0 (2026-11-10)
+
+VibeApp updates itself from GitHub Releases:
+- **A banner when there's a new version,** across the top of every screen. It has a **What's new** link to the release page, **Update and restart**, **Skip this version** (a newer one still shows) and **Not now**.
+- **Update and restart** downloads the new installer and checks it against the release's SHA-512. VibeApp then closes, installs it quietly and opens again. If a project is still working, it asks first.
+- **Settings → Updates:** the running version, **Check for updates**, a link to all releases, **Look for new versions automatically** (on; at start and every 6 hours), and **Remind me again** for a skipped version.
+- Remote browsers see the banner too, but installing happens on the computer.
+- For whoever makes releases: `npm run release` publishes the packaged version with the files the updater needs, and the changelog section as the notes.
+
 ## 0.3.1 (2026-11-09)
 
 Security check before the code goes public:

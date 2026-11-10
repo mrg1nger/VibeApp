@@ -38,7 +38,8 @@ import type {
   Schedule,
   GitHubSync,
   GitHubGetResult,
-  GitHubRepoInfo
+  GitHubRepoInfo,
+  UpdateState
 } from '@shared/types'
 import type { ScheduleInput } from '@shared/schedule'
 
@@ -451,6 +452,20 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
         ipcRenderer.invoke('vibe:publish:vercel', projectId, projectPath, includeSecrets),
       vercelResult: (sessionId: string): Promise<string | null> =>
         ipcRenderer.invoke('vibe:publish:vercelResult', sessionId)
+    },
+
+    update: {
+      /** What's known about a newer VibeApp on GitHub Releases. */
+      state: (): Promise<UpdateState> => ipcRenderer.invoke('vibe:update:state'),
+      /** Looks on GitHub now. */
+      check: (): Promise<UpdateState> => ipcRenderer.invoke('vibe:update:check'),
+      /** Downloads it, then VibeApp closes, installs it and starts again. Refused while a project is working, unless `anyway`. */
+      install: (anyway?: boolean): Promise<UpdateState> => ipcRenderer.invoke('vibe:update:install', anyway),
+      onChanged: (cb: (state: UpdateState) => void): (() => void) => {
+        const listener = (_event: unknown, state: UpdateState): void => cb(state)
+        ipcRenderer.on('vibe:update:changed', listener)
+        return () => ipcRenderer.removeListener('vibe:update:changed', listener)
+      }
     },
 
     cline: {

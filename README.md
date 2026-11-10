@@ -1,3 +1,5 @@
+<a href="https://www.buymeacoffee.com/mrginger" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-violet.png" alt="Buy Me a Coffee" width="217" height="60"></a>
+
 # VibeApp
 
 A friendly Windows desktop app for building software by chatting with AI coding agents. **Claude Code** leads, **Codex** builds and double-checks, and optionally **Cline** takes the routine work. They share one memory of your project, and every change can be undone.
@@ -55,6 +57,7 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 - **Secrets:** keys stored encrypted with your Windows account. Your app gets them as environment variables, and VibeApp warns if one turns up in the chat, a file or a publish.
 - **Remote access:** use VibeApp from a browser or phone on your network, and drive it from Claude Code through its MCP server.
 - **System tray mode,** Windows notifications and phone alerts (through the free ntfy app).
+- **Updates itself** from GitHub Releases, with a banner to update, skip that version, or not now.
 - **Themes**, including a theme generator.
 - **Backups** of VibeApp's own data, with restore and export to move to another PC.
 
@@ -81,6 +84,8 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 3. Open VibeApp from the Start menu or the desktop shortcut.
 
 Requires Windows 10 or 11 (64-bit).
+
+**Updates:** VibeApp looks for new versions on this repository's Releases. When there's one, a banner shows across the top with **What's new**, **Update and restart**, **Skip this version** and **Not now**. Updating downloads the installer, checks it against the release's SHA-512, and restarts VibeApp into the new version. To turn the automatic checks off or check by hand, go to **Settings → Updates**.
 
 ---
 
@@ -180,6 +185,13 @@ npm run package      # make release/VibeApp-<version>-setup.exe
 npm run typecheck
 ```
 
+**Making a release** (for maintainers):
+1. Step the version with `npm version X.Y.Z --no-git-tag-version`.
+2. Add a `## X.Y.Z` section to CHANGELOG.md.
+3. Run `npm run package`, then `npm run release` (add `-- --draft` to check it on GitHub first).
+
+The release script uploads the installer, its `.blockmap` and `latest.yml`. The in-app updater needs `latest.yml`, so publish releases this way rather than by hand. It uses the GitHub CLI's own sign-in (`gh auth login`).
+
 **Gotchas**
 - **`ELECTRON_RUN_AS_NODE` must not be set.** If Electron starts as plain Node, `electron.app` is undefined; clear that variable and run it again.
 - **The node-pty patch** drops the old winpty build target, which doesn't build on modern Windows. node-pty uses ConPTY instead.
@@ -233,7 +245,7 @@ patches/            patch-package fixes for dependencies
 - **It depends on the CLIs' behaviour.** A Claude Code, Codex or Cline update can change things VibeApp relies on; the smoke tests are how that shows up.
 - **Bring your own subscriptions.** VibeApp drives the official CLIs with your own sign-ins. Check each provider's current terms for how you use them.
 - **No ClinePass usage meter**, because the Cline CLI doesn't report plan limits. VibeApp notices "limit reached" and falls back to Claude for a while.
-- **Not code-signed**, and there are no automatic updates yet: install new versions from Releases.
+- **Not code-signed.** Windows SmartScreen warns on first install. Updates are checked against the release's SHA-512, which protects against a damaged download but not against someone who controls the GitHub account.
 
 ---
 

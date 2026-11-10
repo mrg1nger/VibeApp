@@ -1630,6 +1630,11 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Across the top of every screen, under the top bar. */
+.update-banner {
+  margin: 0.5rem 0.75rem 0;
+}
+
 .github-banner-conflict {
   border-color: var(--warning-text);
   background: var(--warning-bg);
