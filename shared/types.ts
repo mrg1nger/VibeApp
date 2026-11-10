@@ -84,6 +84,8 @@ export type VibeEvent =
   | { type: 'plan_finished'; total: number; tracked: number; stopped: boolean }
   /** A big request was sent in Build: VibeApp asks whether to plan it first. */
   | { type: 'plan_suggested'; text: string }
+  /** The user let Claude leave Plan mode mid-request: the rest of it is a Build. */
+  | { type: 'plan_left'; what: string }
   /** The Deploy button ran (shown in the chat so the history says when it went live). */
   | { type: 'deploy_result'; name: string; ok: boolean; seconds: number; failedStep?: string; detail?: string; rolledBack?: boolean; stopped?: boolean }
   /** Claude wrote or changed the deploy recipe: the user should check it. */
@@ -272,6 +274,8 @@ export interface ConfirmationRequest {
   reason: string
   /** Set when Claude is asking the user questions (AskUserQuestion) rather than asking permission. */
   questions?: UserQuestion[]
+  /** Set when Claude asks to leave Plan mode: what it wants to do now, and why. */
+  leavePlan?: { what: string; why: string }
 }
 
 export interface UserQuestion {

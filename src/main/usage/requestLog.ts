@@ -59,8 +59,12 @@ export class RequestRecorder {
   private model: string | null = null
   private outcome: 'done' | 'stopped' | 'error' = 'done'
   private takeover = false
+  /** A plan request becomes a build when the user lets Claude leave Plan mode. */
+  private mode: RequestStart['mode']
 
-  constructor(readonly start: RequestStart) {}
+  constructor(readonly start: RequestStart) {
+    this.mode = start.mode
+  }
 
   /** Returns true once the request is over (turn_complete). */
   observe(event: VibeEvent): boolean {
@@ -83,6 +87,9 @@ export class RequestRecorder {
       case 'takeover_started':
         this.takeover = true
         break
+      case 'plan_left':
+        this.mode = 'build'
+        break
       case 'stopped':
         this.outcome = 'stopped'
         break
@@ -103,7 +110,7 @@ export class RequestRecorder {
     return {
       at: this.startedAt.toISOString(),
       projectId: this.start.projectId,
-      mode: this.takeover ? 'takeover' : this.start.mode,
+      mode: this.takeover ? 'takeover' : this.mode,
       balance: this.start.balance ?? null,
       route: this.start.route ?? null,
       size: this.start.size ?? null,

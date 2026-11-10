@@ -2,7 +2,7 @@ import { app, dialog, shell, type WebContents } from 'electron'
 import { addEventSink, invoke, ipc } from '../remote/bus'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'fs'
 import { homedir, tmpdir } from 'os'
-import { dirname, join, resolve, sep } from 'path'
+import { dirname, join } from 'path'
 import { applyRemoteSettings } from '../remote/server'
 import type {
   AppSettings,
@@ -164,6 +164,7 @@ import type { ScheduleInput } from '@shared/schedule'
 import { runTakeover, takeCatchUpNote } from '../orchestrator/takeover'
 import { getPreview, findPreview, previewEvents } from '../preview/preview'
 import { beginTurn, handleSessionEvent, skipReview } from '../review/reviewFlow'
+import { isPlanFile } from '../orchestrator/planGuard'
 import { prepareImages, imagesNote } from '../attachments/images'
 import { listSecrets, setSecret, deleteSecret } from '../secrets/vault'
 import {
@@ -499,7 +500,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
         takeAskNote(projectId),
         route.note,
         planning
-          ? '[VibeApp note: Plan mode. Explore and propose a plan for the user to approve; change nothing yet.]'
+          ? "[VibeApp note: Plan mode. Explore and propose a plan for the user to approve; change nothing yet. If this message needs something done now rather than planned, call mcp__vibe_tools__leave_plan_mode first (it asks the user).]"
           : undefined,
         extra?.approvedPlan ? approvedPlanNote(extra.approvedPlan) : undefined,
         relevant,
@@ -1264,12 +1265,6 @@ const lastPlans = new Map<string, string>()
 const planFiles = new Map<string, string>()
 
 /** A file in Claude Code's own plans folder (the only kind VibeApp ever deletes). */
-function isPlanFile(file: string): boolean {
-  const dir = resolve(homedir(), '.claude', 'plans')
-  const full = resolve(file)
-  return full.toLowerCase().startsWith(`${dir.toLowerCase()}${sep}`) && full.toLowerCase().endsWith('.md')
-}
-
 /**
  * Claude Code keeps one plan file per conversation and has Claude read it
  * before every new plan. Once a plan is built or cancelled the old text is

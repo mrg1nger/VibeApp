@@ -439,6 +439,30 @@ try {
     writeFileSync(join(project, 'shop.js'), originalShop)
   })
 
+  await step('in Plan mode, doing something now asks once (what and why), then builds with the switch on Build', async () => {
+    await click('Plan', '.chat-mode-switch button')
+    try {
+      await send("I've already checked it, no plan needed: put the potion price up to 30 gold in shop.js now.")
+      await waitFor(`!!document.querySelector('.leave-plan-banner')`, 'the "leave Plan mode?" prompt', 300_000)
+      const prompt = await evaluate(`document.querySelector('.leave-plan-banner').innerText`)
+      console.log(`  (${prompt.replace(/\s+/g, ' ').slice(0, 200)})`)
+      if (!/What:/.test(prompt) || !/Why:/.test(prompt)) throw new Error('the prompt does not say what and why')
+      if (readFileSync(join(project, 'shop.js'), 'utf-8') !== originalShop) throw new Error('shop.js changed before the prompt was answered')
+      await shot('leave-plan')
+      await click('Switch to Build and allow', '.leave-plan-banner button')
+      await idle(300_000)
+      if (!/30/.test(readFileSync(join(project, 'shop.js'), 'utf-8'))) throw new Error('the potion price was not changed after allowing it')
+      const active = await evaluate(`document.querySelector('.chat-mode-switch button.active')?.innerText ?? ''`)
+      if (!/Build/.test(active)) throw new Error(`the switch shows "${active}", not Build`)
+      const notes = await evaluate(`document.body.innerText`)
+      if (!/Left Plan mode with your OK/.test(notes)) throw new Error('no note in the chat that Plan mode was left')
+      if (await evaluate(`document.querySelectorAll('.leave-plan-banner').length`)) throw new Error('the prompt is still showing')
+    } finally {
+      await click('Build', '.chat-mode-switch button').catch(() => undefined)
+      writeFileSync(join(project, 'shop.js'), originalShop)
+    }
+  })
+
   await step('if Claude skips the progress tool, the plan still ticks off or finishes honestly', async () => {
     const noProgress = join(data, 'test-no-plan-progress')
     writeFileSync(noProgress, '')

@@ -17,8 +17,9 @@ import { activeExtensions, extensionInstructions } from '../extensions/store'
 import { installExtensionForAgent } from '../extensions/install'
 import { buildSubagents } from './subagents'
 import { staysInProject } from './commandScope'
+import { planModeBlock } from './planGuard'
 import { githubDanger, githubDenyReason } from './githubGuard'
-import { PLAN_INSTRUCTIONS } from '@shared/plan'
+import { CLAUDE_PLAN_LIMITS, PLAN_INSTRUCTIONS } from '@shared/plan'
 import { briefBlock } from '../memory/brief'
 import { keyFactsBlock } from '../memory/store'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
@@ -63,6 +64,14 @@ If the user wants a new tool for you and Codex ("add a tool that...", "make an M
 Schedules: when the user wants something to happen on a schedule or after each Deploy ("every morning…", "check the site every 15 minutes"), call mcp__vibe_tools__save_schedule (and list_schedules to see or change existing ones). VibeApp runs those itself. Claude Code's own scheduling (the schedule and loop skills, CronCreate, RemoteTrigger, ScheduleWakeup) doesn't work inside VibeApp: don't use it.
 GitHub: VibeApp uploads the project to its GitHub copy itself (from Publish, after each request when that's on, or on a schedule) and brings in newer work from the user's other computer. Don't push, pull or merge with GitHub yourself unless the user asks. For a backup on a schedule, use save_schedule with the github_backup action.
 Deploy: when the user asks to deploy or put it live (or a plan step deploys), call mcp__vibe_tools__run_deploy. VibeApp runs the project's saved, checked Deploy steps with no AI and tells you how it went, which costs far less than deploying step by step yourself. If the project has none yet, offer to write one with save_deploy_recipe.`
+
+/** What Claude hears when Plan mode turns a tool call away. */
+function planDenyReason(blocked: string, refused: boolean): string {
+  if (refused) {
+    return `Plan mode is on, so VibeApp didn't let this ${blocked}. The user chose to keep planning in this request: change nothing, and finish with the plan.`
+  }
+  return `Plan mode is on, so VibeApp didn't let this ${blocked}. While planning, only look (read, search, read-only commands) and write the plan. If this was only to look or check, skip it or make it a step in the plan. If the user's message needs it done now, call mcp__vibe_tools__leave_plan_mode once, saying what you want to do and why: VibeApp asks the user.`
+}
 
 /** Claude Code's own scheduling, which doesn't run inside VibeApp: VibeApp's schedules are the way. */
 const OWN_SCHEDULING_TOOLS = new Set(['CronCreate', 'CronDelete', 'CronList', 'RemoteTrigger', 'ScheduleWakeup'])
@@ -161,6 +170,8 @@ export class ClaudeSession extends EventEmitter {
   private limitReported = false
   /** Plan mode is on for the next request. */
   private planning = false
+  /** This request, the user chose "Keep planning": leave_plan_mode doesn't ask again. */
+  private leavePlanRefused = false
   /** Set while a /compact turn runs; resolved when it ends. */
   private compaction: { resolve: (result: CompactResult | null) => void; result: CompactResult | null } | undefined
   /** Runs before Claude Code compacts on its own (near its limit), so what only the conversation knew is saved first. */
@@ -177,6 +188,25 @@ export class ClaudeSession extends EventEmitter {
   setRequestContext(context: RequestContext | undefined): void {
     this.requestContext = context
     this.codexThread = undefined
+    this.leavePlanRefused = false
+  }
+
+  /**
+   * Claude's leave_plan_mode: one prompt with what and why. Allowed, the rest of
+   * the request is a Build (Go Nutz's rules again if it's on); refused, Claude
+   * carries on planning and isn't asked about it again this request.
+   */
+  private async askToLeavePlan(what: string, why: string): Promise<string> {
+    if (!this.planning) return "Plan mode isn't on: go ahead."
+    if (this.leavePlanRefused) return 'The user already chose to keep planning in this request. Change nothing; finish with the plan.'
+    const approved = await this.requestConfirmation('leave_plan_mode', { what, why }, `Claude wants to leave Plan mode and build: ${what}`, { what, why })
+    if (!approved) {
+      this.leavePlanRefused = true
+      return 'The user chose to keep planning. Change nothing: finish exploring and write the plan, with what you wanted to do as steps in it.'
+    }
+    await this.setPlanning(false)
+    this.emit('event', { type: 'plan_left', what } satisfies VibeEvent)
+    return 'The user allowed it: Plan mode is off and the rest of this request is a normal Build. Go ahead with what you described.'
   }
 
   contextTokens(): number {
@@ -290,7 +320,8 @@ export class ClaudeSession extends EventEmitter {
         if (result.ok) refreshExtensionsForAllSessions()
         return result
       },
-      () => this.deployRunner?.() ?? Promise.resolve({ ok: false, text: 'Deploy is not available here.' })
+      () => this.deployRunner?.() ?? Promise.resolve({ ok: false, text: 'Deploy is not available here.' }),
+      (what, why) => this.askToLeavePlan(what, why)
     )
 
     const memoryServer = {
@@ -340,6 +371,18 @@ export class ClaudeSession extends EventEmitter {
           return {
             continue: true,
             hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: githubDenyReason(danger) }
+          }
+        }
+      }
+
+      // Plan mode: only looking, whatever the mode (Go Nutz too). Claude Code's own plan
+      // mode lets commands through, and VibeApp's tools are approved just below.
+      if (this.planning) {
+        const blocked = planModeBlock(toolInput.tool_name, toolInput.tool_input)
+        if (blocked) {
+          return {
+            continue: true,
+            hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: planDenyReason(blocked, this.leavePlanRefused) }
           }
         }
       }
@@ -416,7 +459,7 @@ export class ClaudeSession extends EventEmitter {
         // flag only takes effect once that mode is actually switched to.
         allowDangerouslySkipPermissions: true,
         resume: resumeSessionId,
-        planModeInstructions: PLAN_INSTRUCTIONS,
+        planModeInstructions: `${PLAN_INSTRUCTIONS}\n${CLAUDE_PLAN_LIMITS}`,
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
@@ -728,9 +771,9 @@ ${extensionInstructions(extensions)}` : ''}`
     { resolve: (approved: boolean, answers?: QuestionAnswers) => void; request: ConfirmationRequest }
   >()
 
-  private requestConfirmation(toolName: string, input: unknown, reason: string): Promise<boolean> {
+  private requestConfirmation(toolName: string, input: unknown, reason: string, leavePlan?: ConfirmationRequest['leavePlan']): Promise<boolean> {
     return new Promise((resolve) => {
-      const request: ConfirmationRequest = { id: randomUUID(), toolName, input, reason }
+      const request: ConfirmationRequest = { id: randomUUID(), toolName, input, reason, ...(leavePlan ? { leavePlan } : {}) }
       this.confirmationWaiters.set(request.id, { resolve: (approved) => resolve(approved), request })
       this.emit('confirmation_request', request)
     })

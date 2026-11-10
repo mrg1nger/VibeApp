@@ -263,6 +263,17 @@ button.active,
   gap: 0.5rem;
 }
 
+.leave-plan-banner > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.leave-plan-banner .confirmation-actions {
+  flex-shrink: 0;
+}
+
 .confirmation-actions button {
   padding: 0.4rem 0.9rem;
   border-radius: 6px;

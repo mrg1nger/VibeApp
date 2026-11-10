@@ -91,7 +91,9 @@ export function createCodexDelegationServer(
   /** Registers an MCP server the agent built as an extension (asks the user first). */
   installExtension?: (req: AgentInstallRequest) => Promise<{ ok: boolean; message: string }>,
   /** Runs the project's saved Deploy recipe (no AI) and describes how it went. */
-  runDeploy?: () => Promise<{ ok: boolean; text: string }>
+  runDeploy?: () => Promise<{ ok: boolean; text: string }>,
+  /** Plan mode: asks the user whether Claude may stop planning and do something now. */
+  leavePlan?: (what: string, why: string) => Promise<string>
 ): ReturnType<typeof createSdkMcpServer> {
   // Hand-offs share the project folder and the request's Codex session, and each one's
   // "files changed" comes from before/after snapshots, so two at once would edit the same
@@ -107,6 +109,20 @@ export function createCodexDelegationServer(
     name: 'vibe_tools',
     version: '1.0.0',
     tools: [
+      tool(
+        'leave_plan_mode',
+        "Plan mode only: ask the user to let you stop planning and do something now (VibeApp turned away a tool call because Plan mode is on). Use it only when the user's message needs it done now, not to look around or to run checks you could put in the plan. VibeApp shows the user one prompt with what and why; if they allow it, the rest of this request is a normal Build. Ask at most once per request.",
+        {
+          what: z.string().min(3).describe('What you want to do now, in plain words, e.g. "deploy the server, then check the live admin page".'),
+          why: z.string().min(3).describe('Why it needs doing now rather than in a plan, in plain words.')
+        },
+        async (args) => {
+          const text = leavePlan ? await leavePlan(args.what.slice(0, 400), args.why.slice(0, 400)) : 'Plan mode is not available here.'
+          return { content: [{ type: 'text' as const, text }] }
+        },
+        // Claude needs it at the moment a call is turned away, without a tool search first.
+        { alwaysLoad: true }
+      ),
       tool(
         'plan_progress',
         'While building a plan the user approved: report that a step (by its number in the plan) has started ("doing") or is finished ("done"). When a step finishes, pass next with the step you start now, so one call covers both. The user sees the plan as a checklist that ticks off as you go.',

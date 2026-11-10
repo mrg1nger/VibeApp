@@ -496,6 +496,10 @@ function ChatView({ project, onBack, onOpenHistory, onOpenMemory, onError, think
             const without = last === -1 ? prev : prev.filter((_, i) => i !== last)
             return [...without, { kind: 'plan_suggestion', text: event.text }]
           }
+          case 'plan_left':
+            // The switch shows what's really in effect, for the rest of this request and the next message.
+            if (!isReplay) setMode('build')
+            return [...prev, { kind: 'notice', text: `Left Plan mode with your OK, and switched to Build: ${event.what}` }]
           case 'plan_decided':
             return prev.map((item) =>
               item.kind === 'plan' && item.toolUseId === event.toolUseId ? { ...item, status: event.decision } : item
@@ -1338,6 +1342,22 @@ function ChatView({ project, onBack, onOpenHistory, onOpenMemory, onError, think
               onAnswer={(answers) => handleConfirmation(true, answers)}
               onSkip={() => handleConfirmation(false)}
             />
+          ) : confirmation?.leavePlan ? (
+            <div className="confirmation-banner leave-plan-banner" role="alertdialog" aria-label="Leave Plan mode?">
+              <div>
+                <strong>Claude wants to leave Plan mode and build.</strong>
+                <div>
+                  <em>What:</em> {confirmation.leavePlan.what}
+                </div>
+                <div>
+                  <em>Why:</em> {confirmation.leavePlan.why}
+                </div>
+              </div>
+              <div className="confirmation-actions">
+                <button onClick={() => handleConfirmation(true)}>Switch to Build and allow</button>
+                <button onClick={() => handleConfirmation(false)}>Keep planning</button>
+              </div>
+            </div>
           ) : confirmation && (
             <div className="confirmation-banner">
               <span>{confirmation.reason} Allow it?</span>

@@ -107,7 +107,7 @@ Then go to **Projects**. Start a new project in an empty folder, open an existin
 
 **The three modes**
 - **Build:** the agents change your project. You'll be asked first before anything destructive (deleting folders, force-pushing, wiping git history).
-- **Plan:** a read-only look around, then a numbered plan card. Each step is marked *(Claude)* or *(Codex)*. Approve it and the steps tick off as they're built.
+- **Plan:** a read-only look around, then a numbered plan card. Each step is marked *(Claude)* or *(Codex)*. Approve it and the steps tick off as they're built. Nothing changes while planning, Go Nutz or not: VibeApp turns away edits, commands that aren't read-only, Deploy and hand-offs. If your message needs something done now, Claude asks once, saying what and why, and switches to Build only if you allow it.
 - **Ask:** read-only answers, on a cheaper model. Plain questions typed in Build are answered this way automatically.
 
 **Go Nutz.** This switch lets the agents run without asking for confirmation. Some things stay blocked even then: deleting GitHub repositories, changing who can see them, and reading your GitHub sign-in.

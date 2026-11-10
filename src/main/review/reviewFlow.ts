@@ -63,6 +63,8 @@ export function handleSessionEvent(
   const turn = turns.get(projectId)
   // An error or a Stop leaves a half-finished change: not worth reviewing.
   if (turn && (event.type === 'error' || event.type === 'stopped')) turn.hadError = true
+  // Plan mode was left with the user's OK: what's built from here gets the usual review.
+  if (turn && event.type === 'plan_left') turn.skipReview = false
   if (turn && event.type === 'tool_call') {
     if (event.name === 'mcp__vibe_tools__run_codex_subtask') turn.delegated = true
     // Cline's work gets Codex's review like Claude's own: a different agent, so it's independent.
