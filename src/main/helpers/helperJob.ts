@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { clineUnavailable, resolveClineLaunch, runCline } from '../cli/clineExec'
+import { clineModelFor } from '../cli/clineAcp'
 import { getSettings } from '../settings/store'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { claudeHelpersAllowed } from '../usage/usage'
@@ -69,7 +70,6 @@ export async function runHelperJob(job: HelperJob): Promise<HelperResult> {
 }
 
 async function onCline(job: HelperJob): Promise<HelperResult> {
-  const settings = getSettings()
   const cwd = mkdtempSync(join(tmpdir(), `vibeapp-${job.kind}-`))
   try {
     const prompt = job.schema
@@ -79,7 +79,7 @@ async function onCline(job: HelperJob): Promise<HelperResult> {
       prompt,
       mode: 'helper',
       cwd,
-      model: settings.clineHelperModel ?? settings.clineModel ?? undefined,
+      model: await clineModelFor('helper'),
       thinking: 'none',
       system: CLINE_SYSTEM,
       timeoutMs: 4 * 60_000

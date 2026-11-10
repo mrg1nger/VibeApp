@@ -123,7 +123,7 @@ import { generateTheme } from '../themes/generate'
 import { claudeBlockedUntil, clearClaudeLimit, getUsage, noteClaudeLimit } from '../usage/usage'
 import { helpersAllowed } from '../helpers/helperJob'
 import { checkCline, clineStatus } from '../cli/clineExec'
-import { listClineModels } from '../cli/clineAcp'
+import { clineModelFor, listClineModels } from '../cli/clineAcp'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
@@ -1063,10 +1063,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:cline:status', () => clineStatus())
   // The ClinePass models Cline offers now, for the Settings menus (opens a session, sends nothing).
   ipc.handle('vibe:cline:models', (_event, refresh?: boolean) => listClineModels(!!refresh))
-  ipc.handle('vibe:cline:check', () => {
-    const settings = getSettings()
-    return checkCline(settings.clineHelperModel ?? settings.clineModel ?? undefined)
-  })
+  ipc.handle('vibe:cline:check', async () => checkCline(await clineModelFor('helper')))
 
   // The same, written up: by project, by kind of work, teamwork, the most expensive requests.
   ipc.handle('vibe:usage:report', async (_event, days: number, projectId?: string) => {

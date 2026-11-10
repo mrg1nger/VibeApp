@@ -5,6 +5,7 @@ import { join } from 'path'
 import * as z from 'zod/v4'
 import { codexReport, runCodexExec, type CodexExecArgs, type CodexExecResult } from '../cli/codexExec'
 import { runCline } from '../cli/clineExec'
+import { clineModelFor } from '../cli/clineAcp'
 import { progressNote } from '../cli/codexActivity'
 import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
@@ -387,7 +388,7 @@ export function createCodexDelegationServer(
                   prompt,
                   mode: 'build',
                   cwd: projectPath,
-                  model: settings.clineModel ?? undefined,
+                  model: await clineModelFor('handoff'),
                   goNutz: isGoNutzMode(),
                   timeoutMs: args.timeoutMs ?? HANDOFF_TIMEOUT_MS,
                   signal,

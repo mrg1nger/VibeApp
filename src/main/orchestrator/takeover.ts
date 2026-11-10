@@ -11,6 +11,7 @@ import { getSettings } from '../settings/store'
 import { countsFromCodexEvents, recordUsage } from '../usage/tokens'
 import { peekUsage, percentLeft } from '../usage/usage'
 import { runCline } from '../cli/clineExec'
+import { clineModelFor } from '../cli/clineAcp'
 import { clineReadyForHandoffs } from './routing'
 
 // When Claude's plan is used up, Codex takes the user's request directly:
@@ -292,7 +293,6 @@ async function runClineTakeover(req: TakeoverRequest, afterCodex = false): Promi
   let changes: FileChange[] | null = null
   let checks = ''
   try {
-    const settings = getSettings()
     const context = attempt(() => handoffContext(projectId, prompt, { text: req.text, element: req.element, images: req.images }))
     const result = await runCline(
       {
@@ -307,7 +307,7 @@ async function runClineTakeover(req: TakeoverRequest, afterCodex = false): Promi
           .join('\n\n'),
         mode: 'build',
         cwd: projectPath,
-        model: settings.clineModel ?? undefined,
+        model: await clineModelFor('handoff'),
         goNutz: req.unsandboxed,
         timeoutMs: TIMEOUT_MS,
         signal,

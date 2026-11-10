@@ -18,6 +18,7 @@ import {
   type ClineRunResult
 } from './clineExec'
 import { killTree, trackChild } from './codexExec'
+import { getSettings } from '../settings/store'
 
 // Cline hosted the way editors host it (Zed, JetBrains, Neovim): `cline --acp` keeps
 // running and VibeApp talks to it over the Agent Client Protocol (JSON-RPC on stdio).
@@ -444,6 +445,23 @@ export async function listClineModels(force = false): Promise<ClineModelList> {
   } finally {
     if (agent) shutDown(agent)
     removeLater(cwd)
+  }
+}
+
+/**
+ * The model a kind of Cline work uses. Unset means ClinePass's default as a hosted Cline
+ * reports it, the same for every kind of work: a one-off CLI run would otherwise use
+ * whatever the user's own Cline setup defaults to (found: hand-offs on Kimi K3.1 Pro,
+ * background jobs on MiniMax, both "default").
+ */
+export async function clineModelFor(use: 'handoff' | 'helper'): Promise<string | undefined> {
+  const settings = getSettings()
+  const chosen = use === 'helper' ? (settings.clineHelperModel ?? settings.clineModel) : settings.clineModel
+  if (chosen) return chosen
+  try {
+    return (await listClineModels()).defaultId
+  } catch {
+    return undefined
   }
 }
 
