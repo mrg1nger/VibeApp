@@ -135,7 +135,16 @@ function shutDown(agent: Agent): void {
   }
   for (const p of agent.pending.values()) p.reject(new Error('Cline has stopped.'))
   agent.pending.clear()
-  rmSync(agent.temp, { recursive: true, force: true })
+  removeLater(agent.temp)
+}
+
+/** Deletes a folder Cline may still be holding as it exits (Windows refuses until it's gone). */
+function removeLater(folder: string, tries = 5): void {
+  try {
+    rmSync(folder, { recursive: true, force: true })
+  } catch {
+    if (tries > 0) setTimeout(() => removeLater(folder, tries - 1), 1000).unref()
+  }
 }
 
 /** Ends every hosted Cline (VibeApp is quitting, or the tests are done). */
@@ -400,6 +409,41 @@ export async function runClineHosted(args: ClineRunArgs, onActivity?: (activity:
       running.idle = setTimeout(() => shutDown(running), IDLE_MS)
       running.idle.unref()
     }
+  }
+}
+
+export interface ClineModelList {
+  /** ClinePass models Cline offers now (id and its own name). */
+  models: { id: string; name: string }[]
+  /** What a hand-off uses when no model is chosen. */
+  defaultId?: string
+}
+
+let modelList: { at: number; list: ClineModelList } | undefined
+const MODEL_LIST_MS = 60 * 60_000
+
+/**
+ * The ClinePass models Cline offers right now, from a session that's opened and
+ * never sent anything (so it costs nothing). Cached for an hour.
+ */
+export async function listClineModels(force = false): Promise<ClineModelList> {
+  if (!force && modelList && Date.now() - modelList.at < MODEL_LIST_MS) return modelList.list
+  const cwd = mkdtempSync(join(tmpdir(), 'vibeapp-cline-models-'))
+  const key = JSON.stringify(['models', cwd])
+  let agent: Agent | undefined
+  try {
+    agent = await startAgent(key, { prompt: '', mode: 'helper', cwd })
+    const created = await request<{ models?: { currentModelId?: string; availableModels?: { modelId: string; name?: string }[] } }>(agent, 'session/new', { cwd, mcpServers: [] })
+    const models = (created.models?.availableModels ?? [])
+      .filter((m) => /^cline-pass\//.test(m.modelId))
+      .map((m) => ({ id: m.modelId, name: m.name || m.modelId.replace(/^cline-pass\//, '') }))
+    const currentModelId = created.models?.currentModelId
+    const list = { models, defaultId: currentModelId && /^cline-pass\//.test(currentModelId) ? currentModelId : undefined }
+    if (models.length) modelList = { at: Date.now(), list }
+    return list
+  } finally {
+    if (agent) shutDown(agent)
+    removeLater(cwd)
   }
 }
 

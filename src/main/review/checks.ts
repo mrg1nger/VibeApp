@@ -93,7 +93,9 @@ function runProjectTests(projectPath: string): Promise<{ passed: boolean; tail: 
       spawn(isWin ? 'cmd.exe' : 'sh', isWin ? ['/d', '/s', '/c', 'npm test'] : ['-c', 'npm test'], {
         cwd: projectPath,
         windowsHide: true,
-        env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1' }
+        // NODE_TEST_CONTEXT (set when VibeApp itself runs under a test runner) makes a
+        // project's `node --test` report to that runner and exit 0 even when tests fail.
+        env: { ...process.env, CI: '1', FORCE_COLOR: '0', NO_COLOR: '1', NODE_TEST_CONTEXT: undefined }
       })
     )
     let output = ''

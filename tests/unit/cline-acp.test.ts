@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { acpToolName, finishFromStop, permissionAnswer } from '../../src/main/cli/clineAcp'
 import type { ClinePolicy } from '../../src/main/cline/hookPolicy'
+import { CLINE_MODEL_NOTES, CLINE_RECOMMENDED, clineModelLabel } from '@shared/clineModels'
 
 const project = 'C:\\Users\\me\\Game'
 const build: ClinePolicy = { mode: 'build', projectPath: project }
@@ -31,6 +32,18 @@ test('permission requests get the same answers as the hook', () => {
   assert.equal(connector.allow, false)
   assert.match(connector.reason ?? '', /composio_search_tools/)
   assert.equal(permissionAnswer({ mode: 'review', projectPath: project }, 'editor: …', { path: `${project}\\a.js` }).allow, false, 'a review may not change files')
+})
+
+test('the model menus show test results, the pick, and refused models', () => {
+  assert.equal(clineModelLabel('cline-pass/kimi-k3.1-pro', 'Kimi K3.1 Pro', 'handoff'), 'Kimi K3.1 Pro (recommended · coding 3/3, ~19 s)')
+  assert.equal(clineModelLabel('cline-pass/kimi-k3.1-pro', 'Kimi K3.1 Pro', 'helper'), 'Kimi K3.1 Pro (recommended · memory 14/15 over 3 runs)')
+  assert.equal(clineModelLabel('cline-pass/glm-5.3', 'GLM 5.3', 'helper'), 'GLM 5.3 (memory 4/5)')
+  assert.equal(clineModelLabel('cline-pass/qwen3.7-plus', 'Qwen3.7 Plus', 'handoff'), 'Qwen3.7 Plus (refused when tested)')
+  assert.equal(clineModelLabel('cline-pass/brand-new', 'Brand New', 'handoff'), 'Brand New', 'an untested model is just its name')
+  // Every recommended model has results and isn't refused.
+  for (const id of Object.values(CLINE_RECOMMENDED)) {
+    assert.ok(id && CLINE_MODEL_NOTES[id] && !CLINE_MODEL_NOTES[id].refused, `${id} is a tested, working model`)
+  }
 })
 
 test("Cline's stop reasons become VibeApp's", () => {

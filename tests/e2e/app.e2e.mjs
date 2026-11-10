@@ -958,6 +958,27 @@ try {
     await sleep(500)
   })
 
+  await step("the Cline model menus list ClinePass's live models with test results, and save", async () => {
+    const selectFor = (label) =>
+      `[...document.querySelectorAll('.cline-settings .settings-field')].find((f) => f.querySelector('span')?.textContent === ${JSON.stringify(label)})?.querySelector('select')`
+    await click('Settings', '.app-nav-tabs button')
+    await waitFor(`(${selectFor('Model for hand-offs')})?.options.length > 3`, 'the Cline model list', 60_000)
+    const options = await evaluate(`[...(${selectFor('Model for hand-offs')}).options].map((o) => o.textContent)`)
+    console.log(`  (${options.length} choices; first: ${options.slice(0, 3).join(' | ')})`)
+    if (!/ClinePass's default \(/.test(options[0])) throw new Error(`no default line: ${options[0]}`)
+    if (!options.some((o) => /recommended/.test(o))) throw new Error('nothing marked recommended')
+    await evaluate(`document.querySelector('.cline-settings').scrollIntoView()`)
+    await shot('cline-models')
+    const choose = (label, value) =>
+      evaluate(`(() => { const s = ${selectFor(label)}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ${JSON.stringify(value)}); s.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+    await choose('Model for background jobs', 'cline-pass/glm-5.3')
+    await sleep(800)
+    if (JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8')).clineHelperModel !== 'cline-pass/glm-5.3') throw new Error('the choice was not saved')
+    await choose('Model for background jobs', '')
+    await sleep(800)
+    if (JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8')).clineHelperModel !== null) throw new Error('"Same as hand-offs" was not saved')
+  })
+
   await step('the Extensions screen lists tools to install', async () => {
     await click('Extensions', '.app-nav-tabs button')
     await waitFor(`/Up-to-date docs/.test(document.body.innerText)`, 'the catalog', 15_000)

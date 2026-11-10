@@ -8,6 +8,7 @@ import { GLOBAL_SCOPE, listFacts, rememberFact, usageSummary } from '../../src/m
 import { updateSettings } from '../../src/main/settings/store'
 import { weight } from '../../src/main/usage/report'
 import { projectId } from '../support/fixtures'
+import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
 
 // The background-job evaluation: the same memory-saving cases on Haiku and on
 // Cline (each model named), scored on getting them right, with time and
@@ -19,10 +20,12 @@ import { projectId } from '../support/fixtures'
 
 // 2026-11-10: minimax-m3.1-flash 15/15 over three runs (the pick), deepseek-v4.1-flash 13/15;
 // qwen3.7-plus, qwen3.7-max and mimo-v2.6-flash are listed by ClinePass but refused.
-const BACKENDS = (process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/minimax-m3.1-flash,cline-pass/deepseek-v4.1-flash,cline-pass/qwen3.8-max')
-  .split(',')
+// "all": every ClinePass model offered now (VIBEAPP_EVAL_HELPERS=all npm run eval -- helpers).
+const WANTED = process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/minimax-m3.1-flash,cline-pass/deepseek-v4.1-flash,cline-pass/qwen3.8-max'
+const BACKENDS = WANTED.split(',')
   .map((b) => b.trim())
   .filter(Boolean)
+after(() => stopHostedCline())
 
 interface Case {
   name: string
@@ -99,8 +102,20 @@ after(() => {
   console.log(`Saved to test-results/eval/${file}`)
 })
 
-for (const backend of BACKENDS) {
-  test(`background jobs: saving memory on ${backend}`, { timeout: 900_000 }, async () => {
+if (WANTED === 'all') {
+  test('background jobs: saving memory on every ClinePass model', { timeout: 240 * 60_000 }, async () => {
+    const models = (await listClineModels(true)).models.map((m) => m.id)
+    console.log(`  models: ${models.join(', ')}`)
+    for (const model of models) await evaluate(model, false)
+  })
+} else {
+  for (const backend of BACKENDS) {
+    test(`background jobs: saving memory on ${backend}`, { timeout: 900_000 }, () => evaluate(backend, true))
+  }
+}
+
+async function evaluate(backend: string, strict: boolean): Promise<void> {
+  {
     const onCline = backend !== 'haiku'
     updateSettings({ clineHelpers: onCline, clineHelperModel: onCline ? backend : null, autoMemory: true })
     const row: Row = { backend, passed: 0, total: CASES.length, failures: [], seconds: 0, tokens: 0, fellBack: false }
@@ -130,6 +145,7 @@ for (const backend of BACKENDS) {
     }
     row.seconds /= CASES.length
     rows.push(row)
-    assert.ok(row.passed >= CASES.length - 1, `${backend}: ${row.failures.join('; ')}`)
-  })
+    console.log(`  ${backend}: ${row.passed}/${row.total}${row.fellBack ? ' (some fell back to Haiku)' : ''}`)
+    if (strict) assert.ok(row.passed >= CASES.length - 1, `${backend}: ${row.failures.join('; ')}`)
+  }
 }
