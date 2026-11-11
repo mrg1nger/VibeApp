@@ -502,12 +502,39 @@ export interface MemoryFact {
   /** Set when a fact was forgotten (by an agent, the tidy-up, or merged into another); it can be restored. */
   forgottenAt: string | null
   forgottenReason: string | null
+  /** The fact that replaced this one (a correction or a merge), when it was forgotten for that. */
+  replacedBy: string | null
+  /** The project files this fact is about (on the Memory screen). */
+  files?: string[]
+  /** Why it may be out of date: one of its files changed a lot or is gone. */
+  mayBeOutdated?: string | null
 }
 
 export interface MemoryTidyResult {
   categorized: number
   merged: number
   outdated: number
+  /** Facts nobody had looked up in a long time, retired. */
+  unused: number
+  /** Facts marked "may be out of date" that were checked and kept. */
+  checked: number
+}
+
+/** How memory is searched on this computer (the Memory screen shows it). */
+export interface MemorySearchStatus {
+  byMeaning: boolean
+  model: string | null
+  facts: number
+  factsDone: number
+  files: number
+  filesDone: number
+}
+
+export interface ApprovedPlan {
+  id: number
+  title: string
+  text: string
+  approvedAt: string
 }
 
 export type MemoryScope = 'project' | 'global'

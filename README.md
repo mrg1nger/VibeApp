@@ -44,6 +44,7 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 **Memory and context**
 - **Shared memory** in a local SQLite database. Claude, Codex and Cline all read and write the same facts, procedures, to-dos and project brief.
 - **Found by meaning.** "Put it online" finds the fact about deploying, even with no word in common. A small language model does this on your own computer; nothing is sent anywhere for it.
+- **Knows when it may be old.** Facts are linked to the files they are about. When those files change a lot or are deleted, the agents are told the fact may be out of date, and the tidy-up checks it against the files. Facts nobody has looked up in two months of use are retired (restorable, as always).
 - **Background helpers** keep the memory tidy. They save what's worth remembering, merge duplicates, keep a ~500-word project brief and map the code.
 - **Long chats are compacted in place.** Rules, decisions and work in progress are kept, and a meter shows how full the chat is.
 

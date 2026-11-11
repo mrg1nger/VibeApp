@@ -2,6 +2,8 @@ import { loadTranscript } from '../projects/transcript'
 import { memoryDb } from './paths'
 import {
   addMessage,
+  outdatedNotes,
+  outdatedSuffix,
   countMessages,
   getMeta,
   recentHandoffs,
@@ -29,7 +31,8 @@ export async function prefetchBlock(projectId: string, text: string): Promise<st
     if (!facts.length && !files.length) return undefined
     const parts: string[] = []
     if (facts.length) {
-      parts.push(`Remembered facts:\n${facts.map((f) => `- [${f.category}] ${f.text} (id ${f.id})`).join('\n')}`)
+      const outdated = outdatedNotes(db, facts.map((f) => f.id))
+      parts.push(`Remembered facts:\n${facts.map((f) => `- [${f.category}] ${f.text} (id ${f.id})${outdatedSuffix(outdated.get(f.id))}`).join('\n')}`)
     }
     if (files.length) {
       parts.push(`Files that may be involved:\n${files.map((f) => `- ${f.path}: ${f.summary}`).join('\n')}`)

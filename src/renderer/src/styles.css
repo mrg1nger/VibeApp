@@ -2014,6 +2014,7 @@ textarea {
 }
 
 .memory-toolbar > button,
+.memory-toolbar > select,
 .memory-add-row select,
 .memory-row-actions select {
   padding: 0.45rem 0.8rem;
@@ -2075,6 +2076,18 @@ textarea {
 
 .memory-row-forgotten {
   opacity: 0.6;
+}
+
+.memory-outdated {
+  font-size: 0.75rem;
+  color: var(--warning-text);
+  overflow-wrap: anywhere;
+}
+
+.memory-plan-text {
+  max-height: 70vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
 }
 
 .memory-row-actions select {

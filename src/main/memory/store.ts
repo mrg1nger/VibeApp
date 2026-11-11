@@ -14,7 +14,7 @@ import { approvedPlanFact, planTitle } from '@shared/plan'
 /** Facts in the global scope apply to every project. */
 export const GLOBAL_SCOPE = 'global'
 
-const SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -192,6 +192,27 @@ CREATE TRIGGER IF NOT EXISTS code_vectors_au AFTER UPDATE OF summary, path ON co
 WHEN old.summary IS NOT new.summary OR old.path IS NOT new.path BEGIN
   DELETE FROM code_vectors WHERE file_id = old.id;
 END;
+
+-- Which files a fact is about, and how much each has changed since (lines added plus removed by
+-- VibeApp's requests). A fact whose file changed a lot, or is gone, may be out of date.
+CREATE TABLE IF NOT EXISTS fact_files (
+  fact_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  lines INTEGER NOT NULL DEFAULT 0,
+  churn INTEGER NOT NULL DEFAULT 0,
+  gone_at TEXT,
+  linked_at TEXT NOT NULL,
+  PRIMARY KEY (fact_id, path)
+);
+CREATE INDEX IF NOT EXISTS fact_files_path ON fact_files(path);
+CREATE TRIGGER IF NOT EXISTS fact_files_ad AFTER DELETE ON facts BEGIN
+  DELETE FROM fact_files WHERE fact_id = old.id;
+END;
+-- A fact reworded (by an agent, the note-taker or you) was said again with what is known now.
+CREATE TRIGGER IF NOT EXISTS fact_files_au AFTER UPDATE OF text ON facts WHEN old.text IS NOT new.text BEGIN
+  DELETE FROM fact_files WHERE fact_id = old.id AND gone_at IS NOT NULL;
+  UPDATE fact_files SET churn = 0 WHERE fact_id = old.id;
+END;
 `
 
 const databases = new Map<string, DatabaseSync>()
@@ -229,6 +250,9 @@ export function openMemory(dbPath: string, vectorExtension?: string): DatabaseSy
   for (const column of ['cline_fresh', 'cline_cached', 'cline_output']) {
     if (!requestColumns.has(column)) db.exec(`ALTER TABLE request_log ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`)
   }
+  const factColumns = new Set((db.prepare('PRAGMA table_info(facts)').all() as { name: string }[]).map((c) => c.name))
+  // Another process may add it between the look and the change.
+  if (!factColumns.has('replaced_by')) ignoreDuplicateColumn(() => db.exec('ALTER TABLE facts ADD COLUMN replaced_by TEXT'))
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   if (!getMeta(db, 'fixed_plan_facts_without_s')) {
     forgetDamagedPlanFacts(db)
@@ -244,6 +268,14 @@ export function openMemory(dbPath: string, vectorExtension?: string): DatabaseSy
   }
   databases.set(dbPath, db)
   return db
+}
+
+function ignoreDuplicateColumn(change: () => void): void {
+  try {
+    change()
+  } catch (err) {
+    if (!/duplicate column/i.test((err as Error).message)) throw err
+  }
 }
 
 /**
@@ -281,6 +313,7 @@ interface FactRow {
   use_count: number
   forgotten_at: string | null
   forgotten_reason: string | null
+  replaced_by?: string | null
 }
 
 function toFact(row: FactRow): MemoryFact {
@@ -295,7 +328,8 @@ function toFact(row: FactRow): MemoryFact {
     lastUsedAt: row.last_used_at,
     useCount: row.use_count,
     forgottenAt: row.forgotten_at,
-    forgottenReason: row.forgotten_reason
+    forgottenReason: row.forgotten_reason,
+    replacedBy: row.replaced_by ?? null
   }
 }
 
@@ -384,7 +418,7 @@ export function listFacts(db: DatabaseSync, scope: string, includeForgotten = fa
        ORDER BY key DESC, category, created_at`
     )
     .all(scope) as unknown as FactRow[]
-  return rows.map(toFact)
+  return withFileNotes(db, rows.map(toFact))
 }
 
 export function getFact(db: DatabaseSync, id: string): MemoryFact | null {
@@ -419,8 +453,9 @@ export function keyFactsBlock(db: DatabaseSync, projectId: string): string {
     .all(projectId, GLOBAL_SCOPE, projectId, KEY_FACT_LIMIT) as unknown as FactRow[]
   const lines: string[] = []
   let chars = 0
+  const outdated = outdatedNotes(db, rows.map((r) => r.id))
   for (const row of rows) {
-    const line = `- [${row.category}${row.scope === GLOBAL_SCOPE ? ', all projects' : ''}] ${row.text} (id ${row.id})`
+    const line = `- [${row.category}${row.scope === GLOBAL_SCOPE ? ', all projects' : ''}] ${row.text} (id ${row.id})${outdatedSuffix(outdated.get(row.id))}`
     if (chars + line.length > KEY_FACT_CHARS) break
     lines.push(line)
     chars += line.length
@@ -528,17 +563,207 @@ export function updateFact(
   return getFact(db, id)
 }
 
-/** Soft delete: forgotten facts stay restorable from the Memory screen. */
-export function forgetFact(db: DatabaseSync, id: string, reason: string): boolean {
+/** Soft delete: forgotten facts stay restorable from the Memory screen. `replacedBy`: the fact that says it now. */
+export function forgetFact(db: DatabaseSync, id: string, reason: string, replacedBy?: string): boolean {
   const result = db
-    .prepare('UPDATE facts SET forgotten_at = ?, forgotten_reason = ? WHERE id = ? AND forgotten_at IS NULL')
-    .run(now(), reason.slice(0, 200), id)
+    .prepare('UPDATE facts SET forgotten_at = ?, forgotten_reason = ?, replaced_by = ? WHERE id = ? AND forgotten_at IS NULL')
+    .run(now(), reason.slice(0, 200), replacedBy && replacedBy !== id ? replacedBy : null, id)
   return Number(result.changes) > 0
 }
 
 export function restoreFact(db: DatabaseSync, id: string): boolean {
-  const result = db.prepare('UPDATE facts SET forgotten_at = NULL, forgotten_reason = NULL WHERE id = ?').run(id)
+  const result = db.prepare('UPDATE facts SET forgotten_at = NULL, forgotten_reason = NULL, replaced_by = NULL WHERE id = ?').run(id)
   return Number(result.changes) > 0
+}
+
+// ---- the files a fact is about ------------------------------------------------------
+//
+// A fact is linked to the files it is about: the files a request changed when the note-taker
+// saved it, and any mapped file it names. Every later request adds the lines it changed in
+// those files to the link (churn). A fact whose file has changed by about its own length since,
+// or is gone, may be out of date: agents are told so, and the tidy-up checks it first.
+
+/** A file this small still needs this many changed lines before its facts count as possibly out of date. */
+const CHANGED_A_LOT_MIN_LINES = 20
+
+export interface LinkedFile {
+  path: string
+  /** Lines the file had when linked. */
+  lines: number
+}
+
+/** Links a fact to files as they are now (a link already there starts counting again). */
+export function linkFactFiles(db: DatabaseSync, factId: string, files: LinkedFile[]): void {
+  const stmt = db.prepare(
+    `INSERT INTO fact_files (fact_id, path, lines, churn, gone_at, linked_at) VALUES (?, ?, ?, 0, NULL, ?)
+     ON CONFLICT(fact_id, path) DO UPDATE SET lines = excluded.lines, churn = 0, gone_at = NULL, linked_at = excluded.linked_at`
+  )
+  const at = now()
+  for (const f of files) stmt.run(factId, f.path, Math.max(0, Math.round(f.lines)), at)
+}
+
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The mapped files a text names: by its path ("src/player.js"), or by its file name alone
+ * ("player.js") when no other mapped file has that name.
+ */
+export function namedFiles(text: string, paths: string[]): string[] {
+  const flat = text.replace(/\\/g, '/').toLowerCase()
+  const byName = new Map<string, string[]>()
+  for (const p of paths) {
+    const name = p.split('/').pop()!.toLowerCase()
+    byName.set(name, [...(byName.get(name) ?? []), p])
+  }
+  const named = (needle: string): boolean => new RegExp(`(?<![\\w/.-])${escapeRegex(needle)}(?![\\w/-])`).test(flat)
+  return paths.filter((p) => {
+    if (named(p.toLowerCase())) return true
+    const name = p.split('/').pop()!.toLowerCase()
+    // A bare name needs an extension and must be the only file called that ("index.js" in two folders says nothing).
+    return name.includes('.') && name.length >= 6 && byName.get(name)!.length === 1 && named(name)
+  })
+}
+
+/** Links each of the project's facts to the mapped files it names (links already there are left as they are). */
+export function linkNamedFiles(db: DatabaseSync, projectId: string, paths: string[], linesOf: (path: string) => number): number {
+  if (!paths.length) return 0
+  const facts = db.prepare('SELECT id, text FROM facts WHERE scope = ? AND forgotten_at IS NULL').all(projectId) as { id: string; text: string }[]
+  const insert = db.prepare('INSERT OR IGNORE INTO fact_files (fact_id, path, lines, churn, gone_at, linked_at) VALUES (?, ?, ?, 0, NULL, ?)')
+  const at = now()
+  let linked = 0
+  transaction(db, () => {
+    for (const fact of facts) {
+      for (const path of namedFiles(fact.text, paths)) linked += Number(insert.run(fact.id, path, linesOf(path), at).changes)
+    }
+  })
+  return linked
+}
+
+/**
+ * A request changed these files (lines added and removed) and deleted these: counted against the
+ * facts about them. Facts saved or reworded since `since` (the request's start) already say how
+ * things are after it, so they are left out.
+ */
+export function noteFileChanges(
+  db: DatabaseSync,
+  projectId: string,
+  changes: { path: string; added: number; removed: number }[],
+  gone: string[],
+  since?: string
+): void {
+  const ofProject = `fact_id IN (SELECT id FROM facts WHERE scope = ?${since ? ' AND updated_at < ?' : ''})`
+  const grow = db.prepare(`UPDATE fact_files SET churn = churn + ?, gone_at = NULL WHERE path = ? AND ${ofProject}`)
+  const goneNow = db.prepare(`UPDATE fact_files SET gone_at = ? WHERE path = ? AND gone_at IS NULL AND ${ofProject}`)
+  const at = now()
+  const deleted = new Set(gone)
+  const scope = since ? [projectId, since] : [projectId]
+  transaction(db, () => {
+    for (const c of changes) if (!deleted.has(c.path)) grow.run(c.added + c.removed, c.path, ...scope)
+    for (const path of deleted) goneNow.run(at, path, ...scope)
+  })
+}
+
+interface LinkRow {
+  fact_id: string
+  path: string
+  lines: number
+  churn: number
+  gone_at: string | null
+}
+
+function linksOf(db: DatabaseSync, ids: string[]): LinkRow[] {
+  const out: LinkRow[] = []
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500)
+    out.push(
+      ...(db
+        .prepare(`SELECT fact_id, path, lines, churn, gone_at FROM fact_files WHERE fact_id IN (${chunk.map(() => '?').join(',')}) ORDER BY path`)
+        .all(...chunk) as unknown as LinkRow[])
+    )
+  }
+  return out
+}
+
+const changedALot = (link: LinkRow): boolean => link.churn >= Math.max(CHANGED_A_LOT_MIN_LINES, link.lines)
+
+function outdatedReason(links: LinkRow[]): string | null {
+  const reasons = links.flatMap((l) =>
+    l.gone_at ? [`${l.path} is gone`] : changedALot(l) ? [`${l.path} has changed a lot since (${l.churn} lines)`] : []
+  )
+  return reasons.length ? reasons.slice(0, 3).join('; ') : null
+}
+
+/** Why each of these facts may be out of date (only those that may be). */
+export function outdatedNotes(db: DatabaseSync, ids: string[]): Map<string, string> {
+  const byFact = new Map<string, LinkRow[]>()
+  for (const link of linksOf(db, ids)) byFact.set(link.fact_id, [...(byFact.get(link.fact_id) ?? []), link])
+  const out = new Map<string, string>()
+  for (const [id, links] of byFact) {
+    const reason = outdatedReason(links)
+    if (reason) out.set(id, reason)
+  }
+  return out
+}
+
+/** The facts with their files and, where it applies, why they may be out of date. */
+export function withFileNotes(db: DatabaseSync, facts: MemoryFact[]): MemoryFact[] {
+  const byFact = new Map<string, LinkRow[]>()
+  for (const link of linksOf(db, facts.map((f) => f.id))) byFact.set(link.fact_id, [...(byFact.get(link.fact_id) ?? []), link])
+  return facts.map((f) => {
+    const links = byFact.get(f.id) ?? []
+    return { ...f, files: links.map((l) => l.path), mayBeOutdated: f.forgottenAt ? null : outdatedReason(links) }
+  })
+}
+
+/** A fact's line for an agent, with the warning when it may be out of date. */
+export function outdatedSuffix(note: string | undefined): string {
+  return note ? ` [may be out of date: ${note}]` : ''
+}
+
+/** The facts in a scope that may be out of date. */
+export function possiblyOutdatedFacts(db: DatabaseSync, scope: string): MemoryFact[] {
+  return withFileNotes(db, listFacts(db, scope)).filter((f) => f.mayBeOutdated)
+}
+
+/** Checked and still true: the links start counting again, and links to files that are gone are dropped. */
+export function confirmFactFiles(db: DatabaseSync, factId: string): void {
+  db.prepare('DELETE FROM fact_files WHERE fact_id = ? AND gone_at IS NOT NULL').run(factId)
+  db.prepare('UPDATE fact_files SET churn = 0, linked_at = ? WHERE fact_id = ?').run(now(), factId)
+}
+
+/** A correction is about the same files as the fact it replaces (counted afresh). */
+export function carryFactFiles(db: DatabaseSync, fromId: string, toId: string): void {
+  if (fromId === toId) return
+  db.prepare(
+    `INSERT OR IGNORE INTO fact_files (fact_id, path, lines, churn, gone_at, linked_at)
+     SELECT ?, path, lines, 0, NULL, ? FROM fact_files WHERE fact_id = ? AND gone_at IS NULL`
+  ).run(toId, now(), fromId)
+}
+
+// ---- facts nobody looks up -------------------------------------------------------------
+
+/** A fact not looked up for this long, while the project was in use (see below), is retired. */
+export const UNUSED_DAYS = 60
+/** ...and over at least this many of the project's requests: a project left alone for a while loses nothing. */
+export const UNUSED_REQUESTS = 30
+
+/**
+ * The project's facts that nobody has looked up (searched, or attached to a request) for
+ * UNUSED_DAYS and UNUSED_REQUESTS since they were last used or saved. Never key facts, and never
+ * the global ones (the user's preferences).
+ */
+export function unusedFacts(db: DatabaseSync, projectId: string, at = Date.now()): MemoryFact[] {
+  const cutoff = new Date(at - UNUSED_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  const rows = db
+    .prepare(
+      `SELECT f.* FROM facts f
+       WHERE f.scope = ? AND f.scope != ? AND f.key = 0 AND f.forgotten_at IS NULL
+         AND COALESCE(f.last_used_at, f.updated_at) < ?
+         AND (SELECT COUNT(*) FROM messages m WHERE m.project_id = f.scope AND m.role = 'user'
+              AND m.created_at > COALESCE(f.last_used_at, f.updated_at)) >= ?`
+    )
+    .all(projectId, GLOBAL_SCOPE, cutoff, UNUSED_REQUESTS) as unknown as FactRow[]
+  return rows.map(toFact)
 }
 
 /** Permanent delete (the user's Delete button). */
@@ -1171,10 +1396,11 @@ export function eraseProjectFromMemory(
     count('DELETE FROM request_log WHERE project_id = ?')
     count('DELETE FROM todos WHERE project_id = ?')
     count('DELETE FROM notes WHERE project_id = ?')
-    db.prepare('DELETE FROM meta WHERE key IN (?, ?, ?)').run(
+    db.prepare('DELETE FROM meta WHERE key IN (?, ?, ?, ?)').run(
       `history_imported:${projectId}`,
       `tidy:${projectId}`,
-      `catchup:${projectId}`
+      `catchup:${projectId}`,
+      `linked_named_files:${projectId}`
     )
     return { facts, messages, handoffs, files }
   })

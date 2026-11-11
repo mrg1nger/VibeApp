@@ -34,7 +34,9 @@ import {
   listTodos,
   addTodo,
   updateTodo,
-  getNotes
+  getNotes,
+  outdatedNotes,
+  outdatedSuffix
 } from './store'
 import { askApp } from './searchClient'
 
@@ -60,7 +62,7 @@ const oneLine = (value, max) => {
 const db = openMemory(dbPath)
 const CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other']
 const text = (value) => ({ content: [{ type: 'text', text: value }] })
-const describe = (f) => `- [${f.category}${f.key ? ', key' : ''}] ${f.text} (id ${f.id})`
+const describe = (f, outdated) => `- [${f.category}${f.key ? ', key' : ''}] ${f.text} (id ${f.id})${outdatedSuffix(outdated?.get(f.id))}`
 
 // Searches go to the running app, which searches by meaning (it holds the language model).
 // When it can't be asked, the keyword search here answers instead.
@@ -95,7 +97,8 @@ server.registerTool(
   async ({ query }) => {
     if (!query?.trim()) return text(`Key facts:\n${keyFactsBlock(db, projectId)}`)
     const found = await findFacts(query, 12)
-    return text(found.length ? `Matches for "${query}":\n${found.map(describe).join('\n')}` : `Nothing remembered matches "${query}".`)
+    const outdated = outdatedNotes(db, found.map((f) => f.id))
+    return text(found.length ? `Matches for "${query}":\n${found.map((f) => describe(f, outdated)).join('\n')}` : `Nothing remembered matches "${query}".`)
   }
 )
 

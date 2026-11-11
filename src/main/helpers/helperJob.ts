@@ -56,8 +56,16 @@ async function clineReady(): Promise<boolean> {
   return getSettings().clineHelpers && !clineUnavailable() && !!(await resolveClineLaunch())
 }
 
+/** Unit tests answer background jobs themselves (no model, no usage). */
+let answerForTests: ((job: HelperJob) => Promise<HelperResult>) | undefined
+
+export function setHelperJobForTests(answer: ((job: HelperJob) => Promise<HelperResult>) | undefined): void {
+  answerForTests = answer
+}
+
 /** Runs one background job: on Cline when it's set up, otherwise (or if Cline fails) on Haiku. */
 export async function runHelperJob(job: HelperJob): Promise<HelperResult> {
+  if (answerForTests) return answerForTests(job)
   if (await clineReady()) {
     try {
       return await onCline(job)

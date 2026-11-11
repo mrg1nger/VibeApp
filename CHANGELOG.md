@@ -2,6 +2,16 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.7.0 (2026-11-11)
+
+Third step of the memory work (Memory v3): **memory knows when it may be old.**
+- **Facts are linked to the files they are about.** When the note-taker saves something after a request, it is linked to the files that request changed and the fact is about. A fact that names a file ("prices are in shop.js") is linked to it too.
+- **"May be out of date."** Every request's changes are counted against the facts about those files. When a file has changed by about its own length since, or is deleted, Claude, Codex and Cline see the fact marked "may be out of date" (and why), and so does the Memory screen.
+- **The tidy-up checks those first.** It reads the files as they are now and retires a fact they clearly contradict; one they don't contradict is kept and counts as up to date again. Tested on the background models: Kimi K3.1 Pro and MiniMax M3.1 Flash got all 24 cases right over three runs, Haiku all 8.
+- **Facts nobody looks up are retired**: none looked up (searched, or attached to a request) for 60 days and 30 of the project's requests. Never key facts or your preferences for every project, and a project you leave alone for a while loses nothing. Retired facts stay under Show forgotten.
+- **Which fact replaced which.** A corrected or merged fact says what replaced it, under Show forgotten.
+- **On the Memory screen:** a "Useful lately" order (most recently looked up first); the files each fact is about; whether memory is searched by meaning on this computer; and approved plans, which open in full (from their fact, or the new Approved plans list).
+
 ## 0.6.0 (2026-11-10)
 
 Second step of the memory work (Memory v3): **memory is searched by what you mean, not by matching words.**

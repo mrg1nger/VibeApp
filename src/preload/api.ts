@@ -9,6 +9,8 @@ import type {
   MemoryFact,
   MemoryScope,
   MemoryTidyResult,
+  MemorySearchStatus,
+  ApprovedPlan,
   ModelOption,
   CodexModelList,
   ExtensionCheck,
@@ -257,7 +259,10 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
       restore: (id: string): Promise<boolean> => ipcRenderer.invoke('vibe:memory:restore', id),
       delete: (id: string): Promise<boolean> => ipcRenderer.invoke('vibe:memory:delete', id),
       tidy: (projectId: string, scope: MemoryScope): Promise<MemoryTidyResult> =>
-        ipcRenderer.invoke('vibe:memory:tidy', projectId, scope)
+        ipcRenderer.invoke('vibe:memory:tidy', projectId, scope),
+      searchStatus: (): Promise<MemorySearchStatus> => ipcRenderer.invoke('vibe:memory:searchStatus'),
+      plans: (projectId: string): Promise<ApprovedPlan[]> => ipcRenderer.invoke('vibe:memory:plans', projectId),
+      plan: (projectId: string, id: number): Promise<ApprovedPlan | null> => ipcRenderer.invoke('vibe:memory:plan', projectId, id)
     },
 
     settings: {

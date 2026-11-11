@@ -4,15 +4,19 @@ import { runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
 import { recentNotableCommands } from './commands'
 import {
+  carryFactFiles,
   forgetFact,
   getFact,
   GLOBAL_SCOPE,
   listFacts,
+  outdatedNotes,
+  outdatedSuffix,
   recentHandoffs,
   recentMessages,
   rememberFact
 } from './store'
 import { recallFacts } from './meaning'
+import { linkFact } from './links'
 
 // After each request, a cheap background pass (Cline, or Haiku) decides what (if anything) is worth
 // remembering. Having Claude and Codex do it themselves cost each of them an
@@ -31,12 +35,21 @@ export interface TurnRecord {
   commands?: string[]
   /** The last look before a fresh session: save everything a newcomer would need. */
   thorough?: boolean
+  /** The project files the request changed, for linking what is saved to them. */
+  files?: string[]
+  projectPath?: string
 }
 
 export interface ScribeResult {
   added: number
   updated: number
   forgotten: number
+}
+
+const FILES: JsonSchema = {
+  type: 'array',
+  items: { type: 'string' },
+  description: 'Paths from FILES CHANGED that this fact is about; [] if none or unsure'
 }
 
 const SCHEMA: JsonSchema = {
@@ -51,6 +64,7 @@ const SCHEMA: JsonSchema = {
           category: { type: 'string', enum: [...MEMORY_CATEGORIES] },
           key: { type: 'boolean' },
           global: { type: 'boolean' },
+          files: FILES,
           // Forces a decision: a one-off instruction for this task isn't a preference.
           standing: {
             type: 'boolean',
@@ -58,7 +72,7 @@ const SCHEMA: JsonSchema = {
               'true only if the user stated this as how things should generally be (always/never/I prefer), not as an instruction for this one task'
           }
         },
-        required: ['text', 'category', 'key', 'global', 'standing'],
+        required: ['text', 'category', 'key', 'global', 'files', 'standing'],
         additionalProperties: false
       }
     },
@@ -66,8 +80,8 @@ const SCHEMA: JsonSchema = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { id: { type: 'string' }, text: { type: 'string' } },
-        required: ['id', 'text'],
+        properties: { id: { type: 'string' }, text: { type: 'string' }, files: FILES },
+        required: ['id', 'text', 'files'],
         additionalProperties: false
       }
     },
@@ -86,8 +100,8 @@ const SCHEMA: JsonSchema = {
 }
 
 interface Plan {
-  add: { text: string; category: MemoryCategory; key: boolean; global: boolean; standing: boolean }[]
-  update: { id: string; text: string }[]
+  add: { text: string; category: MemoryCategory; key: boolean; global: boolean; files?: string[]; standing: boolean }[]
+  update: { id: string; text: string; files?: string[] }[]
   forget: { id: string; reason: string }[]
 }
 
@@ -101,6 +115,7 @@ function clip(text: string, max: number): string {
 function buildPrompt(turn: TurnRecord, known: string[]): string {
   const actions = turn.actions.length ? turn.actions.slice(-25).join('\n') : '(none)'
   const commands = turn.commands?.length ? turn.commands.slice(-25).join('\n') : ''
+  const files = turn.files?.length ? turn.files.slice(0, 30).join('\n') : ''
   const limit = turn.thorough ? MAX_CHANGES_THOROUGH : MAX_CHANGES
   const replies = turn.replies.map((r) => clip(r, 2500)).join('\n---\n') || '(no reply)'
   return `You keep the long-term memory of a software project that an AI coding assistant works on. After each exchange you decide what, if anything, is worth remembering for future sessions.
@@ -113,7 +128,8 @@ Be conservative: most exchanges produce nothing, so return empty lists. One stan
 Record only what the exchange actually says or clearly shows. Never add details that weren't stated (ports, versions, file names, commands), even if they would be typical. When correcting a known fact, state only what is now known to be true: drop details that belonged to the old version (an old port, path or option) unless the exchange confirms they still hold.
 A preference or rule counts only if the USER said it and it plainly applies beyond this one task. What the assistant chose to do is not a preference of the user's. Instructions for this task alone ("keep it tiny", "just acknowledge", "no code changes") are not preferences. Don't save the same idea twice in different words, and save at most ${limit} facts.
 Only mark a fact "key" if it is the project's description, how to run it, or a standing rule the user gave.
-Prefer correcting a known fact (update, using its id) over adding one that contradicts it; use forget when a known fact is now plainly untrue. "global" is only for the user's preferences that apply to ALL their projects. "key" is only for facts needed on almost every request.
+Prefer correcting a known fact (update, using its id) over adding one that contradicts it; use forget when a known fact is now plainly untrue. A known fact marked "may be out of date" had its files changed a lot since it was saved: if this exchange shows what is true now, correct or forget it.
+For every fact you add or update, list in files the paths from FILES CHANGED that it is about (none, if it isn't about particular files or there is no such list). "global" is only for the user's preferences that apply to ALL their projects. "key" is only for facts needed on almost every request.
 
 Known facts (id, category):
 ${known.length ? known.join('\n') : '(none yet)'}
@@ -121,7 +137,7 @@ ${known.length ? known.join('\n') : '(none yet)'}
 The exchange:
 USER: ${clip(turn.request, 3000)}
 WHAT WAS DONE:
-${actions}${commands ? `\nCOMMANDS THAT WERE RUN:\n${commands}` : ''}
+${actions}${files ? `\nFILES CHANGED:\n${files}` : ''}${commands ? `\nCOMMANDS THAT WERE RUN:\n${commands}` : ''}
 ASSISTANT'S REPLY:
 ${replies}${turn.thorough ? '\n\nThis is the last look before the conversation moves to a fresh session that will not remember any of it. Be thorough: save every durable thing a newcomer would need that is not already known (procedures, services and where they run, standing rules, decisions and why, non-obvious pitfalls), up to the limit.' : ''}`
 }
@@ -173,10 +189,14 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
   const topic = `${turn.request} ${turn.replies.join(' ')}`.slice(0, 1500)
   for (const f of await recallFacts(db, projectId, topic, 15)) consider(f.id, f.category, f.text, projectId)
 
+  // A fact that may be out of date says so, so this exchange can put it right.
+  const outdated = outdatedNotes(db, [...seen.keys()])
+  const known = [...seen.entries()].slice(0, 45).map(([id, line]) => `${line}${outdatedSuffix(outdated.get(id))}`)
+
   const answer = await runHelperJob({
     kind: 'scribe',
     projectId,
-    prompt: buildPrompt(turn, [...seen.values()].slice(0, 45)),
+    prompt: buildPrompt(turn, known),
     schema: SCHEMA
   })
   const plan = answer.structured as Plan | undefined
@@ -192,6 +212,11 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
   const written: string[] = []
   const evidence = [turn.request, ...turn.replies, ...turn.actions, ...(turn.commands ?? [])].join('\n')
   const maxChanges = turn.thorough ? MAX_CHANGES_THOROUGH : MAX_CHANGES
+  const changed = turn.files ?? []
+  const link = (factId: string, text: string, chosen: string[] | undefined, scope: string): void => {
+    // The user's preferences for every project aren't about this project's files.
+    if (turn.projectPath && scope !== GLOBAL_SCOPE) linkFact(projectId, turn.projectPath, factId, text, Array.isArray(chosen) ? chosen : [], changed)
+  }
 
   for (const raw of plan.update.slice(0, maxChanges)) {
     const old = getFact(db, raw.id)
@@ -202,7 +227,10 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
     // overwriting it, so an automatic correction can always be undone.
     const row = db.prepare('SELECT scope FROM facts WHERE id = ?').get(item.id) as { scope: string }
     if (!forgetFact(db, item.id, 'corrected automatically')) continue
-    rememberFact(db, row.scope, item.text, 'scribe', { category: old.category, key: old.key })
+    const saved = rememberFact(db, row.scope, item.text, 'scribe', { category: old.category, key: old.key }).fact
+    db.prepare('UPDATE facts SET replaced_by = ? WHERE id = ? AND id != ?').run(saved.id, item.id, saved.id)
+    carryFactFiles(db, item.id, saved.id)
+    link(saved.id, saved.text, item.files, row.scope)
     written.push(item.text)
     result.updated++
   }
@@ -218,12 +246,14 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
     // A "preference" the user only gave for this one task isn't one.
     if (item.category === 'preference' && !item.standing) continue
     if (written.some((w) => overlap(w, item.text) >= 0.6)) continue
-    rememberFact(db, item.global ? GLOBAL_SCOPE : projectId, item.text, 'scribe', {
+    const scope = item.global ? GLOBAL_SCOPE : projectId
+    const saved = rememberFact(db, scope, item.text, 'scribe', {
       category: item.category,
       // Key facts are in every session's instructions, so a long one (a
       // procedure) stays searchable instead of being carried everywhere.
       key: item.key && item.text.length <= 400
-    })
+    }).fact
+    link(saved.id, saved.text, item.files, scope)
     written.push(item.text)
     result.added++
   }

@@ -1,12 +1,13 @@
 import { execFile } from 'child_process'
-import { readFileSync, statSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { extname, join } from 'path'
 import { promisify } from 'util'
 import { getSettings } from '../settings/store'
 import { helpersAllowed, runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
 import { fillVectorsInBackground } from './meaning'
-import { codeHashes, countCodeFiles, hashFile, removeCodeFiles, saveCodeSummaries, type CodeFile } from './store'
+import { linkNamedFilesInProject } from './links'
+import { codeHashes, countCodeFiles, getMeta, hashFile, noteFileChanges, removeCodeFiles, saveCodeSummaries, setMeta, type CodeFile } from './store'
 
 const execFileAsync = promisify(execFile)
 
@@ -106,7 +107,11 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
     }
 
     const removed = [...stored.keys()].filter((p) => !current.has(p))
-    if (removed.length) removeCodeFiles(db, projectId, removed)
+    if (removed.length) {
+      removeCodeFiles(db, projectId, removed)
+      // Deleted outside a request too: the facts about them may be out of date.
+      noteFileChanges(db, projectId, [], removed.filter((p) => !existsSync(join(projectPath, p))))
+    }
 
     // New files first, then changed ones.
     const todo = [...current.keys()]
@@ -138,6 +143,12 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
     }
     // New summaries get their search vectors now, not during the next search.
     if (summarized) void fillVectorsInBackground(db)
+    // Also once for facts saved before facts were linked to files (0.7.0).
+    const firstLinks = `linked_named_files:${projectId}`
+    if (summarized || removed.length || !getMeta(db, firstLinks)) {
+      linkNamedFilesInProject(projectId, projectPath)
+      setMeta(db, firstLinks, new Date().toISOString())
+    }
     return { summarized, removed: removed.length, pending: Math.max(0, todo.length - batch.length) }
   } finally {
     running.delete(projectId)

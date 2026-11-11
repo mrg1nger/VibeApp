@@ -4,10 +4,13 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { runScribe, type TurnRecord } from '../../src/main/memory/scribe'
 import { memoryDb } from '../../src/main/memory/paths'
-import { deleteFact, GLOBAL_SCOPE, listFacts, rememberFact, usageSummary } from '../../src/main/memory/store'
+import { deleteFact, GLOBAL_SCOPE, linkFactFiles, listFacts, noteFileChanges, rememberFact, usageSummary } from '../../src/main/memory/store'
+import { tidyMemory } from '../../src/main/memory/tidy'
+import { recordProjectOpened } from '../../src/main/projects/store'
 import { updateSettings } from '../../src/main/settings/store'
 import { weight } from '../../src/main/usage/report'
-import { projectId } from '../support/fixtures'
+import type { MemoryCategory } from '@shared/types'
+import { makeProject, projectId } from '../support/fixtures'
 import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
 
 // The background-job evaluation: the same memory-saving cases on Haiku and on
@@ -21,6 +24,9 @@ import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
 // 2026-11-10 (0.5.5, six cases): all 10 models ClinePass runs 6/6; kimi-k3.1-pro and minimax-m3.1-flash
 // 18/18 over three runs. qwen3.7-plus/max, minimax-m3 and mimo-v2.6-flash/pro are listed but refused.
 // Scores before 0.5.5 are not comparable: a global rule saved by one model was shown to the next as known.
+// 2026-11-11 (0.7.0, eight cases with the two about memory's age): kimi-k3.1-pro and minimax-m3.1-flash 24/24
+// over three runs, haiku 8/8. Before the check was told when a file is shown only in part, both ClinePass
+// models retired a fact whose proof lay further down the file.
 // "all": every ClinePass model offered now (VIBEAPP_EVAL_HELPERS=all npm run eval -- helpers).
 const WANTED = process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/minimax-m3.1-flash,cline-pass/deepseek-v4.1-flash,cline-pass/qwen3.8-max'
 const BACKENDS = WANTED.split(',')
@@ -82,6 +88,67 @@ const CASES: Case[] = [
   }
 ]
 
+/**
+ * Memory that knows when it's old (0.7.0): the note-taker names the files a fact is about, and
+ * the tidy-up checks facts whose files changed a lot or are gone. Each returns what's wrong, or null.
+ */
+const AGE_CASES: { name: string; run: () => Promise<string | null> }[] = [
+  {
+    name: 'a saved fact is linked to the file it is about, not every file the request changed',
+    run: async () => {
+      const dir = makeProject({ 'src/save.js': "export const SAVE_KEY = 'save-v2'\n", 'src/hud.js': "export const coinColour = 'gold'\n" })
+      const pid = projectId('helpers_links')
+      await runScribe(pid, {
+        request: 'Remember this: progress is now saved under the key save-v2 (it was save-v1). Also make the coin counter gold.',
+        replies: ['Done: SAVE_KEY in src/save.js is now save-v2, and the HUD coin counter is gold.'],
+        actions: ['Edited src/save.js', 'Edited src/hud.js'],
+        stopped: false,
+        hadError: false,
+        files: ['src/save.js', 'src/hud.js'],
+        projectPath: dir
+      })
+      const facts = listFacts(memoryDb(), pid)
+      const save = facts.find((f) => /save-v2/.test(f.text))
+      if (!save) return `didn't save the save key: ${facts.map((f) => f.text).join(' | ') || '(nothing)'}`
+      if (!save.files?.includes('src/save.js')) return `the save-key fact isn't linked to src/save.js (linked: ${save.files?.join(', ') || 'nothing'})`
+      if (save.files.includes('src/hud.js')) return 'the save-key fact is linked to src/hud.js too'
+      return null
+    }
+  },
+  {
+    name: 'the tidy-up retires facts its changed files contradict and keeps the others',
+    run: async () => {
+      const dir = makeProject({
+        'src/sprites.js': '// Every enemy, the player and the coins are drawn here from one sprite sheet.\nexport function drawSprite(ctx, sheet, frame, x, y) {}\n',
+        'src/score.js': '// Points\nexport const COIN_POINTS = 10\nexport const ENEMY_POINTS = 50\nexport function addScore(state, n) { state.score += n }\n',
+        'src/input.js': "// Controls\nexport const keys = { jump: 'ArrowUp', left: 'ArrowLeft', right: 'ArrowRight' }\n",
+        // Long: the font rule is past what the check is shown, so the file doesn't show either way.
+        'src/hud.css': `.hud { position: absolute; top: 8px; right: 8px; }\n.coins { color: gold; }\n${Array.from({ length: 60 }, (_, i) => `.hud-row-${i} { margin-top: ${i}px; }`).join('\n')}\n.hud, .coins { font-family: 'Press Start 2P', monospace; }\n`
+      })
+      const scope = recordProjectOpened(dir).id
+      const db = memoryDb()
+      const fact = (text: string, category: MemoryCategory = 'decision') => rememberFact(db, scope, text, 'user', { category }).fact
+      fact('The game is a 2D platformer for the browser.', 'about')
+      fact('Levels are stored as JSON files in levels/.')
+      const gone = fact('Enemies are drawn one by one in src/enemies.js.')
+      const coins = fact('A coin is worth 10 points (src/score.js).')
+      const jump = fact('Jumping uses the space bar (src/input.js).')
+      const font = fact('The HUD uses the Press Start 2P font (src/hud.css).')
+      linkFactFiles(db, gone.id, [{ path: 'src/enemies.js', lines: 60 }])
+      for (const [f, path] of [[coins, 'src/score.js'], [jump, 'src/input.js'], [font, 'src/hud.css']] as const) linkFactFiles(db, f.id, [{ path, lines: 20 }])
+      noteFileChanges(db, scope, ['src/score.js', 'src/input.js', 'src/hud.css'].map((path) => ({ path, added: 30, removed: 30 })), ['src/enemies.js'])
+      await tidyMemory(scope)
+      const left = new Set(listFacts(db, scope).map((f) => f.id))
+      const wrong: string[] = []
+      if (left.has(gone.id)) wrong.push('kept the fact about the deleted src/enemies.js')
+      if (left.has(jump.id)) wrong.push('kept "jump is space" though input.js says ArrowUp')
+      if (!left.has(coins.id)) wrong.push('retired "a coin is 10 points", which score.js still says')
+      if (!left.has(font.id)) wrong.push("retired the HUD font fact, which the file doesn't contradict")
+      return wrong.length ? wrong.join(', ') : null
+    }
+  }
+]
+
 interface Row {
   backend: string
   passed: number
@@ -124,7 +191,7 @@ async function evaluate(backend: string, strict: boolean): Promise<void> {
   {
     const onCline = backend !== 'haiku'
     updateSettings({ clineHelpers: onCline, clineHelperModel: onCline ? backend : null, autoMemory: true })
-    const row: Row = { backend, passed: 0, total: CASES.length, failures: [], seconds: 0, tokens: 0, fellBack: false }
+    const row: Row = { backend, passed: 0, total: CASES.length + AGE_CASES.length, failures: [], seconds: 0, tokens: 0, fellBack: false }
     for (const c of CASES) {
       const pid = projectId(`helpers_${c.name.replace(/\W+/g, '_').slice(0, 20)}`)
       const db = memoryDb()
@@ -152,9 +219,26 @@ async function evaluate(backend: string, strict: boolean): Promise<void> {
       if (problem) row.failures.push(`${c.name}: ${problem}`)
       else row.passed++
     }
-    row.seconds /= CASES.length
+    for (const c of AGE_CASES) {
+      const since = new Date(Date.now() - 1000).toISOString()
+      const started = Date.now()
+      let problem: string | null
+      try {
+        problem = await c.run()
+      } catch (err) {
+        problem = `failed: ${(err as Error).message.slice(0, 120)}`
+      }
+      row.seconds += (Date.now() - started) / 1000
+      for (const u of usageSummary(memoryDb(), since)) {
+        row.tokens += weight(u)
+        if (onCline && /^(scribe|tidy) \(claude\)$/.test(u.kind)) row.fellBack = true
+      }
+      if (problem) row.failures.push(`${c.name}: ${problem}`)
+      else row.passed++
+    }
+    row.seconds /= row.total
     rows.push(row)
     console.log(`  ${backend}: ${row.passed}/${row.total}${row.fellBack ? ' (some fell back to Haiku)' : ''}`)
-    if (strict) assert.ok(row.passed >= CASES.length - 1, `${backend}: ${row.failures.join('; ')}`)
+    if (strict) assert.ok(row.passed >= row.total - 1, `${backend}: ${row.failures.join('; ')}`)
   }
 }

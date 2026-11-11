@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact, type MemoryScope, type ProjectRecord } from '@shared/types'
+import {
+  MEMORY_CATEGORIES,
+  type ApprovedPlan,
+  type MemoryCategory,
+  type MemoryFact,
+  type MemoryScope,
+  type MemorySearchStatus,
+  type ProjectRecord
+} from '@shared/types'
+import Modal from '../components/Modal'
+import Markdown from '../components/Markdown'
 
 interface MemoryViewProps {
   project: ProjectRecord
@@ -28,6 +38,30 @@ function shortDate(iso: string | null): string {
   return iso ? new Date(iso).toLocaleDateString() : ''
 }
 
+type Order = 'category' | 'useful'
+
+/** Most recently looked up first, then most looked up; never looked up last, newest first. */
+function usefulLately(a: MemoryFact, b: MemoryFact): number {
+  if (!!a.lastUsedAt !== !!b.lastUsedAt) return a.lastUsedAt ? -1 : 1
+  if (a.lastUsedAt && b.lastUsedAt && a.lastUsedAt !== b.lastUsedAt) return a.lastUsedAt > b.lastUsedAt ? -1 : 1
+  return b.useCount - a.useCount || (b.updatedAt > a.updatedAt ? 1 : -1)
+}
+
+/** The plan a "plan approved" fact points at ("… (plan #3, full text in the plans memory tool)."). */
+function planNumber(fact: MemoryFact): number | null {
+  const m = /\(plan #(\d+)[,)]/.exec(fact.text)
+  return m ? Number(m[1]) : null
+}
+
+function searchLine(status: MemorySearchStatus | null): string {
+  if (!status) return ''
+  if (!status.byMeaning) return "Memory is searched by keyword on this computer: the language model for searching by meaning can't run here."
+  const waiting = status.facts - status.factsDone + (status.files - status.filesDone)
+  return waiting > 0
+    ? `Memory is searched by meaning. ${waiting} more ${waiting === 1 ? 'fact or file is' : 'facts and files are'} still being read; until then, searches go by keyword.`
+    : `Memory is searched by meaning, on this computer (${status.factsDone} facts and ${status.filesDone} file summaries read).`
+}
+
 function MemoryView({ project, onBack, onError }: MemoryViewProps) {
   const [scope, setScope] = useState<MemoryScope>('project')
   const [facts, setFacts] = useState<MemoryFact[]>([])
@@ -42,6 +76,10 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
   const [tidyNote, setTidyNote] = useState('')
   const [brief, setBrief] = useState<{ text: string; updatedAt: string } | null>(null)
   const [briefBusy, setBriefBusy] = useState(false)
+  const [order, setOrder] = useState<Order>('category')
+  const [status, setStatus] = useState<MemorySearchStatus | null>(null)
+  const [plans, setPlans] = useState<ApprovedPlan[]>([])
+  const [openPlan, setOpenPlan] = useState<ApprovedPlan | null>(null)
 
   const effectiveScope = scope
   const projectId = project.id
@@ -62,7 +100,39 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
 
   useEffect(() => {
     window.vibe.brief.get(project.id).then(setBrief).catch(() => undefined)
+    window.vibe.memory.plans(project.id).then(setPlans).catch(() => undefined)
   }, [project])
+
+  // Asked again every few seconds while facts are still being read (just after starting, or an update).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let stopped = false
+    const ask = (): void => {
+      window.vibe.memory
+        .searchStatus()
+        .then((s) => {
+          if (stopped) return
+          setStatus(s)
+          if (s.byMeaning && s.factsDone + s.filesDone < s.facts + s.files) timer = setTimeout(ask, 3000)
+        })
+        .catch(() => undefined)
+    }
+    ask()
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
+  const showPlan = useCallback(
+    (id: number) => {
+      window.vibe.memory
+        .plan(projectId, id)
+        .then((plan) => (plan ? setOpenPlan(plan) : fail(new Error(`Plan #${id} is no longer saved.`))))
+        .catch(fail)
+    },
+    [projectId, fail]
+  )
 
   const refreshBrief = useCallback(async () => {
     setBriefBusy(true)
@@ -108,10 +178,17 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
     setTidyNote('')
     try {
       const r = await window.vibe.memory.tidy(projectId, effectiveScope)
+      const parts = [
+        r.categorized ? `sorted ${r.categorized}` : '',
+        r.merged ? `merged ${r.merged} duplicate${r.merged === 1 ? '' : 's'}` : '',
+        r.outdated ? `retired ${r.outdated} outdated` : '',
+        r.unused ? `retired ${r.unused} nobody had looked up in a long time` : '',
+        r.checked ? `checked ${r.checked} fact${r.checked === 1 ? '' : 's'} whose files had changed and kept ${r.checked === 1 ? 'it' : 'them'}` : ''
+      ].filter(Boolean)
       setTidyNote(
-        r.categorized + r.merged + r.outdated === 0
-          ? 'Everything already looks tidy.'
-          : `Sorted ${r.categorized}, merged ${r.merged} duplicate${r.merged === 1 ? '' : 's'}, retired ${r.outdated} outdated. Retired facts are under "Show forgotten".`
+        parts.length
+          ? `${parts.join(', ').replace(/^./, (c) => c.toUpperCase())}.${r.outdated + r.unused + r.merged ? ' Retired facts are under "Show forgotten".' : ''}`
+          : 'Everything already looks tidy.'
       )
       refresh()
     } catch (err) {
@@ -133,6 +210,9 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
     category,
     facts: active.filter((f) => !f.key && f.category === category)
   })).filter((g) => g.facts.length)
+  const byUse = [...active].sort(usefulLately)
+  const outdatedCount = active.filter((f) => f.mayBeOutdated).length
+  const factText = (id: string | null): string | undefined => (id ? facts.find((f) => f.id === id)?.text : undefined)
 
   const renderFact = (fact: MemoryFact) => (
     <li key={fact.id} className={`memory-row${fact.forgottenAt ? ' memory-row-forgotten' : ''}`}>
@@ -160,11 +240,21 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
         ) : (
           <span className="memory-text">{fact.text}</span>
         )}
+        {fact.mayBeOutdated && (
+          <span
+            className="memory-outdated"
+            title="Claude, Codex and Cline are told this too. The next tidy-up checks it against the files; edit the fact if you know it's still right."
+          >
+            ⚠ May be out of date: {fact.mayBeOutdated}
+          </span>
+        )}
         <span className="memory-meta">
           {SOURCE_LABELS[fact.source] ?? fact.source} · {shortDate(fact.updatedAt)}
-          {fact.useCount > 0 ? ` · looked up ${fact.useCount}×` : ''}
+          {fact.useCount > 0 ? ` · looked up ${fact.useCount}×${fact.lastUsedAt ? `, last ${shortDate(fact.lastUsedAt)}` : ''}` : ' · not looked up yet'}
+          {fact.files?.length ? ` · about ${fact.files.slice(0, 4).join(', ')}${fact.files.length > 4 ? ` and ${fact.files.length - 4} more` : ''}` : ''}
           {fact.forgottenAt ? ` · forgotten ${shortDate(fact.forgottenAt)}${fact.forgottenReason ? ` (${fact.forgottenReason})` : ''}` : ''}
         </span>
+        {fact.forgottenAt && factText(fact.replacedBy) && <span className="memory-meta">Replaced by: {factText(fact.replacedBy)}</span>}
       </div>
       <div className="memory-row-actions">
         {fact.forgottenAt ? (
@@ -174,6 +264,7 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
           </>
         ) : (
           <>
+            {planNumber(fact) !== null && <button onClick={() => showPlan(planNumber(fact)!)}>Open plan</button>}
             <select
               value={fact.category}
               onChange={(e) => run(() => window.vibe.memory.update(fact.id, { category: e.target.value as MemoryCategory }))}
@@ -243,9 +334,14 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
         ★ Key facts are given to Claude and Codex at the start of every request. The rest are searched when a request
         needs them.
       </p>
+      {status && <p className="memory-hint">{searchLine(status)}</p>}
 
       <div className="memory-toolbar">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search memory…" />
+        <select value={order} onChange={(e) => setOrder(e.target.value as Order)} title="How the facts are listed">
+          <option value="category">By category</option>
+          <option value="useful">Useful lately</option>
+        </select>
         <label className="memory-toggle">
           <input type="checkbox" checked={showForgotten} onChange={(e) => setShowForgotten(e.target.checked)} />
           Show forgotten
@@ -255,6 +351,13 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
         </button>
       </div>
       {tidyNote && <p className="memory-hint">{tidyNote}</p>}
+      {outdatedCount > 0 && (
+        <p className="memory-hint">
+          ⚠ {outdatedCount === 1 ? '1 fact' : `${outdatedCount} facts`} may be out of date: the files{' '}
+          {outdatedCount === 1 ? 'it is' : 'they are'} about changed a lot or are gone. The next tidy-up checks{' '}
+          {outdatedCount === 1 ? 'it' : 'them'} first.
+        </p>
+      )}
 
       <div className="memory-add-row">
         <input
@@ -283,13 +386,20 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
           <p className="memory-hint">{needle ? 'Nothing matches that search.' : 'Nothing remembered here yet.'}</p>
         )}
 
-        {keyFacts.length > 0 && (
+        {order === 'useful' && byUse.length > 0 && (
+          <section>
+            <h3 className="memory-group-title">Most recently looked up first ({byUse.length})</h3>
+            <ul className="memory-list">{byUse.map(renderFact)}</ul>
+          </section>
+        )}
+        {order === 'category' && keyFacts.length > 0 && (
           <section>
             <h3 className="memory-group-title">★ Key facts ({keyFacts.length})</h3>
             <ul className="memory-list">{keyFacts.map(renderFact)}</ul>
           </section>
         )}
-        {groups.map((g) => (
+        {order === 'category' &&
+          groups.map((g) => (
           <section key={g.category}>
             <h3 className="memory-group-title">
               {CATEGORY_LABELS[g.category]} ({g.facts.length})
@@ -303,7 +413,34 @@ function MemoryView({ project, onBack, onError }: MemoryViewProps) {
             <ul className="memory-list">{forgotten.map(renderFact)}</ul>
           </section>
         )}
+        {effectiveScope === 'project' && plans.length > 0 && !needle && (
+          <section>
+            <h3 className="memory-group-title">Approved plans ({plans.length})</h3>
+            <ul className="memory-list">
+              {plans.map((p) => (
+                <li key={p.id} className="memory-row">
+                  <div className="memory-body">
+                    <span className="memory-text">{p.title}</span>
+                    <span className="memory-meta">
+                      Plan #{p.id} · approved {shortDate(p.approvedAt)}
+                    </span>
+                  </div>
+                  <div className="memory-row-actions">
+                    <button onClick={() => setOpenPlan(p)}>Open</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
+      {openPlan && (
+        <Modal title={`Plan #${openPlan.id}, approved ${shortDate(openPlan.approvedAt)}`} onClose={() => setOpenPlan(null)} wide>
+          <div className="memory-plan-text">
+            <Markdown text={openPlan.text} />
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

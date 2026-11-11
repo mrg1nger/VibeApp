@@ -111,6 +111,40 @@ export async function changeStats(projectPath: string, from: string, to: string)
     })
 }
 
+/**
+ * What changed in the project since a snapshot, without recording a new one: lines added and
+ * removed per file, and the files deleted. Built from a throwaway index, like takeSnapshot.
+ */
+export async function changesSince(
+  projectPath: string,
+  snapshot: string
+): Promise<{ changes: FileChange[]; gone: string[]; takenAt: string }> {
+  if (!/^[0-9a-f]{40,64}$/.test(snapshot)) throw new Error('Invalid snapshot id.')
+  let gitDir = await git(projectPath, ['rev-parse', '--git-dir'])
+  if (!isAbsolute(gitDir)) gitDir = join(projectPath, gitDir)
+  const tempIndex = join(gitDir, `vibeapp-index-${randomUUID()}`)
+  const env = { GIT_INDEX_FILE: tempIndex, ...IDENTITY_ENV }
+  try {
+    await git(projectPath, ['add', '-A', '--', '.', ...EXCLUDE_PATHSPECS], env)
+    const tree = await git(projectPath, ['write-tree'], env)
+    const noisy = NOISY_FILES.flatMap((f) => [`:(exclude)${f}`, `:(exclude)**/${f}`])
+    const numstat = await git(projectPath, ['diff', '--numstat', '--no-renames', snapshot, tree, '--', '.', ...noisy])
+    const deleted = await git(projectPath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', snapshot, tree, '--', '.', ...noisy])
+    const changes = numstat
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [added, removed, ...rest] = line.split('\t')
+        return { path: rest.join('\t'), added: Number(added) || 0, removed: Number(removed) || 0 }
+      })
+    // When the snapshot was taken: the request's start.
+    const takenAt = new Date(await git(projectPath, ['show', '-s', '--format=%cI', snapshot])).toISOString()
+    return { changes, gone: deleted ? deleted.split('\n').filter(Boolean) : [], takenAt }
+  } finally {
+    rmSync(tempIndex, { force: true })
+  }
+}
+
 /** The code change between two snapshots, as a unified diff (lockfiles left out). */
 export async function diffSnapshots(projectPath: string, from: string, to: string): Promise<string> {
   return git(projectPath, [

@@ -15,6 +15,8 @@ import type {
   ImageAttachment,
   MemoryCategory,
   MemoryScope,
+  MemorySearchStatus,
+  ApprovedPlan,
   PickedElement,
   PreviewProblem,
   PreviewState,
@@ -84,10 +86,14 @@ import {
   updateFact,
   forgetFact,
   restoreFact,
-  deleteFact
+  deleteFact,
+  getPlan,
+  recentPlans
 } from '../memory/store'
+import { searchStatus } from '../memory/meaning'
 import { memoryDb, memoryDbPath, memoryServerScriptPath } from '../memory/paths'
 import { tidyMemory, maybeTidy } from '../memory/tidy'
+import { noteRequestChanges } from '../memory/links'
 import { maybeRefreshCodeMap } from '../memory/codeMap'
 import {
   ensureHistoryImported,
@@ -732,6 +738,12 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:memory:tidy', (_event, projectId: string, scope: MemoryScope) =>
     tidyMemory(scopeKey(scope, projectId))
   )
+  ipc.handle('vibe:memory:searchStatus', async (): Promise<MemorySearchStatus> => {
+    const s = await searchStatus(memoryDb())
+    return { byMeaning: s.byMeaning, model: s.model, facts: s.facts, factsDone: s.factsDone, files: s.files, filesDone: s.filesDone }
+  })
+  ipc.handle('vibe:memory:plans', (_event, projectId: string): ApprovedPlan[] => recentPlans(memoryDb(), projectId, 50).reverse())
+  ipc.handle('vibe:memory:plan', (_event, projectId: string, id: number): ApprovedPlan | null => getPlan(memoryDb(), projectId, Number(id)))
 
   ipc.handle('vibe:extensions:list', async () => ({
     installed: listExtensions(),
@@ -1838,10 +1850,12 @@ function wireSessionEvents(
             stopped: !!(built.stopped || finished?.stopped || finished?.hadError)
           } satisfies VibeEvent)
         }
+        // What the request changed counts against the facts about those files (they may be out of date now).
+        const changed = path ? noteRequestChanges(projectId, path, lastRequests.get(projectId)?.snapshot) : Promise.resolve([])
         if (finished && getSettings().autoMemory) {
           // On Cline when it's set up, otherwise Haiku if Claude has room.
-          helpersAllowed()
-            .then((allowed) => (allowed ? runScribe(projectId, finished) : undefined))
+          Promise.all([helpersAllowed(), changed])
+            .then(([allowed, files]) => (allowed ? runScribe(projectId, { ...finished, files, projectPath: path }) : undefined))
             .catch((err: Error) => console.warn('Saving memory failed:', err.message))
             .finally(() => {
               if (path) syncAgentsFile(projectId, path)
