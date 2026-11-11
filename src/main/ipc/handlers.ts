@@ -99,7 +99,7 @@ import { runSavePass, runScribe, summarizeConversation, type TurnRecord } from '
 import { getBrief, maybeRefreshBrief, refreshBrief } from '../memory/brief'
 import { cleanCommand, isNotableCommand } from '../memory/commands'
 import { syncAgentsFile } from '../memory/agentsFile'
-import { agentUsageSince, codexUsageSince, keyFactsBlock, listRequests, logRequest, usageByProject, usageSummary } from '../memory/store'
+import { agentUsageSince, codexUsageSince, keyFactsBlock, listRequests, logRequest, rememberPlan, usageByProject, usageSummary } from '../memory/store'
 import { RequestRecorder, type RequestStart } from '../usage/requestLog'
 import { buildReport } from '../usage/report'
 import {
@@ -126,7 +126,7 @@ import { checkCline, clineStatus } from '../cli/clineExec'
 import { clineModelFor, listClineModels } from '../cli/clineAcp'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
-import { approvedPlanFact, approvedPlanNote, codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
+import { approvedPlanNote,codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
 import { briefBlock } from '../memory/brief'
 import { codexFailure, runCodexExec } from '../cli/codexExec'
 import { countsFromCodexEvents } from '../usage/tokens'
@@ -1364,10 +1364,10 @@ async function runCodexPlan(
   }
 }
 
-/** Keeps an approved plan's steps in memory, so a compaction or a fresh session knows what was agreed. */
+/** Keeps an approved plan in memory, so a compaction or a fresh session can read what was agreed. */
 function rememberApprovedPlan(projectId: string, plan: string): void {
   try {
-    rememberFact(memoryDb(), projectId, approvedPlanFact(plan), 'user', { category: 'decision' })
+    rememberPlan(memoryDb(), projectId, plan)
   } catch (err) {
     console.warn('Saving the approved plan failed:', (err as Error).message)
   }

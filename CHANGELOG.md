@@ -2,6 +2,12 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.5.5 (2026-11-10)
+
+First step of the memory work planned in the roadmap (Memory v3):
+- **Approved plans are kept whole.** A plan you approve is saved in full, and Claude, Codex and Cline can read it back (the new `plans` memory tool). Before, memory kept only the steps squeezed onto one line and cut at 950 characters. The Memory screen now shows one line per plan, such as "Approved 2026-11-10: Security review of FNotes (plan #3…)". Plans saved before are moved over once, with what was kept of them.
+- **The memory test was wrong about "every project" rules, not the note-taker.** The test let a rule saved by one model count as already known to the next, so every model after the first looked as if it missed the rule. Fixed, with a harder case added. Every model ClinePass runs gets 6 of 6; Kimi K3.1 Pro and MiniMax M3.1 Flash 18 of 18 over three runs. The note-taker's instructions are unchanged, and the scores in Settings → Cline are corrected.
+
 ## 0.5.4 (2026-11-10)
 
 - **Approved plans are remembered with all their letters.** A plan approved without numbered steps (a look over the project, a review) was saved to memory with every "s" taken out ("Thi reque t wa ju t…"), since plan mode first shipped. Those saved plans can't be repaired, so VibeApp forgets them once on start; they stay under Show forgotten.

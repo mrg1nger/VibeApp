@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact, type TodoItem } from '@shared/types'
+import { approvedPlanFact, planTitle } from '@shared/plan'
 
 // The shared memory: one SQLite file used by the app (Memory screen, key
 // facts for prompts, tidy-up) and by every memory tool process (one per
@@ -13,7 +14,7 @@ import { MEMORY_CATEGORIES, type MemoryCategory, type MemoryFact, type TodoItem 
 /** Facts in the global scope apply to every project. */
 export const GLOBAL_SCOPE = 'global'
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -78,6 +79,16 @@ CREATE TABLE IF NOT EXISTS handoffs (
   finished_at TEXT
 );
 CREATE INDEX IF NOT EXISTS handoffs_project ON handoffs(project_id, id);
+
+-- Plans the user approved, kept whole. Memory holds a one-line fact pointing at each.
+CREATE TABLE IF NOT EXISTS plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  text TEXT NOT NULL,
+  approved_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plans_project ON plans(project_id, id);
 
 -- A one-line summary of each source file, so agents can find where things live.
 CREATE TABLE IF NOT EXISTS code_files (
@@ -185,6 +196,14 @@ export function openMemory(dbPath: string): DatabaseSync {
   if (!getMeta(db, 'fixed_plan_facts_without_s')) {
     forgetDamagedPlanFacts(db)
     setMeta(db, 'fixed_plan_facts_without_s', now())
+  }
+  if (!getMeta(db, 'moved_plan_facts')) {
+    // Checked again inside, so two processes opening at once don't both move them.
+    transaction(db, () => {
+      if (getMeta(db, 'moved_plan_facts')) return
+      movePlanFacts(db)
+      setMeta(db, 'moved_plan_facts', now())
+    })
   }
   databases.set(dbPath, db)
   return db
@@ -768,6 +787,71 @@ export function closeStaleHandoffs(db: DatabaseSync): void {
   ).run(now())
 }
 
+// ---- approved plans ------------------------------------------------------------
+
+export interface SavedPlan {
+  id: number
+  title: string
+  text: string
+  approvedAt: string
+}
+
+interface PlanRow {
+  id: number
+  title: string
+  text: string
+  approved_at: string
+}
+
+const toPlan = (row: PlanRow): SavedPlan => ({ id: row.id, title: row.title, text: row.text, approvedAt: row.approved_at })
+
+export function savePlan(db: DatabaseSync, projectId: string, text: string, approvedAt = now()): SavedPlan {
+  const plan = { title: planTitle(text), text: text.trim().slice(0, 30_000), approvedAt }
+  const result = db
+    .prepare('INSERT INTO plans (project_id, title, text, approved_at) VALUES (?, ?, ?, ?)')
+    .run(projectId, plan.title, plan.text, approvedAt)
+  return { id: Number(result.lastInsertRowid), ...plan }
+}
+
+/** Keeps an approved plan whole, and a one-line fact that says where it is. */
+export function rememberPlan(db: DatabaseSync, projectId: string, text: string): SavedPlan {
+  const plan = savePlan(db, projectId, text)
+  rememberFact(db, projectId, approvedPlanFact(plan), 'user', { category: 'decision' })
+  return plan
+}
+
+export function recentPlans(db: DatabaseSync, projectId: string, limit = 5): SavedPlan[] {
+  const rows = db
+    .prepare('SELECT * FROM plans WHERE project_id = ? ORDER BY id DESC LIMIT ?')
+    .all(projectId, limit) as unknown as PlanRow[]
+  return rows.map(toPlan).reverse()
+}
+
+export function getPlan(db: DatabaseSync, projectId: string, id: number): SavedPlan | null {
+  const row = db.prepare('SELECT * FROM plans WHERE id = ? AND project_id = ?').get(id, projectId) as PlanRow | undefined
+  return row ? toPlan(row) : null
+}
+
+/**
+ * Before 0.5.5 an approved plan was a fact holding its steps on one line, cut at
+ * 950 characters. Each becomes a plan record, and the fact its one-line pointer.
+ */
+export function movePlanFacts(db: DatabaseSync): number {
+  const prefix = 'Plan the user approved: '
+  const rows = db
+    .prepare('SELECT id, scope, text, created_at FROM facts WHERE forgotten_at IS NULL AND substr(text, 1, ?) = ?')
+    .all(prefix.length, prefix) as { id: string; scope: string; text: string; created_at: string }[]
+  const reword = db.prepare('UPDATE facts SET text = ? WHERE id = ?')
+  for (const row of rows) {
+    // The steps were joined with spaces: one per line again.
+    let text = row.text.slice(prefix.length)
+    for (let n = 2; /^1\. /.test(text) && text.includes(` ${n}. `); n++) text = text.replace(` ${n}. `, `\n${n}. `)
+    if (row.text.length >= 950) text += '… (cut short when it was saved)'
+    reword.run(approvedPlanFact(savePlan(db, row.scope, text, row.created_at)), row.id)
+  }
+  return rows.length
+}
+
 // ---- code map -----------------------------------------------------------------
 
 export interface CodeFile {
@@ -890,6 +974,7 @@ export function eraseProjectFromMemory(
     const messages = count('DELETE FROM messages WHERE project_id = ?')
     const facts = count('DELETE FROM facts WHERE scope = ?')
     const handoffs = count('DELETE FROM handoffs WHERE project_id = ?')
+    count('DELETE FROM plans WHERE project_id = ?')
     const files = count('DELETE FROM code_files WHERE project_id = ?')
     count('DELETE FROM usage_log WHERE project_id = ?')
     count('DELETE FROM request_log WHERE project_id = ?')

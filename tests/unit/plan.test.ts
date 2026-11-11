@@ -1,10 +1,17 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { approvedPlanFact, approvedPlanNote, looksBig, matchTodosToSteps, parsePlanSteps, progressMarkers } from '@shared/plan'
+import { approvedPlanFact, approvedPlanNote, looksBig, matchTodosToSteps, parsePlanSteps, planTitle, progressMarkers } from '@shared/plan'
 
-test('an approved plan without steps is remembered word for word, on one line', () => {
-  const plan = '# Security review of FNotes\n\nThis was a read-only   review.\nNo files changed.'
-  assert.equal(approvedPlanFact(plan), 'Plan the user approved: # Security review of FNotes This was a read-only review. No files changed.')
+test("a plan is named after its heading or its first sentence, and its fact is one line pointing at it", () => {
+  assert.equal(planTitle('# Security review of FNotes\n\nThis was a read-only review.'), 'Security review of FNotes')
+  assert.equal(planTitle('\nAdd a sell price to shop.js. Shields sell for half.\n\n## Steps\n1. (Claude) Add it'), 'Add a sell price to shop.js')
+  assert.equal(planTitle('1. (claude) Add sellPrice(item) to shop.js\n2. (codex) Write tests'), 'Add sellPrice(item) to shop.js')
+  assert.ok(planTitle('x'.repeat(300)).length <= 90)
+  assert.equal(planTitle('  \n'), 'Untitled plan')
+  assert.equal(
+    approvedPlanFact({ id: 3, title: 'Security review of FNotes', approvedAt: '2026-11-10T09:30:00.000Z' }),
+    'Approved 2026-11-10: Security review of FNotes (plan #3, full text in the plans memory tool).'
+  )
 })
 
 test("a plan's steps are read from its Steps section, with who does each", () => {

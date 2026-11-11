@@ -43,7 +43,7 @@ export interface AskClaudeOptions {
  * The memory tools a question may use: looking things up, plus the user's
  * to-do list and notes (keeping a list isn't changing the project).
  */
-export const ASK_MEMORY_TOOLS = ['recall', 'history', 'handoffs', 'where', 'todos', 'add_todo', 'complete_todo', 'notes']
+export const ASK_MEMORY_TOOLS = ['recall', 'history', 'handoffs', 'plans', 'where', 'todos', 'add_todo', 'complete_todo', 'notes']
 const MEMORY_TOOLS = ASK_MEMORY_TOOLS.map((t) => `mcp__vibe_memory__${t}`)
 
 export async function askClaude(opts: AskClaudeOptions): Promise<AskResult> {

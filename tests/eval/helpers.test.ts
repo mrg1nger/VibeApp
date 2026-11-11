@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { runScribe, type TurnRecord } from '../../src/main/memory/scribe'
 import { memoryDb } from '../../src/main/memory/paths'
-import { GLOBAL_SCOPE, listFacts, rememberFact, usageSummary } from '../../src/main/memory/store'
+import { deleteFact, GLOBAL_SCOPE, listFacts, rememberFact, usageSummary } from '../../src/main/memory/store'
 import { updateSettings } from '../../src/main/settings/store'
 import { weight } from '../../src/main/usage/report'
 import { projectId } from '../support/fixtures'
@@ -18,8 +18,9 @@ import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
 //   npm run eval -- helpers
 //   VIBEAPP_EVAL_HELPERS="haiku,cline-pass/glm-5.3-flash" npm run eval -- helpers
 
-// 2026-11-10: minimax-m3.1-flash 15/15 over three runs (the pick), deepseek-v4.1-flash 13/15;
-// qwen3.7-plus, qwen3.7-max and mimo-v2.6-flash are listed by ClinePass but refused.
+// 2026-11-10 (0.5.5, six cases): all 10 models ClinePass runs 6/6; kimi-k3.1-pro and minimax-m3.1-flash
+// 18/18 over three runs. qwen3.7-plus/max, minimax-m3 and mimo-v2.6-flash/pro are listed but refused.
+// Scores before 0.5.5 are not comparable: a global rule saved by one model was shown to the next as known.
 // "all": every ClinePass model offered now (VIBEAPP_EVAL_HELPERS=all npm run eval -- helpers).
 const WANTED = process.env.VIBEAPP_EVAL_HELPERS ?? 'haiku,cline-pass/minimax-m3.1-flash,cline-pass/deepseek-v4.1-flash,cline-pass/qwen3.8-max'
 const BACKENDS = WANTED.split(',')
@@ -58,6 +59,11 @@ const CASES: Case[] = [
     name: 'a rule for every project is global',
     turn: { request: 'From now on, in every project, write commit messages in British English.', ...reply("Understood, I'll use British English for commit messages everywhere.") },
     judge: (_facts, global) => (global.some((f) => /british/i.test(f.text)) ? null : 'not saved as a global preference')
+  },
+  {
+    name: 'a rule for all the work, said less plainly, is global',
+    turn: { request: "Whatever I'm working on, I want dates written like 10 November 2026, never 11/10/2026. Please fix the footer here to match.", ...reply('Done: the footer date now reads 10 November 2026.') },
+    judge: (_facts, global) => (global.some((f) => /date/i.test(f.text)) ? null : 'not saved as a global preference')
   },
   {
     name: 'a key is never saved',
@@ -130,8 +136,11 @@ async function evaluate(backend: string, strict: boolean): Promise<void> {
       try {
         await runScribe(pid, c.turn)
         const facts = listFacts(db, pid).map((f) => ({ text: f.text, category: f.category }))
-        const global = listFacts(db, GLOBAL_SCOPE).filter((f) => !globalBefore.has(f.id)).map((f) => ({ text: f.text, category: f.category }))
-        problem = c.judge(facts, global, known)
+        const global = listFacts(db, GLOBAL_SCOPE).filter((f) => !globalBefore.has(f.id))
+        problem = c.judge(facts, global.map((f) => ({ text: f.text, category: f.category })), known)
+        // Global facts are shared by every case and model in this run: left in place, the
+        // next model is shown the rule as already known and rightly saves nothing.
+        for (const f of global) deleteFact(db, f.id)
       } catch (err) {
         problem = `failed: ${(err as Error).message.slice(0, 120)}`
       }

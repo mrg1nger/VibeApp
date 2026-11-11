@@ -51,6 +51,8 @@ function friendlyToolLabel(name: string, input: unknown): string {
     }
     case 'mcp__vibe_memory__handoffs':
       return 'Checked earlier hand-offs'
+    case 'mcp__vibe_memory__plans':
+      return (input as { id?: number })?.id ? `Read approved plan #${(input as { id: number }).id}` : 'Checked the approved plans'
     case 'mcp__vibe_memory__update':
       return (input as { fact?: string })?.fact ? `Updated memory: ${(input as { fact: string }).fact}` : 'Updated a memory'
     case 'mcp__vibe_memory__forget':

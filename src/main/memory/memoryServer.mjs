@@ -24,6 +24,8 @@ import {
   recentMessages,
   recentHandoffs,
   getHandoff,
+  recentPlans,
+  getPlan,
   searchCode,
   countCodeFiles,
   hashFile,
@@ -194,6 +196,28 @@ server.registerTool(
         })
         .join('\n')
     )
+  }
+)
+
+server.registerTool(
+  'plans',
+  {
+    description:
+      'The plans the user approved in this project. Without an id, lists the latest (number, date, title). Pass an id (a remembered fact names it as "plan #3") to read that plan in full: what was agreed and its steps.',
+    inputSchema: {
+      limit: z.number().int().min(1).max(15).optional().describe('How many (default 5), newest last.'),
+      id: z.number().int().optional().describe('A plan number, for its full text.')
+    }
+  },
+  async ({ limit, id }) => {
+    if (id !== undefined) {
+      const p = getPlan(db, projectId, id)
+      if (!p) return text(`No plan #${id} in this project.`)
+      return text(`Plan #${p.id}, approved ${p.approvedAt.slice(0, 16).replace('T', ' ')}: ${p.title}\n\n${p.text}`)
+    }
+    const items = recentPlans(db, projectId, limit ?? 5)
+    if (!items.length) return text('No approved plans yet in this project.')
+    return text(items.map((p) => `#${p.id} approved ${p.approvedAt.slice(0, 10)}: ${p.title}`).join('\n'))
   }
 )
 

@@ -6,10 +6,15 @@ import { tmpdir } from 'os'
 import { grounded } from '../../src/main/memory/scribe'
 import {
   codeSummariesFor,
+  eraseProjectFromMemory,
+  getPlan,
   keyFactsBlock,
   listFacts,
+  movePlanFacts,
   openMemory,
+  recentPlans,
   rememberFact,
+  rememberPlan,
   reviewConventions,
   saveCodeSummaries
 } from '../../src/main/memory/store'
@@ -39,6 +44,36 @@ test('plan facts saved with their s taken out are forgotten; real ones stay', as
   const left = listFacts(db, 'p-plan').map((f) => f.id)
   assert.ok(!left.includes(damaged.fact.id), 'damaged one forgotten')
   assert.ok(left.includes(fine.fact.id), 'good one kept')
+})
+
+test('an approved plan is kept whole, with a one-line fact that names it', () => {
+  const text = 'Add a sell price to the shop.\n\n## Steps\n1. (Claude) Add sellPrice(item) to shop.js\n2. (Codex) Write tests in shop.test.js\n\n## Risks\nNone.'
+  const plan = rememberPlan(db, 'p-plans', text)
+  assert.equal(getPlan(db, 'p-plans', plan.id)?.text, text)
+  assert.equal(getPlan(db, 'another-project', plan.id), null, 'only its own project can read it')
+  const facts = listFacts(db, 'p-plans')
+  assert.equal(facts.length, 1)
+  assert.equal(facts[0].text, `Approved ${plan.approvedAt.slice(0, 10)}: Add a sell price to the shop (plan #${plan.id}, full text in the plans memory tool).`)
+  assert.equal(facts[0].category, 'decision')
+  // A second plan with the same name is its own plan and its own fact.
+  const again = rememberPlan(db, 'p-plans', text)
+  assert.deepEqual(recentPlans(db, 'p-plans').map((p) => p.id), [plan.id, again.id])
+  assert.equal(listFacts(db, 'p-plans').length, 2)
+  eraseProjectFromMemory(db, 'p-plans')
+  assert.equal(recentPlans(db, 'p-plans').length, 0)
+})
+
+test('plan facts from before 0.5.5 become plan records, their steps one per line again', () => {
+  const old = rememberFact(db, 'p-old-plans', 'Plan the user approved: 1. (claude) Add sellPrice(item) to shop.js 2. (codex) Write tests in shop.test.js 3. (codex) Run the tests', 'user', { category: 'decision' })
+  rememberFact(db, 'p-old-plans', 'The shop sells shields and swords.', 'user', { category: 'about' })
+  assert.ok(movePlanFacts(db) >= 1)
+  const [plan, ...others] = recentPlans(db, 'p-old-plans')
+  assert.equal(others.length, 0, 'only the plan fact became a plan')
+  assert.equal(plan.text, '1. (claude) Add sellPrice(item) to shop.js\n2. (codex) Write tests in shop.test.js\n3. (codex) Run the tests')
+  assert.equal(plan.approvedAt, old.fact.createdAt, 'keeps when it was approved')
+  const fact = listFacts(db, 'p-old-plans').find((f) => f.id === old.fact.id)!
+  assert.equal(fact.text, `Approved ${plan.approvedAt.slice(0, 10)}: Add sellPrice(item) to shop.js (plan #${plan.id}, full text in the plans memory tool).`)
+  assert.equal(movePlanFacts(db), 0, 'nothing left to move')
 })
 
 test('a near-duplicate fact updates the old one instead of adding a second', () => {
