@@ -177,6 +177,11 @@ Maybe (from the comparison with other multi-agent tools, 2026-11-10). Today a pr
 - [ ] **Background to-dos.** "Build this in the background" hands a to-do to Codex or Cline in its own copy of the project (git worktree) while you keep chatting with Claude; brought in as an undoable message if it doesn't clash, otherwise you choose (like Publish's "Use GitHub's"). Uses the plans idle while Claude works. Try after the queue, small to-dos first, and see how often they clash.
 - Not planned: full parallel requests in one project (a worktree each, as Conductor, Paseo and the official apps do). It splits undo history, needs a preview per copy, leaves merging to the user, and burns plans faster. Revisit only if the two above leave people wanting more.
 
+Tabled (2026-11-11), memory beyond one computer:
+
+- [ ] **Shared ("online") memory for two devices.** One project's memory used from two VibeApps: a hub on DevBox or a VPS (Tailscale only, never the open internet) that the local databases sync with, and a cloud / local / both switch. Open questions: is DevBox on most of the time; will anyone else work on the projects.
+- [ ] **VibeApp's memory as a standalone service** any coding agent can use (Claude Code, Codex, Cursor, Cline), like [Mem0](https://mem0.ai/) ([Apache-2.0](https://github.com/mem0ai/mem0)) but built for code: the code map, facts linked to files, "may be out of date", procedures from commands that worked, plans kept whole, the secrets scanner, all local. The same service would be the hub above, with VibeApp as one client. Cheap first step: run Mem0 through our search test. Would replace Step 4's memory file if taken up.
+
 Dropped:
 
 - Voice input (the other half of #10). Not needed.
