@@ -138,6 +138,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
 
 ## Loose ends to check
 
+- [ ] **Tests leave their throwaway folders behind.** On 2026-11-11 the dev PC's disk filled up while packaging 0.8.0: 506 `vibeapp-*` folders in the temp folder, 1.2 GB (mostly `vibeapp-test-project` and `vibeapp-unit`). They were cleared by hand. The unit tests, evals and screen checks should remove what they make.
 - [ ] **Keep measuring.** The usage log exists now; compare a week of real use with the scribe, hand-off resume and (if tried) fresh sessions on, and decide the defaults from the numbers. So far only small tests: on a task with durable facts the scribe cut Claude's steps from 4 to 2-3 and its cached reads by 30-55%, at about 1.8k Haiku tokens.
 - [ ] **Scribe quality.** Haiku sometimes over-saves (task-only instructions as preferences) or fills in typical details. Mitigated with stricter rules, a check that numbers must appear in the exchange, and retiring (not overwriting) corrected facts, but watch the "Saved automatically" facts on the Memory screen.
 - [ ] **Fresh-session summaries lose detail.** Off by default; needs real long-project use before it's worth enabling.
