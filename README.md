@@ -43,6 +43,7 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 
 **Memory and context**
 - **Shared memory** in a local SQLite database. Claude, Codex and Cline all read and write the same facts, procedures, to-dos and project brief.
+- **Found by meaning.** "Put it online" finds the fact about deploying, even with no word in common. A small language model does this on your own computer; nothing is sent anywhere for it.
 - **Background helpers** keep the memory tidy. They save what's worth remembering, merge duplicates, keep a ~500-word project brief and map the code.
 - **Long chats are compacted in place.** Rules, decisions and work in progress are kept, and a meter shows how full the chat is.
 
@@ -128,6 +129,8 @@ Then go to **Projects**. Start a new project in an empty folder, open an existin
 | ClinePass *(only if Cline is switched on)* | Chat and code excerpts for the background jobs and hand-offs, sent to Cline's model providers. Each use can be switched off in Settings. |
 | ntfy *(only if phone alerts are on)* | A project name and what's waiting. Never code or chat text. |
 
+Searching memory by meaning sends nothing anywhere: the language model for it comes with VibeApp and runs on your computer.
+
 **How it's protected**
 - **Secrets** are encrypted with your Windows account (DPAPI) and stored outside your projects. Some are never given to the agents at all. VibeApp warns before a key ends up in the chat, a file, a commit or a published site.
 - **Destructive commands need your OK** outside Go Nutz.
@@ -197,7 +200,7 @@ The release script uploads the installer, its `.blockmap` and `latest.yml`. The 
 - **`ELECTRON_RUN_AS_NODE` must not be set.** If Electron starts as plain Node, `electron.app` is undefined; clear that variable and run it again.
 - **The node-pty patch** drops the old winpty build target, which doesn't build on modern Windows. node-pty uses ConPTY instead.
 
-**Built with** Electron, electron-vite, React, TypeScript, the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk), the Codex CLI (`codex exec --json`), the Cline CLI, SQLite (`node:sqlite`), xterm.js and node-pty.
+**Built with** Electron, electron-vite, React, TypeScript, the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk), the Codex CLI (`codex exec --json`), the Cline CLI, SQLite (`node:sqlite`) with [sqlite-vec](https://github.com/asg017/sqlite-vec), the [gte-small](https://huggingface.co/Xenova/gte-small) language model on the ONNX runtime (`onnxruntime-node`), xterm.js and node-pty. The model isn't in this repository: `npm install` fetches it (34 MB, checked against a checksum) into `resources/models/`.
 
 ---
 
@@ -225,7 +228,7 @@ src/main/           Electron main process
   delegation/       hand-offs to Codex and Cline
   cli/              running Claude Code, Codex and Cline
   cline/            Cline's safety hook
-  memory/           shared SQLite memory, its MCP server, scribe, tidy, brief, code map
+  memory/           shared SQLite memory, its MCP server, search by meaning, scribe, tidy, brief, code map
   remote/           Remote access server, pairing, Tailscale certificates, MCP server
   review/ deploy/ schedule/ backup/ github/ publish/ secrets/ preview/ ...
 src/preload/        the bridge between the window and the main process
@@ -253,3 +256,5 @@ patches/            patch-package fixes for dependencies
 ## License
 
 [MIT](LICENSE) © 2026 Mr.Ginger
+
+The installer also carries, under their own licences: the gte-small language model (trained by Alibaba DAMO Academy, whose model card gives the licence as MIT; shipped in Xenova's ONNX conversion), the ONNX runtime (MIT) and sqlite-vec (MIT or Apache-2.0).

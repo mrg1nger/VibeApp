@@ -10,9 +10,25 @@ files:
   - out/renderer/**/*
   - '!out/main/_test-*'
   - package.json
+  # The ONNX runtime's script folder only fetches extras at install time.
+  - '!**/node_modules/onnxruntime-node/script/**'
+  # It ships every system's program (290 MB): keep Windows x64's (30 MB). The DirectML files are
+  # for graphics cards; the memory search runs on the processor. (A Mac or Linux build needs
+  # these three lines changed. They can't go under "win:": a files list there replaces the
+  # allow-list above with "everything in the project folder".)
+  - '!**/node_modules/onnxruntime-node/bin/**/{darwin,linux}/**'
+  - '!**/node_modules/onnxruntime-node/bin/**/win32/arm64/**'
+  - '!**/node_modules/onnxruntime-node/bin/**/{DirectML,dxcompiler,dxil}.dll'
+# The language model for memory search by meaning (scripts/fetch-model.mjs fetches it).
+extraResources:
+  - from: resources/models
+    to: models
 asarUnpack:
   - '**/node_modules/node-pty/**/*'
   - '**/node_modules/@anthropic-ai/**/*'
+  # Programs Windows has to load from a real folder: the ONNX runtime and the sqlite-vec add-on.
+  - '**/node_modules/onnxruntime-node/bin/**/*'
+  - '**/node_modules/sqlite-vec-*/**/*'
 npmRebuild: false
 # Where the installed app looks for new versions (electron-updater). Packaging never
 # uploads anything itself (--publish never): `npm run release` does, through gh.

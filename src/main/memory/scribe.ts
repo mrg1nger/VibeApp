@@ -10,9 +10,9 @@ import {
   listFacts,
   recentHandoffs,
   recentMessages,
-  rememberFact,
-  searchFacts
+  rememberFact
 } from './store'
+import { recallFacts } from './meaning'
 
 // After each request, a cheap background pass (Cline, or Haiku) decides what (if anything) is worth
 // remembering. Having Claude and Codex do it themselves cost each of them an
@@ -171,7 +171,7 @@ async function scribe(projectId: string, turn: TurnRecord): Promise<ScribeResult
   for (const f of listFacts(db, projectId)) if (f.key) consider(f.id, f.category, f.text, projectId)
   for (const f of listFacts(db, GLOBAL_SCOPE)) if (f.key) consider(f.id, f.category, f.text, GLOBAL_SCOPE)
   const topic = `${turn.request} ${turn.replies.join(' ')}`.slice(0, 1500)
-  for (const f of searchFacts(db, projectId, topic, 15)) consider(f.id, f.category, f.text, projectId)
+  for (const f of await recallFacts(db, projectId, topic, 15)) consider(f.id, f.category, f.text, projectId)
 
   const answer = await runHelperJob({
     kind: 'scribe',

@@ -27,6 +27,8 @@ import {
   recentPlans,
   getPlan,
   searchCode,
+  factsByIds,
+  codeFilesByPath,
   countCodeFiles,
   hashFile,
   listTodos,
@@ -34,6 +36,7 @@ import {
   updateTodo,
   getNotes
 } from './store'
+import { askApp } from './searchClient'
 
 // The arguments can also come as a JSON list in VIBE_MEMORY_ARGS: Cline starts
 // tool servers through a shell, which splits paths with spaces in them.
@@ -59,6 +62,18 @@ const CATEGORIES = ['about', 'setup', 'decision', 'preference', 'gotcha', 'other
 const text = (value) => ({ content: [{ type: 'text', text: value }] })
 const describe = (f) => `- [${f.category}${f.key ? ', key' : ''}] ${f.text} (id ${f.id})`
 
+// Searches go to the running app, which searches by meaning (it holds the language model).
+// When it can't be asked, the keyword search here answers instead.
+async function findFacts(query, limit) {
+  const ids = await askApp(db, { kind: 'facts', projectId, text: query, limit })
+  return ids ? factsByIds(db, projectId, ids) : searchFacts(db, projectId, query, limit)
+}
+
+async function findFiles(query, limit) {
+  const paths = await askApp(db, { kind: 'code', projectId, text: query, limit })
+  return paths ? codeFilesByPath(db, projectId, paths) : searchCode(db, projectId, query, limit)
+}
+
 /** Only facts from this project or the global scope may be changed from here. */
 function ownFact(id) {
   const fact = getFact(db, id)
@@ -73,14 +88,13 @@ server.registerTool(
   'recall',
   {
     description:
-      'Search the shared project memory (this project plus the user\'s global preferences). Pass a short query about what you need, e.g. "sprites", "deploy", "how to run tests". Without a query, lists the key facts.',
-    inputSchema: {
+      'Search the shared project memory (this project plus the user\'s global preferences). Pass a short query about what you need, e.g. "sprites", "deploy", "how to run tests". Without a query, lists the key facts.',    inputSchema: {
       query: z.string().optional().describe('A few words about what you are looking for.')
     }
   },
   async ({ query }) => {
     if (!query?.trim()) return text(`Key facts:\n${keyFactsBlock(db, projectId)}`)
-    const found = searchFacts(db, projectId, query, 12)
+    const found = await findFacts(query, 12)
     return text(found.length ? `Matches for "${query}":\n${found.map(describe).join('\n')}` : `Nothing remembered matches "${query}".`)
   }
 )
@@ -233,7 +247,7 @@ server.registerTool(
   async ({ query }) => {
     const total = countCodeFiles(db, projectId)
     if (!total) return text('The code map is not built yet (it is built in the background after the first request). Search the files directly.')
-    const found = searchCode(db, projectId, query, 10)
+    const found = await findFiles(query, 10)
     if (!found.length) return text(`No file summaries match "${query}" (${total} files mapped). Try other words, or search the files directly.`)
     const lines = found.map((f) => {
       const current = projectPath ? hashFile(join(projectPath, f.path)) : f.hash

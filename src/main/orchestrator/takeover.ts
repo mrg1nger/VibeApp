@@ -152,7 +152,7 @@ export async function runTakeover(req: TakeoverRequest): Promise<void> {
       projectPath,
       keyFacts: attempt(() => keyFactsBlock(memoryDb(), projectId)),
       brief: attempt(() => briefBlock(projectId)),
-      context: attempt(() => handoffContext(projectId, prompt, request)),
+      context: await handoffContext(projectId, prompt, request).catch(() => undefined),
       // Claude's note-taker is out too, so Codex saves what it learns itself.
       autoMemory: false
     }
@@ -293,7 +293,9 @@ async function runClineTakeover(req: TakeoverRequest, afterCodex = false): Promi
   let changes: FileChange[] | null = null
   let checks = ''
   try {
-    const context = attempt(() => handoffContext(projectId, prompt, { text: req.text, element: req.element, images: req.images }))
+    const context = await handoffContext(projectId, prompt, { text: req.text, element: req.element, images: req.images }).catch(
+      () => undefined
+    )
     const result = await runCline(
       {
         prompt: [

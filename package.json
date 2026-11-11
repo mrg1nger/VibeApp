@@ -1,6 +1,6 @@
 {
   "name": "vibeapp",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "A friendly desktop app for vibe coding with Claude Code and Codex together",
   "main": "./out/main/index.js",
   "author": "Chris",
@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package": "electron-vite build && (electron-builder --win --publish never || electron-builder --win --publish never)",
-    "package:dir": "electron-vite build && electron-builder --win --dir --publish never",
+    "package": "node scripts/fetch-model.mjs && electron-vite build && (electron-builder --win --publish never || electron-builder --win --publish never) && node scripts/check-package.mjs",
+    "package:dir": "node scripts/fetch-model.mjs && electron-vite build && electron-builder --win --dir --publish never && node scripts/check-package.mjs",
     "release": "node scripts/release.mjs",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
@@ -21,7 +21,7 @@
     "e2e": "node tests/e2e/app.e2e.mjs",
     "e2e:remote": "node tests/e2e/remote.e2e.mjs",
     "e2e:mobile": "node tests/e2e/mobile.e2e.mjs",
-    "postinstall": "patch-package && electron-rebuild -f -w node-pty",
+    "postinstall": "patch-package && electron-rebuild -f -w node-pty && node scripts/fetch-model.mjs --optional",
     "e2e:tray": "node tests/e2e/tray.e2e.mjs"
   },
   "dependencies": {
@@ -33,12 +33,14 @@
     "@xterm/xterm": "^6.0.0",
     "electron-updater": "^6.8.11",
     "node-pty": "^1.1.0",
+    "onnxruntime-node": "1.30.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "selfsigned": "^5.5.0",
     "simple-git": "^4.0.2",
+    "sqlite-vec": "0.1.9",
     "ws": "^8.22.0",
     "zod": "^4.6.5",
     "zustand": "^5.0.15"
@@ -46,6 +48,7 @@
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron/rebuild": "^4.2.0",
+    "@huggingface/tokenizers": "0.2.0",
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

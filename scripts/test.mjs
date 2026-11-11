@@ -42,6 +42,14 @@ if (kind !== 'unit' && !['memory/memoryServer.cjs', 'cline/clineHook.cjs'].every
   if (built.status !== 0) process.exit(built.status ?? 1)
 }
 
+// Memory search by meaning: smoke tests and evals use the real language model (fetched once);
+// unit tests switch it off and put a stand-in where they test it, so they need no download.
+if (kind !== 'unit') {
+  const fetched = spawnSync(process.execPath, [join(root, 'scripts', 'fetch-model.mjs')], { cwd: root, stdio: 'inherit' })
+  if (fetched.status !== 0) process.exit(fetched.status ?? 1)
+}
+const meaning = kind === 'unit' ? { VIBEAPP_MEANING: 'off' } : {}
+
 const bundles = []
 try {
   for (const file of files) {
@@ -59,7 +67,7 @@ try {
         electron: join(root, 'tests', 'support', 'electron-stub.cjs'),
         '@shared': join(root, 'shared')
       },
-      external: ['node:sqlite', '@anthropic-ai/claude-agent-sdk', 'node-pty'],
+      external: ['node:sqlite', '@anthropic-ai/claude-agent-sdk', 'node-pty', 'onnxruntime-node', 'sqlite-vec'],
       plugins: [
         {
           // electron-vite's "file?asset" import: the file's path.
@@ -78,7 +86,7 @@ try {
   const run = spawnSync(
     process.execPath,
     ['--test', '--test-concurrency=1', '--test-timeout=1200000', '--no-warnings=ExperimentalWarning', ...bundles],
-    { cwd: root, stdio: 'inherit', env: { ...process.env, VIBEAPP_TEST_DATA: data } }
+    { cwd: root, stdio: 'inherit', env: { ...process.env, ...meaning, VIBEAPP_TEST_DATA: data } }
   )
   rmSync(data, { recursive: true, force: true })
   process.exitCode = run.status ?? 1

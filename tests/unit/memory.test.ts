@@ -15,9 +15,9 @@ import {
   recentPlans,
   rememberFact,
   rememberPlan,
-  reviewConventions,
   saveCodeSummaries
 } from '../../src/main/memory/store'
+import { conventionsFor } from '../../src/main/memory/meaning'
 import { addTalkMessage, historyText } from '../../src/main/chat/talkStore'
 import {
   activeExtensions,
@@ -83,13 +83,13 @@ test('a near-duplicate fact updates the old one instead of adding a second', () 
   assert.equal(listFacts(db, 'p1').length, 1)
 })
 
-test('review conventions surface related rules but not unrelated ones', () => {
+test('review conventions surface related rules but not unrelated ones', async () => {
   rememberFact(db, 'p2', 'Never call the orders API from the cart code; go through the checkout service.', 'user', { category: 'gotcha' })
   rememberFact(db, 'p2', 'The project uses a blue and white colour scheme.', 'user', { category: 'about' })
-  const related = reviewConventions(db, 'p2', 'add a discount code to the cart src/cart.js')
+  const related = await conventionsFor(db, 'p2', 'add a discount code to the cart src/cart.js')
   assert.equal(related.length, 1)
   assert.match(related[0].text, /orders API/)
-  assert.equal(reviewConventions(db, 'p2', 'rename the logo file').length, 0)
+  assert.equal((await conventionsFor(db, 'p2', 'rename the logo file')).length, 0)
 })
 
 test('key facts and code map lookups', () => {

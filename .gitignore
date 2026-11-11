@@ -11,3 +11,4 @@ Thumbs.db
 *.tsbuildinfo
 .claude/settings.local.json
 test-results/
+resources/models/

@@ -12,6 +12,7 @@ import { getSettings } from './settings/store'
 import { applyLoginItem, noteStillRunning, setupTray } from './tray'
 import { applyPendingRestore, scheduleBackups } from './backup/backup'
 import { startUpdateChecks, stopUpdateChecks } from './updates/updates'
+import { startMemorySearch, stopMemorySearch } from './memory/searchPipe'
 
 let currentWindow: BrowserWindow | undefined
 /** Started with --tray (e.g. with Windows): no window until the user asks for one. */
@@ -147,6 +148,8 @@ app.whenReady().then(() => {
   })
   applyLoginItem()
   scheduleBackups()
+  // Memory search by meaning, for the app and for every agent's memory tools.
+  void startMemorySearch()
   if (!startInTray) createWindow()
 
   // Get Haiku's request labeller running before the first message needs it.
@@ -169,6 +172,7 @@ app.on('will-quit', () => {
   stopUpdateChecks()
   // Codex jobs, test runs and tool checks still going: nothing keeps working after VibeApp is closed.
   stopAllChildren()
+  stopMemorySearch()
   void stopRemote()
   requestClassifier.dispose()
 })

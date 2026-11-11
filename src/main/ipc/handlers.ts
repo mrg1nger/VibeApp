@@ -488,7 +488,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       // search (free), so Claude doesn't need a tool call to look them up.
       // Quick requests get it too: "which size are the slimes?" is quick,
       // and exactly where memory helps.
-      const relevant = prefetchBlock(projectId, text)
+      const relevant = await prefetchBlock(projectId, text)
       // First request in a project: start mapping the code now, in the background.
       maybeRefreshCodeMap(projectId, projectPath)
       turnRecords.set(projectId, { request: text, replies: [], actions: [], commands: [], stopped: false, hadError: false })
@@ -1520,7 +1520,7 @@ function runAsk(
   void (async () => {
     try {
       const keyFacts = keyFactsBlock(memoryDb(), projectId)
-      const relevant = prefetchBlock(projectId, text)
+      const relevant = await prefetchBlock(projectId, text)
       const chosen = getSettings().claudeModel
       const system = `You are answering a question about the user's software project inside VibeApp. You can't change the project's files: you can only read and search them and look things up in the project's memory. You can look at and update the user's to-do list for this project (add items, tick them off) and read their notes, when they ask. Answer directly in plain, friendly language and keep it short unless asked for depth. If the question turns out to need changes to the project, say so and suggest they switch to Build mode.\n\n## Key facts\n${keyFacts}`
       const prompt = [relevant, text].filter(Boolean).join('\n\n')

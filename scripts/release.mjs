@@ -17,6 +17,8 @@ const files = [exe, `${exe}.blockmap`, join(root, 'release', 'latest.yml')]
 for (const f of files) {
   if (!existsSync(f)) throw new Error(`Missing ${f}. Run npm run package first.`)
 }
+// Never upload a build with the wrong things inside.
+execFileSync(process.execPath, [join(root, 'scripts', 'check-package.mjs')], { stdio: 'inherit' })
 const latest = readFileSync(files[2], 'utf8')
 if (!new RegExp(`^version: ${version.replace(/\./g, '\\.')}$`, 'm').test(latest)) {
   throw new Error(`release/latest.yml is for another version. Run npm run package again for ${version}.`)

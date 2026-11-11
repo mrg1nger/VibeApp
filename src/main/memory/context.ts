@@ -5,16 +5,15 @@ import {
   countMessages,
   getMeta,
   recentHandoffs,
-  relevantCode,
-  relevantFacts,
   setMeta,
   transaction,
   type Handoff
 } from './store'
+import { factsForRequest, filesForRequest } from './meaning'
 
 // What agents are shown without having to ask: facts and files that look
-// relevant to the request (found by a local search, so it costs no tokens),
-// the user's own words, and what earlier hand-offs did.
+// relevant to the request (found by a local search by meaning, so it costs no
+// tokens), the user's own words, and what earlier hand-offs did.
 
 function oneLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -22,11 +21,11 @@ function oneLine(text: string, max: number): string {
 }
 
 /** Remembered facts and files that look related to `text`, or undefined if nothing does. Never throws. */
-export function prefetchBlock(projectId: string, text: string): string | undefined {
+export async function prefetchBlock(projectId: string, text: string): Promise<string | undefined> {
   try {
     const db = memoryDb()
-    const facts = relevantFacts(db, projectId, text, 5)
-    const files = relevantCode(db, projectId, text, 5)
+    const facts = await factsForRequest(db, projectId, text, 5)
+    const files = await filesForRequest(db, projectId, text, 5)
     if (!facts.length && !files.length) return undefined
     const parts: string[] = []
     if (facts.length) {
@@ -101,13 +100,13 @@ export function ensureHistoryImported(projectId: string): void {
 }
 
 /** What Codex is told before the task: relevant memory, earlier hand-offs, the user's own words. */
-export function handoffContext(
+export async function handoffContext(
   projectId: string,
   brief: string,
   request: { text: string; element?: string; images: string[] } | undefined
-): string {
+): Promise<string> {
   const parts: string[] = []
-  const relevant = prefetchBlock(projectId, `${request?.text ?? ''} ${brief}`)
+  const relevant = await prefetchBlock(projectId, `${request?.text ?? ''} ${brief}`)
   if (relevant) parts.push(relevant.replace(/^\[VibeApp note: /, 'Context: ').replace(/\]$/, ''))
   const handoffs = recentHandoffsBlock(projectId)
   if (handoffs) parts.push(handoffs)

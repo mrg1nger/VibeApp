@@ -5,6 +5,7 @@ import { promisify } from 'util'
 import { getSettings } from '../settings/store'
 import { helpersAllowed, runHelperJob, type JsonSchema } from '../helpers/helperJob'
 import { memoryDb } from './paths'
+import { fillVectorsInBackground } from './meaning'
 import { codeHashes, countCodeFiles, hashFile, removeCodeFiles, saveCodeSummaries, type CodeFile } from './store'
 
 const execFileAsync = promisify(execFile)
@@ -135,6 +136,8 @@ export async function refreshCodeMap(projectId: string, projectPath: string, per
       saveCodeSummaries(db, projectId, saved)
       summarized += saved.length
     }
+    // New summaries get their search vectors now, not during the next search.
+    if (summarized) void fillVectorsInBackground(db)
     return { summarized, removed: removed.length, pending: Math.max(0, todo.length - batch.length) }
   } finally {
     running.delete(projectId)

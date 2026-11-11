@@ -2,6 +2,17 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.6.0 (2026-11-10)
+
+Second step of the memory work (Memory v3): **memory is searched by what you mean, not by matching words.**
+- **"Put it online" finds the fact about deploying**, even though they share no word. A small language model (gte-small, 34 MB) reads every remembered fact and every file summary and compares meanings. It runs on your own computer, inside VibeApp; nothing is sent anywhere for it.
+- **Claude, Codex and Cline all get it.** Their memory tools (`recall`, `where`) ask the running VibeApp, over a private channel on this computer that nothing on the network can reach. An exact name such as an error message is still found by its letters.
+- **Fewer, better facts are attached to each request.** Before, any distinctive word in common was enough, so "ok do it" often came with unrelated facts. Now a fact or file is attached only when it is close in meaning.
+- **Measured.** On the search test (120 questions with known answers): the right fact or file among the first five 93% of the time, against 70% before; 80% against 0% when the question shares no word with its answer. On 50 real requests from two real projects, judged without knowing which search found what: a directly useful fact among the first five for 44 requests instead of 38; three quarters of the attached facts useful instead of under half; and of 18 messages like "ok do it", 3 got a fact attached instead of 12.
+- **The first start after updating** takes a moment in the background to read through everything already remembered (about a hundredth of a second per fact or file). Until that is done, and on a computer where the model can't run, memory is searched by keyword as before.
+- The installer is 31 MB bigger (245 MB instead of 214 MB): the model and the program that runs it.
+- For developers: the model is fetched by `npm install` (it isn't in the repository), comparing is done by the sqlite-vec add-on, and `npm run package` now checks that only the built app went into the installer.
+
 ## 0.5.5 (2026-11-10)
 
 First step of the memory work planned in the roadmap (Memory v3):

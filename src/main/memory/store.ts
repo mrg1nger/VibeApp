@@ -14,7 +14,7 @@ import { approvedPlanFact, planTitle } from '@shared/plan'
 /** Facts in the global scope apply to every project. */
 export const GLOBAL_SCOPE = 'global'
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS facts (
@@ -173,16 +173,53 @@ CREATE TABLE IF NOT EXISTS notes (
   text TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- Search by meaning: one vector per fact and per mapped file, written by the app (meaning.ts).
+-- Ordinary tables, so every process can open and tidy the database without the sqlite-vec
+-- add-on. A vector goes when its text changes or is deleted, and the app makes a new one.
+CREATE TABLE IF NOT EXISTS fact_vectors (fact_id TEXT PRIMARY KEY, model TEXT NOT NULL, v BLOB NOT NULL);
+CREATE TRIGGER IF NOT EXISTS fact_vectors_ad AFTER DELETE ON facts BEGIN
+  DELETE FROM fact_vectors WHERE fact_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS fact_vectors_au AFTER UPDATE OF text ON facts WHEN old.text IS NOT new.text BEGIN
+  DELETE FROM fact_vectors WHERE fact_id = old.id;
+END;
+CREATE TABLE IF NOT EXISTS code_vectors (file_id INTEGER PRIMARY KEY, model TEXT NOT NULL, v BLOB NOT NULL);
+CREATE TRIGGER IF NOT EXISTS code_vectors_ad AFTER DELETE ON code_files BEGIN
+  DELETE FROM code_vectors WHERE file_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS code_vectors_au AFTER UPDATE OF summary, path ON code_files
+WHEN old.summary IS NOT new.summary OR old.path IS NOT new.path BEGIN
+  DELETE FROM code_vectors WHERE file_id = old.id;
+END;
 `
 
 const databases = new Map<string, DatabaseSync>()
 
-export function openMemory(dbPath: string): DatabaseSync {
+/** Connections with the sqlite-vec add-on loaded, which compares vectors inside the database. */
+const comparesVectors = new WeakSet<DatabaseSync>()
+
+/**
+ * Opens the shared memory. `vectorExtension` is the path of the sqlite-vec add-on: only the app
+ * passes it (the memory tool processes ask the app to search by meaning). Without it, or if it
+ * fails to load, vectors are compared in JavaScript with the same result.
+ */
+export function openMemory(dbPath: string, vectorExtension?: string): DatabaseSync {
   const open = databases.get(dbPath)
   if (open) return open
   const dir = dirname(dbPath)
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  const db = new DatabaseSync(dbPath)
+  const db = vectorExtension ? new DatabaseSync(dbPath, { allowExtension: true }) : new DatabaseSync(dbPath)
+  if (vectorExtension) {
+    try {
+      db.loadExtension(vectorExtension)
+      comparesVectors.add(db)
+    } catch (err) {
+      console.warn('The sqlite-vec add-on did not load; comparing vectors without it:', (err as Error).message)
+    }
+    // Only that one add-on: nothing run later may load another.
+    db.enableLoadExtension(false)
+  }
   // Several processes share the file: wait for each other instead of failing.
   db.exec('PRAGMA busy_timeout = 5000')
   db.exec('PRAGMA journal_mode = WAL')
@@ -317,7 +354,7 @@ function similarity(a: string, b: string): number {
  * Best matches for a search across a project and the global scope. Marks
  * them as used, which the tidy-up takes into account.
  */
-export function searchFacts(db: DatabaseSync, projectId: string, text: string, limit = 10): MemoryFact[] {
+export function searchFacts(db: DatabaseSync, projectId: string, text: string, limit = 10, used = true): MemoryFact[] {
   const match = ftsQuery(text)
   if (!match) return []
   const rows = db
@@ -327,11 +364,11 @@ export function searchFacts(db: DatabaseSync, projectId: string, text: string, l
        ORDER BY bm25(facts_fts) LIMIT ?`
     )
     .all(match, projectId, GLOBAL_SCOPE, limit) as unknown as FactRow[]
-  markUsed(db, rows.map((r) => r.id))
+  if (used) markUsed(db, rows.map((r) => r.id))
   return rows.map(toFact)
 }
 
-function markUsed(db: DatabaseSync, ids: string[]): void {
+export function markUsed(db: DatabaseSync, ids: string[]): void {
   if (!ids.length) return
   const stmt = db.prepare('UPDATE facts SET last_used_at = ?, use_count = use_count + 1 WHERE id = ?')
   const at = now()
@@ -592,7 +629,7 @@ export function importLegacyMemory(db: DatabaseSync, globalJson: string, project
  * least two meaningful words with the request (one, for very short ones):
  * a single common word shouldn't pull in unrelated facts.
  */
-export function relevantFacts(db: DatabaseSync, projectId: string, text: string, limit = 5): MemoryFact[] {
+export function relevantFacts(db: DatabaseSync, projectId: string, text: string, limit = 5, used = true): MemoryFact[] {
   const match = ftsQuery(text)
   if (!match) return []
   const asked = new Set(stems(text))
@@ -611,10 +648,7 @@ export function relevantFacts(db: DatabaseSync, projectId: string, text: string,
   const picked = rows
     .filter((row) => strongMatch(asked, stems(row.text), df, everything.length))
     .slice(0, limit)
-  markUsed(
-    db,
-    picked.map((r) => r.id)
-  )
+  if (used) markUsed(db, picked.map((r) => r.id))
   return picked.map(toFact)
 }
 
@@ -906,17 +940,6 @@ export function codeSummariesFor(db: DatabaseSync, projectId: string, paths: str
   return out
 }
 
-/**
- * Remembered conventions and decisions that bear on a change: related
- * preferences, gotchas and decisions that aren't already among the key facts
- * every request starts with.
- */
-export function reviewConventions(db: DatabaseSync, projectId: string, text: string, limit = 4): MemoryFact[] {
-  return relevantFacts(db, projectId, text, 10)
-    .filter((f) => f.category === 'preference' || f.category === 'gotcha' || f.category === 'decision')
-    .slice(0, limit)
-}
-
 /** The first `limit` mapped files, by path, with their one-line descriptions. */
 export function listCodeFiles(db: DatabaseSync, projectId: string, limit = 60): { path: string; summary: string }[] {
   return db
@@ -953,6 +976,174 @@ export function relevantCode(db: DatabaseSync, projectId: string, text: string, 
   return candidates
     .filter((f) => strongMatch(asked, stems(describe(f)), df, everything.length))
     .slice(0, limit)
+}
+
+// ---- search by meaning: the stored vectors -----------------------------------------
+//
+// The app turns each fact and each file summary into a vector (meaning.ts) and keeps it
+// here. `model` names what made a vector: one made by another model counts as missing.
+
+const blob = (v: Float32Array): Uint8Array => new Uint8Array(v.buffer, v.byteOffset, v.byteLength)
+const floats = (b: Uint8Array): Float32Array => new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength))
+
+/** How alike two vectors are: 1 = the same direction (sqlite-vec's cosine distance is 1 minus this). */
+function cosine(a: Float32Array, b: Float32Array): number {
+  let dot = 0
+  let aa = 0
+  let bb = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    aa += a[i] * a[i]
+    bb += b[i] * b[i]
+  }
+  return aa && bb ? dot / Math.sqrt(aa * bb) : 0
+}
+
+export function comparesVectorsInDatabase(db: DatabaseSync): boolean {
+  return comparesVectors.has(db)
+}
+
+/** Facts with no vector from this model yet: everywhere, or only in the given scopes. */
+export function factsMissingVectors(db: DatabaseSync, model: string, scopes: string[] | null, limit = 500): { id: string; text: string }[] {
+  const within = scopes ? `AND facts.scope IN (${scopes.map(() => '?').join(', ')})` : ''
+  return db
+    .prepare(
+      `SELECT facts.id, facts.text FROM facts LEFT JOIN fact_vectors fv ON fv.fact_id = facts.id AND fv.model = ?
+       WHERE fv.fact_id IS NULL AND facts.forgotten_at IS NULL ${within} LIMIT ?`
+    )
+    .all(model, ...(scopes ?? []), limit) as unknown as { id: string; text: string }[]
+}
+
+/** Saved only if the fact still says `text`: one edited while its vector was being made gets a new one later. */
+export function saveFactVector(db: DatabaseSync, model: string, fact: { id: string; text: string }, vector: Float32Array): void {
+  db.prepare('INSERT OR REPLACE INTO fact_vectors (fact_id, model, v) SELECT id, ?, ? FROM facts WHERE id = ? AND text = ?').run(
+    model,
+    blob(vector),
+    fact.id,
+    fact.text
+  )
+}
+
+export interface NearFact {
+  fact: MemoryFact
+  /** 1 = means the same, 0 = unrelated. */
+  similarity: number
+}
+
+/** The facts (this project's and the global ones) closest in meaning to `query`, closest first. */
+export function nearestFacts(
+  db: DatabaseSync,
+  projectId: string,
+  model: string,
+  query: Float32Array,
+  limit: number,
+  withoutKey = false
+): NearFact[] {
+  const where = `fv.model = ? AND facts.forgotten_at IS NULL AND facts.scope IN (?, ?)${withoutKey ? ' AND facts.key = 0' : ''}`
+  if (comparesVectors.has(db)) {
+    const rows = db
+      .prepare(
+        `SELECT facts.*, vec_distance_cosine(fv.v, ?) AS distance FROM fact_vectors fv JOIN facts ON facts.id = fv.fact_id
+         WHERE ${where} ORDER BY distance LIMIT ?`
+      )
+      .all(blob(query), model, projectId, GLOBAL_SCOPE, limit) as unknown as (FactRow & { distance: number })[]
+    return rows.map((r) => ({ fact: toFact(r), similarity: 1 - r.distance }))
+  }
+  const rows = db
+    .prepare(`SELECT facts.*, fv.v FROM fact_vectors fv JOIN facts ON facts.id = fv.fact_id WHERE ${where}`)
+    .all(model, projectId, GLOBAL_SCOPE) as unknown as (FactRow & { v: Uint8Array })[]
+  return rows
+    .map((r) => ({ fact: toFact(r), similarity: cosine(floats(r.v), query) }))
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, limit)
+}
+
+export interface MappedFile {
+  id: number
+  path: string
+  summary: string
+}
+
+/** What a mapped file's vector is made from. */
+export function codeText(file: { path: string; summary: string }): string {
+  return `${file.path}: ${file.summary}`
+}
+
+export function filesMissingVectors(db: DatabaseSync, model: string, projectId: string | null, limit = 500): MappedFile[] {
+  return db
+    .prepare(
+      `SELECT cf.id, cf.path, cf.summary FROM code_files cf LEFT JOIN code_vectors cv ON cv.file_id = cf.id AND cv.model = ?
+       WHERE cv.file_id IS NULL ${projectId === null ? '' : 'AND cf.project_id = ?'} LIMIT ?`
+    )
+    .all(model, ...(projectId === null ? [] : [projectId]), limit) as unknown as MappedFile[]
+}
+
+export function saveCodeVector(db: DatabaseSync, model: string, file: MappedFile, vector: Float32Array): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO code_vectors (file_id, model, v) SELECT id, ?, ? FROM code_files WHERE id = ? AND path = ? AND summary = ?'
+  ).run(model, blob(vector), file.id, file.path, file.summary)
+}
+
+export interface NearFile {
+  file: CodeFile
+  similarity: number
+}
+
+/** The project's mapped files closest in meaning to `query`, closest first. */
+export function nearestCode(db: DatabaseSync, projectId: string, model: string, query: Float32Array, limit: number): NearFile[] {
+  type Row = CodeFile & { distance?: number; v?: Uint8Array }
+  const file = (r: Row): CodeFile => ({ path: r.path, summary: r.summary, hash: r.hash })
+  if (comparesVectors.has(db)) {
+    const rows = db
+      .prepare(
+        `SELECT cf.path, cf.summary, cf.hash, vec_distance_cosine(cv.v, ?) AS distance FROM code_vectors cv
+         JOIN code_files cf ON cf.id = cv.file_id WHERE cv.model = ? AND cf.project_id = ? ORDER BY distance LIMIT ?`
+      )
+      .all(blob(query), model, projectId, limit) as unknown as Row[]
+    return rows.map((r) => ({ file: file(r), similarity: 1 - r.distance! }))
+  }
+  const rows = db
+    .prepare(
+      `SELECT cf.path, cf.summary, cf.hash, cv.v FROM code_vectors cv JOIN code_files cf ON cf.id = cv.file_id
+       WHERE cv.model = ? AND cf.project_id = ?`
+    )
+    .all(model, projectId) as unknown as Row[]
+  return rows
+    .map((r) => ({ file: file(r), similarity: cosine(floats(r.v!), query) }))
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, limit)
+}
+
+/** How many facts and mapped files there are, and how many have a vector from this model. */
+export function vectorCoverage(db: DatabaseSync, model: string): { facts: number; factsDone: number; files: number; filesDone: number } {
+  const n = (sql: string, ...args: string[]): number => (db.prepare(sql).get(...args) as { n: number }).n
+  return {
+    facts: n('SELECT COUNT(*) AS n FROM facts WHERE forgotten_at IS NULL'),
+    factsDone: n(
+      'SELECT COUNT(*) AS n FROM fact_vectors fv JOIN facts ON facts.id = fv.fact_id WHERE fv.model = ? AND facts.forgotten_at IS NULL',
+      model
+    ),
+    files: n('SELECT COUNT(*) AS n FROM code_files'),
+    filesDone: n('SELECT COUNT(*) AS n FROM code_vectors WHERE model = ?', model)
+  }
+}
+
+/** The facts with these ids that an agent in this project may see (its own and the global ones), in the order given. */
+export function factsByIds(db: DatabaseSync, projectId: string, ids: string[]): MemoryFact[] {
+  const stmt = db.prepare('SELECT * FROM facts WHERE id = ? AND forgotten_at IS NULL AND scope IN (?, ?)')
+  return ids.flatMap((id) => {
+    const row = stmt.get(id, projectId, GLOBAL_SCOPE) as unknown as FactRow | undefined
+    return row ? [toFact(row)] : []
+  })
+}
+
+/** The project's mapped files with these paths, in the order given. */
+export function codeFilesByPath(db: DatabaseSync, projectId: string, paths: string[]): CodeFile[] {
+  const stmt = db.prepare('SELECT path, summary, hash FROM code_files WHERE project_id = ? AND path = ?')
+  return paths.flatMap((path) => {
+    const row = stmt.get(projectId, path) as unknown as CodeFile | undefined
+    return row ? [{ path: row.path, summary: row.summary, hash: row.hash }] : []
+  })
 }
 
 // ---- erasing a project ----------------------------------------------------------

@@ -9,7 +9,8 @@ import { clineModelFor } from '../cli/clineAcp'
 import { progressNote } from '../cli/codexActivity'
 import { getSettings } from '../settings/store'
 import { memoryDb } from '../memory/paths'
-import { codeSummariesFor, finishHandoff, keyFactsBlock, reviewConventions, startHandoff } from '../memory/store'
+import { codeSummariesFor, finishHandoff, keyFactsBlock, startHandoff } from '../memory/store'
+import { conventionsFor } from '../memory/meaning'
 import { digestDiff } from './diffDigest'
 import { briefBlock } from '../memory/brief'
 import { handoffContext } from '../memory/context'
@@ -73,6 +74,16 @@ function clineSessionFor(request: RequestContext): string {
 function attempt<T>(work: () => T): T | undefined {
   try {
     return work()
+  } catch (err) {
+    console.warn('Hand-off bookkeeping failed:', (err as Error).message)
+    return undefined
+  }
+}
+
+/** The same for work that takes a moment (a memory search). */
+async function attemptLater<T>(work: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await work()
   } catch (err) {
     console.warn('Hand-off bookkeeping failed:', (err as Error).message)
     return undefined
@@ -308,7 +319,7 @@ export function createCodexDelegationServer(
             const request = getRequestContext?.()
             return handOff('Codex', args.prompt, async () => {
               const images = (request?.images ?? []).filter((p) => existsSync(p))
-              const context = memory ? attempt(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
+              const context = memory ? await attemptLater(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
               const run = (resumeThreadId?: string): Promise<CodexExecResult> =>
                 runCodexExec(
                   {
@@ -373,7 +384,7 @@ export function createCodexDelegationServer(
               if (!settings.clineHandoffs) {
                 return { report: 'Hand-offs to Cline are switched off in VibeApp\'s Settings. Do the work yourself or hand it to Codex.', ok: false }
               }
-              const context = memory ? attempt(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
+              const context = memory ? await attemptLater(() => handoffContext(memory.projectId, args.prompt, request)) : undefined
               const prompt = [
                 CLINE_INSTRUCTIONS,
                 memory ? `Key facts:\n${currentKeyFacts(memory.projectId) ?? '(none yet)'}` : undefined,
@@ -509,7 +520,7 @@ export function createCodexDelegationServer(
       // Remembered conventions that bear on this change, so the review checks against them.
       if (projectId && changes?.length) {
         const text = [request?.text, prompt, ...changes.map((c) => c.path)].filter(Boolean).join(' ')
-        const rules = attempt(() => reviewConventions(memoryDb(), projectId, text))
+        const rules = await attemptLater(() => conventionsFor(memoryDb(), projectId, text))
         if (rules?.length) {
           lines.push(
             `[Remembered conventions that apply here; check the change against them:\n${rules
