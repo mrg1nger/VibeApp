@@ -111,6 +111,12 @@ From the OpenClaw comparison. Worth revisiting only if VibeApp grows beyond codi
 - Message VibeApp from your phone or chat apps (Slack, Discord).
 - A library of ready-made agent skills.
 
+Maybe (from the comparison with other multi-agent tools, 2026-11-10). Today a project answers one request at a time and the next message waits:
+
+- [ ] **Queue the next message.** Send while a request is working; the message waits in line (editable, removable) and runs right after. One line of history, so undo, preview and review stay as they are. Small; most of the benefit of parallel.
+- [ ] **Background to-dos.** "Build this in the background" hands a to-do to Codex or Cline in its own copy of the project (git worktree) while you keep chatting with Claude; brought in as an undoable message if it doesn't clash, otherwise you choose (like Publish's "Use GitHub's"). Uses the plans idle while Claude works. Try after the queue, small to-dos first, and see how often they clash.
+- Not planned: full parallel requests in one project (a worktree each, as Conductor, Paseo and the official apps do). It splits undo history, needs a preview per copy, leaves merging to the user, and burns plans faster. Revisit only if the two above leave people wanting more.
+
 Dropped:
 
 - Voice input (the other half of #10). Not needed.
