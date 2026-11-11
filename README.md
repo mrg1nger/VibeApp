@@ -60,7 +60,7 @@ VibeApp is for "vibe coding": you describe what you want, watch it appear in a l
 - **Remote access:** use VibeApp from a browser or phone on your network, and drive it from Claude Code through its MCP server.
 - **System tray mode,** Windows notifications and phone alerts (through the free ntfy app).
 - **Updates itself** from GitHub Releases, with a banner to update, skip that version, or not now.
-- **Themes**, including a theme generator.
+- **Themes**, including RedAstra (RedAstra Labs' own colours) and a theme generator.
 - **Backups** of VibeApp's own data, with restore and export to move to another PC.
 
 ---

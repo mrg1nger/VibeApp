@@ -35,6 +35,40 @@ export const BUILT_IN_THEMES: ThemeDefinition[] = [
     }
   },
   {
+    id: 'redastra',
+    name: 'RedAstra',
+    description: "RedAstra Labs' own colours, as on redastralabs.com: near-black with a red star.",
+    source: 'built-in',
+    vars: {
+      font: "Inter, -apple-system, 'Segoe UI', system-ui, sans-serif",
+      radius: '12px',
+      bg: '#0d0f12',
+      'bg-image': 'radial-gradient(circle at 90% -10%, rgba(255, 92, 69, 0.1), transparent 45%)',
+      surface: '#15181c',
+      'surface-raised': '#2f343c',
+      'surface-sunken': '#090b0d',
+      border: '#282d34',
+      text: '#f1f3f5',
+      'text-muted': '#9aa1a9',
+      accent: '#ff5c45',
+      // Dark text: white on this red is too faint to read comfortably.
+      'accent-text': '#14161a',
+      'accent-glow': 'none',
+      title: 'linear-gradient(90deg, #f1f3f5, #ff7a63)',
+      'user-bubble': '#ff5c45',
+      'success-bg': '#1f4d2e',
+      'success-text': '#7be3a0',
+      'warning-bg': '#4d2f1f',
+      'warning-text': '#e3a97b',
+      danger: '#ff7864',
+      'danger-bg': '#4d1f1f',
+      'danger-text': '#ffb4b4',
+      'delegation-bg': '#22314d',
+      'delegation-text': '#a7c3e3',
+      overlay: 'rgba(0, 0, 0, 0.6)'
+    }
+  },
+  {
     id: 'sakura-neon',
     name: 'Sakura Neon',
     description: 'Late-night anime coding session: indigo sky, sakura pink, cyan neon, CRT scanlines.',

@@ -131,7 +131,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
       - Facts an agent saves itself during a request (the `remember` tool) are linked only to files they name, not to what the request changed: which of the changed files a fact is about isn't known then.
       - Changes made outside VibeApp (in an editor, a `git pull`) aren't counted, only deletions. Counting them would need the old version of each file kept.
       - The "changed a lot" bar (about the file's own length) and the 60 days / 30 requests aren't measured on real use yet. Worth a look once real projects have a few weeks of links: how many facts get marked, and how many of those the tidy-up retires.
-  - [ ] **Step 4 (0.8.0, memory travels).** Needs its own short plan first.
+  - [ ] **Step 4 (0.9.0, memory travels).** Needs its own short plan first.
     - A readable memory file in the project (this project's facts and brief; never global preferences, never fingerprints), written after changes and sent with the GitHub backup; merged when newer work is picked up on another computer (newest change to a fact wins; forgetting travels too).
     - Off by default, switched on per project; refused or warned for a public repository; the secrets scanner runs over it before every write.
     - Open questions for that plan: the file's format (Markdown you can read against something that merges cleanly), how global preferences get between computers (not through a project), what happens when both computers changed the same fact.

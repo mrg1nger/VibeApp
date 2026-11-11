@@ -2,6 +2,13 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.8.0 (2026-11-11)
+
+VibeApp carries RedAstra Labs' branding (redastralabs.com):
+- **"RedAstra Labs" with its star over the VibeApp title.** It opens redastralabs.com.
+- **A footer on every screen:** the version, then links to redastralabs.com, the GitHub repository and the MIT licence, each with a small icon. On a phone it's one short line.
+- **A RedAstra theme** in Settings, in the website's colours: near-black with RedAstra red. Your current theme stays as it is until you pick it.
+
 ## 0.7.0 (2026-11-11)
 
 Third step of the memory work (Memory v3): **memory knows when it may be old.**

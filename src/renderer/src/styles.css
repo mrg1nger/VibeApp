@@ -70,6 +70,69 @@ button.active,
 .app-nav h1 {
   margin: 0;
   font-size: 1.3rem;
+  line-height: 1.1;
+}
+
+.brand-title {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.brand-org,
+.app-footer a,
+.app-footer-org {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.brand-org {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.brand-org:hover {
+  color: var(--text);
+}
+
+/* Each screen scrolls inside this, so the footer stays at the bottom. */
+.app-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.app-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.2rem;
+  margin-top: 0.8rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.app-footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.app-footer a:hover {
+  color: var(--text);
+}
+
+.app-footer-org {
+  margin-right: auto;
 }
 
 .app-nav-tabs {
@@ -2879,6 +2942,17 @@ textarea {
   .app-nav h1 {
     font-size: 1.2rem;
     margin: 0;
+  }
+
+  /* One short line on a phone; the org is already over the title. */
+  .app-footer {
+    gap: 0.3rem 0.9rem;
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+
+  .app-footer-org {
+    display: none;
   }
 
   .app-nav-tabs {

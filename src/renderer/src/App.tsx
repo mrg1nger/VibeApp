@@ -11,6 +11,7 @@ import TalkView from './views/TalkView'
 import ToastHost from './components/ToastHost'
 import UsageMeters from './components/UsageMeters'
 import UpdateBanner from './components/UpdateBanner'
+import { AppFooter, BrandTitle } from './components/Brand'
 import { useToasts } from './lib/useToasts'
 import { applyTheme } from './lib/theme'
 
@@ -102,7 +103,7 @@ function App() {
   return (
     <div className="app">
       <div className="app-nav">
-        <h1>VibeApp</h1>
+        <BrandTitle />
         <div className="app-nav-tabs" data-scroll-x>
           <button
             className={screen === 'accounts' ? 'active' : ''}
@@ -153,62 +154,65 @@ function App() {
 
       {settings && <UpdateBanner settings={settings} onSettingsChange={changeSettings} />}
 
-      {screen === 'accounts' && <AccountsView statuses={statuses} onRefresh={refreshStatus} />}
+      <div className="app-main">
+        {screen === 'accounts' && <AccountsView statuses={statuses} onRefresh={refreshStatus} />}
 
-      {screen === 'projects' && claudeReady && (
-        <ProjectPickerView
-          onOpen={(project) => {
-            setActiveProject(project)
-            setScreen('chat')
-          }}
-          onError={showError}
-          onRemoved={(projectId) => setActiveProject((current) => (current?.id === projectId ? null : current))}
-        />
-      )}
-      {screen === 'projects' && !claudeReady && !claudeChecking && (
-        <div className="empty-state">
-          <h2>Claude Code isn't ready yet</h2>
-          <p>
-            {statuses.claude.status === 'not_installed'
-              ? "Claude Code doesn't seem to be installed on this machine."
-              : "You're not logged in to Claude Code yet."}
-          </p>
-          <button onClick={() => setScreen('accounts')}>Go to Accounts</button>
-        </div>
-      )}
+        {screen === 'projects' && claudeReady && (
+          <ProjectPickerView
+            onOpen={(project) => {
+              setActiveProject(project)
+              setScreen('chat')
+            }}
+            onError={showError}
+            onRemoved={(projectId) => setActiveProject((current) => (current?.id === projectId ? null : current))}
+          />
+        )}
+        {screen === 'projects' && !claudeReady && !claudeChecking && (
+          <div className="empty-state">
+            <h2>Claude Code isn't ready yet</h2>
+            <p>
+              {statuses.claude.status === 'not_installed'
+                ? "Claude Code doesn't seem to be installed on this machine."
+                : "You're not logged in to Claude Code yet."}
+            </p>
+            <button onClick={() => setScreen('accounts')}>Go to Accounts</button>
+          </div>
+        )}
 
-      {screen === 'chat' && activeProject && (
-        <ChatView
-          project={activeProject}
-          onBack={() => setScreen('projects')}
-          onOpenHistory={() => setScreen('history')}
-          onOpenMemory={() => setScreen('memory')}
-          onError={showError}
-          thinkingLabel={activeTheme?.thinkingLabel ?? 'Claude is working…'}
-        />
-      )}
-      {screen === 'history' && activeProject && (
-        <HistoryView
-          project={activeProject}
-          onBack={() => setScreen('chat')}
-          onError={showError}
-        />
-      )}
-      {screen === 'memory' && activeProject && (
-        <MemoryView project={activeProject} onBack={() => setScreen('chat')} onError={showError} />
-      )}
-      {screen === 'talk' && <TalkView onError={showError} />}
-      {screen === 'extensions' && <ExtensionsView onError={showError} />}
-      {screen === 'settings' && settings && (
-        <SettingsView
-          settings={settings}
-          themes={themes}
-          onSettingsChange={changeSettings}
-          onThemesChange={reloadThemes}
-          onError={showError}
-        />
-      )}
+        {screen === 'chat' && activeProject && (
+          <ChatView
+            project={activeProject}
+            onBack={() => setScreen('projects')}
+            onOpenHistory={() => setScreen('history')}
+            onOpenMemory={() => setScreen('memory')}
+            onError={showError}
+            thinkingLabel={activeTheme?.thinkingLabel ?? 'Claude is working…'}
+          />
+        )}
+        {screen === 'history' && activeProject && (
+          <HistoryView
+            project={activeProject}
+            onBack={() => setScreen('chat')}
+            onError={showError}
+          />
+        )}
+        {screen === 'memory' && activeProject && (
+          <MemoryView project={activeProject} onBack={() => setScreen('chat')} onError={showError} />
+        )}
+        {screen === 'talk' && <TalkView onError={showError} />}
+        {screen === 'extensions' && <ExtensionsView onError={showError} />}
+        {screen === 'settings' && settings && (
+          <SettingsView
+            settings={settings}
+            themes={themes}
+            onSettingsChange={changeSettings}
+            onThemesChange={reloadThemes}
+            onError={showError}
+          />
+        )}
+      </div>
 
+      <AppFooter />
       <ToastHost toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
