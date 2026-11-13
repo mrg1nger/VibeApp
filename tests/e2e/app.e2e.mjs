@@ -979,6 +979,37 @@ try {
     if (JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8')).clineHelperModel !== null) throw new Error('"Same as hand-offs" was not saved')
   })
 
+  await step('LM Studio in Settings: off at first, finds the server and its models, saves, and the test answers', async () => {
+    const settingsNow = () => JSON.parse(readFileSync(join(data, 'settings.json'), 'utf-8'))
+    const panel = `document.querySelector('.lmstudio-settings')`
+    await click('Settings', '.app-nav-tabs button')
+    await waitFor(`!!${panel} && !/Looking for LM Studio/.test(${panel}.innerText)`, 'the LM Studio panel', 15_000)
+    await evaluate(`${panel}.scrollIntoView()`)
+    if (await evaluate(`${panel}.querySelector('input[type=checkbox]').checked`)) throw new Error('LM Studio was on before being turned on')
+    const running = await evaluate(`/is running at/.test(${panel}.innerText)`)
+    console.log(`  (${await evaluate(`${panel}.querySelector('.settings-hint').innerText`)})`)
+    await evaluate(`${panel}.querySelector('input[type=checkbox]').click()`)
+    await sleep(800)
+    if (settingsNow().lmStudioHelpers !== true) throw new Error('turning it on was not saved')
+    if (running) {
+      const select = `${panel}.querySelector('select')`
+      await waitFor(`${select}?.options.length > 1`, 'the LM Studio model menu', 10_000)
+      const model = await evaluate(`${select}.options[1].value`)
+      await evaluate(`(() => { const s = ${select}; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ${JSON.stringify(model)}); s.dispatchEvent(new Event('change', { bubbles: true })) })()`)
+      await sleep(800)
+      if (settingsNow().lmStudioModel !== model) throw new Error('the model choice was not saved')
+      await click('Test LM Studio', '.lmstudio-settings button')
+      await waitFor(`/answered in|refused|reach|nothing|too long/.test(${panel}.querySelector('.settings-row').innerText)`, 'the LM Studio test', 200_000)
+      const result = await evaluate(`${panel}.querySelector('.settings-row').innerText`)
+      console.log(`  (${result.replace(/\s+/g, ' ')})`)
+      if (!/answered in/.test(result)) throw new Error(`the test failed: ${result}`)
+    }
+    await shot('lmstudio-settings')
+    // Back to how the test started.
+    await evaluate(`${panel}.querySelector('input[type=checkbox]').click()`)
+    await sleep(800)
+  })
+
   await step('the Extensions screen lists tools to install', async () => {
     await click('Extensions', '.app-nav-tabs button')
     await waitFor(`/Up-to-date docs/.test(document.body.innerText)`, 'the catalog', 15_000)

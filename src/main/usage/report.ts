@@ -135,6 +135,19 @@ export function buildReport(input: {
     for (const [kind, v] of [...kinds].sort((a, b) => b[1].weight - a[1].weight)) lines.push(`- ${kind}: ${pct(v.weight, clineTotal)} (${v.runs} runs)`)
   }
 
+  const lmRows = usage.filter((u) => u.agent === 'lmstudio')
+  if (lmRows.length) {
+    const kinds = new Map<string, { tokens: number; runs: number }>()
+    for (const u of lmRows) {
+      const v = kinds.get(u.kind) ?? { tokens: 0, runs: 0 }
+      v.tokens += u.fresh + u.cached + u.output
+      v.runs += u.runs
+      kinds.set(u.kind, v)
+    }
+    lines.push('', `## LM Studio, by kind of work (${sum(lmRows.map((u) => u.runs))} runs on this computer, free; background jobs here no longer use Claude)`)
+    for (const [kind, v] of [...kinds].sort((a, b) => b[1].runs - a[1].runs)) lines.push(`- ${kind}: ${v.runs} runs (${k(v.tokens)} tokens)`)
+  }
+
   // ---- requests: who did what
   if (!requests.length) {
     lines.push('', 'No Build or Plan requests recorded in this period (requests are recorded from this version on).')

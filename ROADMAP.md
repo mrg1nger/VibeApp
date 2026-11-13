@@ -55,7 +55,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
   - Check ClinePass terms before selling VibeApp with it built in.
 - [ ] **Custodial jobs off Claude's plan.** On DevBox, compaction, tidy, scribe and brief took about 12% of Claude's weighted usage over 7 days, plus the Haiku route judge. They're short and repetitive, so a small model could do them. Cheapest path first:
   1. ClinePass models: **done in 0.3.0** for scribe, summary, tidy, brief and code map. Left on Claude: the route judge (it needs an answer in under 5 s; a Cline run starts cold in 4-12 s) and compaction (Claude compacting its own conversation).
-  2. Or a small off-the-shelf local model (e.g. a 1–4B Qwen through Ollama). Needs a check of the GPU on DevBox.
+  2. A local model: **done in 0.9.0** through LM Studio (Settings → LM Studio, off by default; first in line before Cline and Haiku). Qwen3.6 35B-A3B scored 8/8 on the memory-saving eval at about 21 s per job on an RTX 4060 (2026-11-13). Still open: the route judge on LM Studio (it answers in about 2 s with thinking off, under the 5 s the judge needs), trying smaller models, and LM Studio on DevBox (check its GPU).
   3. Fine-tune one on VibeApp's own past helper outputs, only if 1 and 2 aren't good enough.
 
   Training a model from scratch isn't worth it. Measure every option with an eval of the helper jobs (same input, compare against Haiku's output) before switching over.
@@ -131,7 +131,7 @@ Everything recommended so far, in one place. Tick items off as they ship.
       - Facts an agent saves itself during a request (the `remember` tool) are linked only to files they name, not to what the request changed: which of the changed files a fact is about isn't known then.
       - Changes made outside VibeApp (in an editor, a `git pull`) aren't counted, only deletions. Counting them would need the old version of each file kept.
       - The "changed a lot" bar (about the file's own length) and the 60 days / 30 requests aren't measured on real use yet. Worth a look once real projects have a few weeks of links: how many facts get marked, and how many of those the tidy-up retires.
-  - [ ] **Step 4 (0.9.0, memory travels).** Needs its own short plan first.
+  - [ ] **Step 4 (0.10.0, memory travels).** Needs its own short plan first.
     - A readable memory file in the project (this project's facts and brief; never global preferences, never fingerprints), written after changes and sent with the GitHub backup; merged when newer work is picked up on another computer (newest change to a fact wins; forgetting travels too).
     - Off by default, switched on per project; refused or warned for a public repository; the secrets scanner runs over it before every write.
     - Open questions for that plan: the file's format (Markdown you can read against something that merges cleanly), how global preferences get between computers (not through a project), what happens when both computers changed the same fact.

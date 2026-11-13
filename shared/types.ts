@@ -647,12 +647,36 @@ export interface AppSettings {
   clineModel: string | null
   /** Cline model for background jobs; null = the hand-off model. */
   clineHelperModel: string | null
+  /** VibeApp's background jobs run on a model in LM Studio on this computer (first choice, before Cline and Haiku). */
+  lmStudioHelpers: boolean
+  /** LM Studio's server address (Developer → Start Server). */
+  lmStudioUrl: string
+  /** LM Studio model for background jobs; null = the one loaded now. */
+  lmStudioModel: string | null
   /** Look for new versions on GitHub Releases (at start and every few hours). */
   updateChecks: boolean
   /** A version the user chose to skip: no banner for it (a newer one still shows). */
   skippedVersion: string | null
   /** The version that ran last time, to notice an update and say so once. */
   lastRunVersion: string | null
+}
+
+/** A chat model LM Studio has downloaded. */
+export interface LmStudioModel {
+  id: string
+  /** In memory now (others load on first use, which takes a while). */
+  loaded: boolean
+  /** How much text it takes at once, in tokens. */
+  contextLength?: number
+}
+
+/** Whether LM Studio's server answers, and with which models. */
+export interface LmStudioStatus {
+  running: boolean
+  /** The address that was tried. */
+  url: string
+  models: LmStudioModel[]
+  error?: string
 }
 
 /** A new VibeApp version on GitHub Releases, and how far installing it has got. */

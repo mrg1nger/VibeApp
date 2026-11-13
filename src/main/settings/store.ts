@@ -40,6 +40,9 @@ const DEFAULTS: AppSettings = {
   clineHelpers: true,
   clineModel: null,
   clineHelperModel: null,
+  lmStudioHelpers: false,
+  lmStudioUrl: 'http://localhost:1234',
+  lmStudioModel: null,
   updateChecks: true,
   skippedVersion: null,
   lastRunVersion: null

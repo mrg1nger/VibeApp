@@ -2,6 +2,15 @@
 
 The version goes up with each improvement that ships: the middle number for new features, the last for fixes only. Settings shows the version a computer is running.
 
+## 0.9.0 (2026-11-13)
+
+**LM Studio: VibeApp's background jobs on a model on your own computer.**
+- **Settings → LM Studio.** Turn on "Background jobs on LM Studio" and saving memory, the memory tidy-up, the project brief, file summaries and chat summaries run on the model loaded in LM Studio: free, and the text never leaves the computer. Off until you turn it on.
+- **First in line.** LM Studio is asked first, then Cline, then Haiku; if LM Studio is closed or can't do a job, the next one does it as before.
+- **The panel finds the server** (http://localhost:1234 by default, or another address) and lists its models, loaded ones marked. Pick one or use whichever is loaded. "Test LM Studio" sends a one-word request and says how long it took. Warnings when the address is another computer or the model's context is too small.
+- **Fast and checked.** The answer's format is enforced by LM Studio and checked again by VibeApp. Thinking is off except for the tidy-up (about ten times faster on Qwen3.6). Usage is logged as LM Studio, with its own section in the usage report.
+- Tested: Qwen3.6 35B-A3B in LM Studio scored 8/8 on the memory-saving eval (the same as Haiku), about 21 s per job on an RTX 4060.
+
 ## 0.8.0 (2026-11-11)
 
 VibeApp carries RedAstra Labs' branding (redastralabs.com):

@@ -5,6 +5,7 @@ import { join } from 'path'
 import { resolveClaudeExecutable } from '../cli/claudeBinary'
 import { clineUnavailable, resolveClineLaunch, runCline } from '../cli/clineExec'
 import { clineModelFor } from '../cli/clineAcp'
+import { lmStudioReady, runLmStudio } from '../cli/lmStudio'
 import { getSettings } from '../settings/store'
 import { countsFromSdkResult, recordUsage } from '../usage/tokens'
 import { claudeHelpersAllowed } from '../usage/usage'
@@ -13,8 +14,9 @@ import type { UsageKind } from '../memory/store'
 // VibeApp's background jobs (saving memory, the tidy-up, the project brief,
 // file summaries, a conversation summary for a fresh session): short,
 // repetitive text jobs with no tools. They ran on Haiku, about 12% of
-// Claude's plan on a real install; with Cline set up they run on the user's
-// ClinePass plan instead, and fall back to Haiku if Cline can't do one.
+// Claude's plan on a real install. They run on the first of these that's set up
+// and manages the job: LM Studio (a model on this computer, free), Cline (the
+// user's ClinePass plan), then Haiku.
 
 export interface HelperJob {
   kind: Extract<UsageKind, 'scribe' | 'tidy' | 'brief' | 'codemap' | 'summary'>
@@ -31,7 +33,7 @@ export interface HelperJob {
 export interface HelperResult {
   text: string
   structured?: unknown
-  by: 'cline' | 'haiku'
+  by: 'lmstudio' | 'cline' | 'haiku'
 }
 
 export interface JsonSchema {
@@ -47,9 +49,9 @@ export interface JsonSchema {
 const CLINE_SYSTEM =
   'You are a careful assistant inside a coding app, doing one background job. You have no tools and need none: everything you need is in the message. Answer with exactly what the job asks for and nothing else.'
 
-/** Whether a background job can run at all right now (Cline is set up, or Claude has room). */
+/** Whether a background job can run at all right now (LM Studio or Cline is set up, or Claude has room). */
 export async function helpersAllowed(): Promise<boolean> {
-  return (await clineReady()) || claudeHelpersAllowed()
+  return (await lmStudioReady()) || (await clineReady()) || claudeHelpersAllowed()
 }
 
 async function clineReady(): Promise<boolean> {
@@ -63,9 +65,18 @@ export function setHelperJobForTests(answer: ((job: HelperJob) => Promise<Helper
   answerForTests = answer
 }
 
-/** Runs one background job: on Cline when it's set up, otherwise (or if Cline fails) on Haiku. */
+/** Runs one background job: on LM Studio, then Cline, then Haiku, moving on when one isn't set up or fails. */
 export async function runHelperJob(job: HelperJob): Promise<HelperResult> {
   if (answerForTests) return answerForTests(job)
+  if (await lmStudioReady()) {
+    try {
+      return await onLmStudio(job)
+    } catch (err) {
+      const next = (await clineReady()) ? 'Cline' : 'Haiku'
+      console.warn(`Background job (${job.kind}) on LM Studio failed, using ${next} instead:`, (err as Error).message)
+      if (next === 'Haiku' && !claudeHelpersAllowed()) throw err
+    }
+  }
   if (await clineReady()) {
     try {
       return await onCline(job)
@@ -106,6 +117,35 @@ async function onCline(job: HelperJob): Promise<HelperResult> {
   } finally {
     rmSync(cwd, { recursive: true, force: true })
   }
+}
+
+const LM_STUDIO_SYSTEM =
+  'You are a careful assistant inside a coding app, doing one background job. Everything you need is in the message. Answer with exactly what the job asks for and nothing else.'
+
+/** One job on LM Studio, with no falling back (exported for tests). */
+export async function onLmStudio(job: HelperJob): Promise<HelperResult> {
+  let result: Awaited<ReturnType<typeof runLmStudio>>
+  try {
+    result = await runLmStudio({
+      system: LM_STUDIO_SYSTEM,
+      prompt: job.prompt,
+      schema: job.schema as Record<string, unknown> | undefined,
+      thinking: job.thinking,
+      timeoutMs: 4 * 60_000
+    })
+  } catch (err) {
+    const usage = (err as { usage?: Parameters<typeof recordUsage>[3] }).usage
+    if (usage) recordUsage(job.projectId, job.kind, 'lmstudio', usage)
+    throw err
+  }
+  recordUsage(job.projectId, job.kind, 'lmstudio', result.usage)
+  if (!job.schema) return { text: result.text, by: 'lmstudio' }
+  // LM Studio holds the model to the schema, but check anyway (another server may not).
+  const raw = extractJson(result.text)
+  const structured = raw === undefined ? undefined : fillEmptyLists(raw, job.schema)
+  const problem = structured === undefined ? 'the answer had no JSON in it' : schemaProblem(structured, job.schema)
+  if (problem) throw new Error(`LM Studio's answer didn't follow the format (${problem}).`)
+  return { text: result.text, structured, by: 'lmstudio' }
 }
 
 async function onHaiku(job: HelperJob): Promise<HelperResult> {

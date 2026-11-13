@@ -130,6 +130,7 @@ import { claudeBlockedUntil, clearClaudeLimit, getUsage, noteClaudeLimit } from 
 import { helpersAllowed } from '../helpers/helperJob'
 import { checkCline, clineStatus } from '../cli/clineExec'
 import { clineModelFor, listClineModels } from '../cli/clineAcp'
+import { checkLmStudio, forgetLmStudioStatus, lmStudioStatus } from '../cli/lmStudio'
 import { takeSnapshot, restoreSnapshot } from '../git/snapshots'
 import { routeMessage } from '../orchestrator/routing'
 import { approvedPlanNote,codexPlanBuildNote, looksBig, matchTodosToSteps, parsePlanSteps, PLAN_INSTRUCTIONS, progressMarkers } from '@shared/plan'
@@ -1044,6 +1045,7 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
       await setModelForAllSessions(next.claudeModel)
     }
     if ('remoteAccess' in patch || 'remotePort' in patch) await applyRemoteSettings()
+    if ('lmStudioHelpers' in patch || 'lmStudioUrl' in patch || 'lmStudioModel' in patch) forgetLmStudioStatus()
     // Every other window (the app, remote browsers) shows the change too, or
     // each kept showing what it loaded (the slider said "Auto" on one screen
     // and "Codex-led" on another).
@@ -1066,16 +1068,20 @@ export function registerIpcHandlers(getSender: () => WebContents | undefined): v
   ipc.handle('vibe:usage:requests', (_event, days: number, projectId?: string) =>
     listRequests(memoryDb(), new Date(Date.now() - Math.max(1, days) * 86_400_000).toISOString(), projectId || undefined)
   )
-  // Cline (a third agent on the user's ClinePass plan): installed? and a quick live check.
   // New versions on GitHub Releases.
   ipc.handle('vibe:update:state', () => updateState())
   ipc.handle('vibe:update:check', () => checkForUpdate())
   ipc.handle('vibe:update:install', (_event, anyway?: boolean) => installUpdate(workingProjects(), !!anyway))
 
+  // Cline (a third agent on the user's ClinePass plan): installed? and a quick live check.
   ipc.handle('vibe:cline:status', () => clineStatus())
   // The ClinePass models Cline offers now, for the Settings menus (opens a session, sends nothing).
   ipc.handle('vibe:cline:models', (_event, refresh?: boolean) => listClineModels(!!refresh))
   ipc.handle('vibe:cline:check', async () => checkCline(await clineModelFor('helper')))
+  // LM Studio (a model on this computer, for background jobs): only ever the saved address,
+  // so a remote screen can't make VibeApp reach other places.
+  ipc.handle('vibe:lmstudio:status', () => lmStudioStatus())
+  ipc.handle('vibe:lmstudio:check', () => checkLmStudio())
 
   // The same, written up: by project, by kind of work, teamwork, the most expensive requests.
   ipc.handle('vibe:usage:report', async (_event, days: number, projectId?: string) => {

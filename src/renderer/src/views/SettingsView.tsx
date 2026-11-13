@@ -6,6 +6,7 @@ import BackupSettings from '../components/BackupSettings'
 import ScheduleSettings from '../components/ScheduleSettings'
 import PhoneAlertSettings from '../components/PhoneAlertSettings'
 import ClineSettings from '../components/ClineSettings'
+import LmStudioSettings from '../components/LmStudioSettings'
 import UpdateSettings from '../components/UpdateSettings'
 
 interface SettingsViewProps {
@@ -302,7 +303,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
           <span>
             Save memory automatically
             <small>
-              After each request a quick background pass (Cline when it's set up, otherwise Haiku) decides what's worth remembering, so Claude and Codex don't
+              After each request a quick background pass (LM Studio or Cline when one is set up, otherwise Haiku) decides what's worth remembering, so Claude and Codex don't
               each spend a step on it. Applies to new chats. Saved facts are labelled "Saved automatically" on
               the Memory screen.
             </small>
@@ -371,7 +372,7 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
             <small>
               A one-line summary of each source file (only for files that changed), so Claude and Codex can find
               where things live with one search instead of exploring the project. Written in the background after
-              requests, by Cline when it's set up, otherwise by Haiku (a little Claude usage).
+              requests, by LM Studio or Cline when one is set up, otherwise by Haiku (a little Claude usage).
             </small>
           </span>
         </label>
@@ -394,6 +395,8 @@ function SettingsView({ settings, themes, onSettingsChange, onThemesChange, onEr
       </section>
 
       <ClineSettings settings={settings} onSettingsChange={onSettingsChange} />
+
+      <LmStudioSettings settings={settings} onSettingsChange={onSettingsChange} />
 
       <section className="settings-section">
         <h3>Running in the background</h3>

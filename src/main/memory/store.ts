@@ -1565,12 +1565,12 @@ export type UsageKind =
   | 'chat' // a question answered without building (Ask mode or the Chat tab)
   | 'brief' // Haiku writing the project brief
   | 'compact' // Claude compacting a long conversation (estimated: the SDK doesn't report it)
-// (A background job's agent is "claude" when Haiku did it, "cline" when Cline did.)
+// (A background job's agent is "claude" when Haiku did it, "cline" when Cline did, "lmstudio" when LM Studio did.)
 
 export interface UsageRecord {
   projectId?: string
   kind: UsageKind
-  agent: 'claude' | 'codex' | 'cline'
+  agent: 'claude' | 'codex' | 'cline' | 'lmstudio'
   model?: string
   /** Tokens that were newly processed (not served from the cache), input side. */
   fresh: number

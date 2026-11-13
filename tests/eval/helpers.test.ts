@@ -12,6 +12,7 @@ import { weight } from '../../src/main/usage/report'
 import type { MemoryCategory } from '@shared/types'
 import { makeProject, projectId } from '../support/fixtures'
 import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
+import { forgetLmStudioStatus } from '../../src/main/cli/lmStudio'
 
 // The background-job evaluation: the same memory-saving cases on Haiku and on
 // Cline (each model named), scored on getting them right, with time and
@@ -20,6 +21,8 @@ import { listClineModels, stopHostedCline } from '../../src/main/cli/clineAcp'
 //
 //   npm run eval -- helpers
 //   VIBEAPP_EVAL_HELPERS="haiku,cline-pass/glm-5.3-flash" npm run eval -- helpers
+//   VIBEAPP_EVAL_HELPERS="lmstudio" npm run eval -- helpers         (the model loaded in LM Studio)
+//   VIBEAPP_EVAL_HELPERS="lmstudio:qwen/qwen3.6-35b-a3b" npm run eval -- helpers
 
 // 2026-11-10 (0.5.5, six cases): all 10 models ClinePass runs 6/6; kimi-k3.1-pro and minimax-m3.1-flash
 // 18/18 over three runs. qwen3.7-plus/max, minimax-m3 and mimo-v2.6-flash/pro are listed but refused.
@@ -169,7 +172,7 @@ after(() => {
   console.log('\nBackground-job eval (saving memory):')
   for (const r of rows) {
     console.log(
-      `- ${r.backend}: ${r.passed}/${r.total} right · ${r.seconds.toFixed(1)} s per job · ${Math.round(r.tokens / r.total / 1000)}k tokens per job${r.fellBack ? ' · SOME JOBS FELL BACK TO HAIKU' : ''}${r.failures.length ? `\n    wrong: ${r.failures.join('; ')}` : ''}`
+      `- ${r.backend}: ${r.passed}/${r.total} right · ${r.seconds.toFixed(1)} s per job · ${Math.round(r.tokens / r.total / 1000)}k tokens per job${r.fellBack ? ' · SOME JOBS FELL BACK (to Haiku or Cline)' : ''}${r.failures.length ? `\n    wrong: ${r.failures.join('; ')}` : ''}`
     )
   }
   console.log(`Saved to test-results/eval/${file}`)
@@ -189,8 +192,18 @@ if (WANTED === 'all') {
 
 async function evaluate(backend: string, strict: boolean): Promise<void> {
   {
-    const onCline = backend !== 'haiku'
-    updateSettings({ clineHelpers: onCline, clineHelperModel: onCline ? backend : null, autoMemory: true })
+    const onLmStudio = backend === 'lmstudio' || backend.startsWith('lmstudio:')
+    const onCline = !onLmStudio && backend !== 'haiku'
+    updateSettings({
+      lmStudioHelpers: onLmStudio,
+      lmStudioModel: onLmStudio ? backend.slice('lmstudio:'.length) || null : null,
+      clineHelpers: onCline,
+      clineHelperModel: onCline ? backend : null,
+      autoMemory: true
+    })
+    forgetLmStudioStatus()
+    // Off Haiku, a job Haiku did instead (or, from LM Studio, Cline) is a fall-back.
+    const fellBackRe = onLmStudio ? /^(scribe|tidy) \((claude|cline)\)$/ : /^(scribe|tidy) \(claude\)$/
     const row: Row = { backend, passed: 0, total: CASES.length + AGE_CASES.length, failures: [], seconds: 0, tokens: 0, fellBack: false }
     for (const c of CASES) {
       const pid = projectId(`helpers_${c.name.replace(/\W+/g, '_').slice(0, 20)}`)
@@ -214,7 +227,7 @@ async function evaluate(backend: string, strict: boolean): Promise<void> {
       row.seconds += (Date.now() - started) / 1000
       for (const u of usageSummary(db, since, pid)) {
         row.tokens += weight(u)
-        if (onCline && u.kind === 'scribe (claude)') row.fellBack = true
+        if (backend !== 'haiku' && fellBackRe.test(u.kind)) row.fellBack = true
       }
       if (problem) row.failures.push(`${c.name}: ${problem}`)
       else row.passed++
@@ -231,14 +244,14 @@ async function evaluate(backend: string, strict: boolean): Promise<void> {
       row.seconds += (Date.now() - started) / 1000
       for (const u of usageSummary(memoryDb(), since)) {
         row.tokens += weight(u)
-        if (onCline && /^(scribe|tidy) \(claude\)$/.test(u.kind)) row.fellBack = true
+        if (backend !== 'haiku' && fellBackRe.test(u.kind)) row.fellBack = true
       }
       if (problem) row.failures.push(`${c.name}: ${problem}`)
       else row.passed++
     }
     row.seconds /= row.total
     rows.push(row)
-    console.log(`  ${backend}: ${row.passed}/${row.total}${row.fellBack ? ' (some fell back to Haiku)' : ''}`)
+    console.log(`  ${backend}: ${row.passed}/${row.total}${row.fellBack ? ' (some fell back)' : ''}`)
     if (strict) assert.ok(row.passed >= row.total - 1, `${backend}: ${row.failures.join('; ')}`)
   }
 }

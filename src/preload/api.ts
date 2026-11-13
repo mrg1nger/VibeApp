@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  LmStudioStatus,
   CheckpointRecord,
   CliName,
   CliStatus,
@@ -481,6 +482,13 @@ export function createVibeApi(ipcRenderer: IpcLike, host: 'electron' | 'browser'
       /** The ClinePass models Cline offers now, and which one it uses when none is chosen. */
       models: (refresh?: boolean): Promise<{ models: { id: string; name: string }[]; defaultId?: string }> =>
         ipcRenderer.invoke('vibe:cline:models', refresh)
+    },
+
+    lmStudio: {
+      /** Whether LM Studio's server answers at the saved address, and its chat models. */
+      status: (): Promise<LmStudioStatus> => ipcRenderer.invoke('vibe:lmstudio:status'),
+      /** A tiny live run on the model background jobs would use. */
+      check: (): Promise<{ ok: boolean; message: string; model?: string; seconds: number }> => ipcRenderer.invoke('vibe:lmstudio:check')
     },
 
     usage: {
